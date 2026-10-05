@@ -77,10 +77,14 @@ func loadMachinesAuth(id string) (Auth, bool) {
 
 // ForgetMachine removes stored .machines credentials for each non-empty id.
 // Call it when a VM's disk is replaced or destroyed; stale creds would
-// otherwise win over packer defaults in ResolveAuth.
+// otherwise win over packer defaults in ResolveAuth. Registered metal/alien
+// machines (entries with a machine.yml) are never removed here.
 func ForgetMachine(ids ...string) error {
 	for _, id := range ids {
 		if id == "" || id != filepath.Base(id) || id == "." || id == ".." {
+			continue
+		}
+		if IsMachine(id) {
 			continue
 		}
 		if err := os.RemoveAll(filepath.Join(".machines", id)); err != nil {
@@ -106,11 +110,18 @@ func RemoteCmd(ip, name string, argv []string) (*exec.Cmd, error) {
 }
 
 func sshCommand(ip string, auth Auth, remote []string) *exec.Cmd {
+	return sshCommandOpts(ip, auth, nil, remote)
+}
+
+// sshCommandOpts is sshCommand with extra ssh options placed before the
+// destination.
+func sshCommandOpts(ip string, auth Auth, opts, remote []string) *exec.Cmd {
 	args := []string{
 		"-o", "StrictHostKeyChecking=no",
 		"-o", "UserKnownHostsFile=/dev/null",
 		"-o", "LogLevel=ERROR",
 	}
+	args = append(args, opts...)
 	if auth.KeyPath != "" {
 		args = append(args, "-o", "IdentitiesOnly=yes", "-i", auth.KeyPath)
 	}

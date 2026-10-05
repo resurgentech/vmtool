@@ -1,10 +1,8 @@
 package app
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"os/exec"
 
 	"github.com/jaredeh/vmtool/pkg/vmtool"
 )
@@ -24,20 +22,7 @@ func (s *Service) RunCommand(_ context.Context, m Manager, name string, argv []s
 	if err != nil {
 		return nil, wrap("cmd", err)
 	}
-	var stdout, stderr bytes.Buffer
-	c.Stdout = &stdout
-	c.Stderr = &stderr
-	c.Stdin = nil
-	err = c.Run()
-	res := &CmdResult{Stdout: stdout.String(), Stderr: stderr.String()}
-	if err == nil {
-		return res, nil
-	}
-	if e, ok := err.(*exec.ExitError); ok {
-		res.ExitCode = e.ExitCode()
-		return res, nil
-	}
-	return res, badGateway("cmd", err)
+	return runRemote("cmd", c, 0)
 }
 
 func (s *Service) RunPlaybook(_ context.Context, m Manager, name, playbook string, auth vmtool.Auth, extraVars map[string]string) (*PlaybookResult, error) {

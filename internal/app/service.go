@@ -67,17 +67,17 @@ type ProgressEvent struct {
 }
 
 type CreateVMInput struct {
-	Name        string
-	Image       string
-	VCPUs       uint
-	Memory      uint // GiB
-	DiskSizeGB  uint
-	Pool        string
-	NetType     string
-	NetSource   string
-	MacvtapMode string
-	SSHUser     string
-	SSHPass     string
+	Name            string
+	Image           string
+	VCPUs           uint
+	Memory          uint // GiB
+	DiskSizeGB      uint
+	Pool            string
+	NetType         string
+	NetSource       string
+	MacvtapMode     string
+	SSHUser         string
+	SSHPass         string
 	Playbook        string
 	Noclone         bool
 	ExtraDiskSizeGB uint
@@ -109,7 +109,11 @@ type AddDiskResult struct {
 }
 
 func emit(in CreateVMInput, stage, status, detail, output string) {
-	if in.OnProgress != nil {
-		in.OnProgress(ProgressEvent{Stage: stage, Status: status, Detail: detail, Output: output})
+	in.OnProgress.emit(stage, status, detail, output)
+}
+
+func (f ProgressFunc) emit(stage, status, detail, output string) {
+	if f != nil {
+		f(ProgressEvent{Stage: stage, Status: status, Detail: detail, Output: output})
 	}
 }

@@ -6,7 +6,9 @@ info:
     HTTP surface of `vmtool server`. Spec-first: models, stdlib ServerInterface,
     embedded spec, and a test client are generated from this file. Interactive
     SSH over the network is GET /vms/{name}/console (WebSocket upgrade; framing
-    in that operation's description). CLI `vmtool ssh` and TUI `t` still exec
+    in that operation's description). Metal and alien machines (/metal) are
+    SSH/Ansible targets registered in .machines/<name>/machine.yml, not
+    libvirt domains. CLI `vmtool ssh` and TUI `t` still exec
     ssh locally. Default bind is 127.0.0.1:9473, no auth. createVM and
     runPlaybook are synchronous and may run for many minutes; clients must not
     use a short HTTP timeout.
@@ -67,7 +69,8 @@ paths:
         playbook. Clients need a long HTTP timeout. 201 means the domain is up
         and every requested extra (grow, playbook, reboot) succeeded. Empty IP
         is a valid 201 when no grow/playbook was requested. Failures after the
-        domain exists are 500; the VM is never auto-undefined.
+        domain exists are 500; the VM is never auto-undefined. 409 if the
+        name is registered as a metal or alien machine.
       requestBody:
         required: true
         content:
@@ -88,6 +91,7 @@ paths:
               schema: { $ref: '#/components/schemas/VMInfo' }
         '400': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
   /vms/{name}:
     parameters:
@@ -456,9 +460,187 @@ paths:
               schema: { type: array, items: { type: string } }
         '500': { $ref: '#/components/responses/Error' }
 
+  /metal:
+    get:
+      operationId: listMachines
+      summary: List metal and alien machines
+      description: >
+        Machines registered under .machines/<name>/machine.yml. Each one is
+        probed over SSH concurrently with a short connect timeout, so state is
+        live but a dead machine costs at most a few seconds.
+      responses:
+        '200':
+          description: machines
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/MachineInfo' }
+        '500': { $ref: '#/components/responses/Error' }
+    post:
+      operationId: addMachine
+      summary: Onboard a metal or alien machine
+      description: >
+        Synchronous; runs setup_bot.yml (and commission.yml when requested) so
+        clients need a long HTTP timeout. The machine must accept SSH as
+        packer/packer with passwordless sudo and run an Ubuntu-compatible OS
+        (see ansible/playbooks/prep_machine.yml). Writes
+        .machines/<name>/machine.yml, then setup_bot.yml replaces packer with
+        bot and key auth. Re-running with the same host and kind is safe and
+        resumes a failed onboarding. 409 if the name is a libvirt VM, holds
+        VM credentials, or is registered with a different host or kind, and
+        if the machine is not Ubuntu-compatible or lacks passwordless sudo.
+        502 if SSH to the machine fails.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AddMachineRequest' }
+            example:
+              name: nuc1
+              host: 10.0.0.42
+              kind: metal
+      responses:
+        '201':
+          description: onboarded
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MachineInfo' }
+        '400': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/Error' }
+  /metal/{name}:
+    parameters:
+      - $ref: '#/components/parameters/MachineName'
+    get:
+      operationId: getMachine
+      summary: Show one machine (probes SSH)
+      responses:
+        '200':
+          description: machine
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MachineInfo' }
+        '404': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+    delete:
+      operationId: removeMachine
+      summary: Forget a machine
+      description: >
+        Removes .machines/<name>/ (manifest and credentials). Nothing is
+        changed on the machine itself; the bot user and its key stay there.
+      responses:
+        '204': { description: removed }
+        '404': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+  /metal/{name}/reboot:
+    parameters:
+      - $ref: '#/components/parameters/MachineName'
+    post:
+      operationId: rebootMachine
+      summary: Reboot a machine over SSH
+      description: >
+        Schedules `systemctl reboot` one second out via sudo and returns
+        immediately with state rebooting. There is no power-off or start for
+        machines.
+      responses:
+        '200':
+          description: machine
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MachineInfo' }
+        '404': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/Error' }
+  /metal/{name}/cmd:
+    parameters:
+      - $ref: '#/components/parameters/MachineName'
+    post:
+      operationId: runMachineCommand
+      summary: Run a command over SSH
+      description: Same contract as runVMCommand. 200 even when exit_code is non-zero. 502 if SSH transport fails.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CmdRequest' }
+            example:
+              command: [uname, -a]
+      responses:
+        '200':
+          description: remote result
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CmdResult' }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/Error' }
+  /metal/{name}/console:
+    parameters:
+      - $ref: '#/components/parameters/MachineName'
+    get:
+      operationId: openMachineConsole
+      summary: Interactive SSH (WebSocket upgrade)
+      description: >
+        Same framing, query parameters, and origin rules as openVMConsole,
+        against the machine's registered host.
+      parameters:
+        - name: cols
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: rows
+          in: query
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '101': { description: switching protocols to WebSocket }
+        '400': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/Error' }
+  /metal/{name}/playbook:
+    parameters:
+      - $ref: '#/components/parameters/MachineName'
+    post:
+      operationId: runMachinePlaybook
+      summary: Run an Ansible playbook against the machine
+      description: >
+        Synchronous; may run for many minutes. Bare names resolve under
+        ansible/playbooks. vmtool sets deviceid to the machine name and
+        vmtool_kind to its kind unless extra_vars already contains them.
+        commission.yml is refused (400); it rewrites machine identity and is
+        only run on aliens via addMachine with commission true.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PlaybookRequest' }
+            example:
+              playbook: vm_upgrade.yml
+      responses:
+        '200':
+          description: ansible finished
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlaybookResult' }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '500':
+          description: ansible or orchestration failed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlaybookResult' }
+
 components:
   parameters:
     VMName:
+      name: name
+      in: path
+      required: true
+      schema: { type: string }
+    MachineName:
       name: name
       in: path
       required: true
@@ -539,6 +721,52 @@ components:
         extra_vars:
           $ref: '#/components/schemas/ExtraVars'
           description: Ansible extra-vars for the optional create-time playbook.
+    MachineInfo:
+      type: object
+      required: [name, kind, host, state]
+      properties:
+        name: { type: string }
+        kind:
+          type: string
+          enum: [metal, alien]
+          description: >
+            metal = physical machine. alien = a VM vmtool's libvirt cannot see
+            (another hypervisor, a cloud). Both are SSH/Ansible targets only.
+        host: { type: string, description: IP or DNS name vmtool SSHes to }
+        state:
+          type: string
+          enum: [reachable, unreachable, rebooting]
+          description: >
+            From an SSH probe with the stored credentials. rebooting is only
+            returned by rebootMachine.
+        os:
+          type: string
+          description: PRETTY_NAME from /etc/os-release when reachable
+        error:
+          type: string
+          description: probe failure detail when unreachable
+    AddMachineRequest:
+      type: object
+      required: [name, host]
+      properties:
+        name:
+          type: string
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._-]*$'
+          description: >
+            vmtool name and Ansible inventory hostname. Must not collide with
+            a libvirt VM.
+        host: { type: string, description: IP or DNS name }
+        kind:
+          type: string
+          enum: [metal, alien]
+          default: metal
+        commission:
+          type: boolean
+          default: false
+          description: >
+            alien only. Run commission.yml before setup_bot.yml: new hostname
+            (= name), machine-id, and SSH host keys, then reboot. Use for
+            aliens cloned from a vmtool image. 400 for metal.
     AutostartRequest:
       type: object
       required: [enabled]

@@ -1,0 +1,178 @@
+package vmtool
+
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"sort"
+
+	"gopkg.in/yaml.v3"
+)
+
+// MachineKind is the kind of a non-libvirt machine in .machines.
+type MachineKind string
+
+const (
+	// MachineMetal is a physical machine.
+	MachineMetal MachineKind = "metal"
+	// MachineAlien is a VM vmtool's libvirt cannot see.
+	MachineAlien MachineKind = "alien"
+)
+
+const (
+	machinesDir     = ".machines"
+	machineManifest = "machine.yml"
+)
+
+var machineNameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+// Machine is an SSH/Ansible target registered in .machines/<name>/machine.yml.
+// Credentials live beside the manifest (password.yml, id_ed25519), the same
+// layout setup_bot.yml writes for VMs.
+type Machine struct {
+	Name string      `yaml:"-"`
+	Kind MachineKind `yaml:"kind"`
+	Host string      `yaml:"host"`
+}
+
+// ValidMachineName reports whether name is safe as a .machines directory and
+// Ansible inventory hostname.
+func ValidMachineName(name string) bool {
+	return machineNameRE.MatchString(name)
+}
+
+// ValidMachineKind reports whether k is metal or alien.
+func ValidMachineKind(k MachineKind) bool {
+	return k == MachineMetal || k == MachineAlien
+}
+
+// IsMachine reports whether id has a machine manifest. Such entries are
+// registrations, not VM credential caches.
+func IsMachine(id string) bool {
+	if !ValidMachineName(id) {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(machinesDir, id, machineManifest))
+	return err == nil
+}
+
+// HasCredentials reports whether .machines/<id>/ holds usable credentials.
+func HasCredentials(id string) bool {
+	if !ValidMachineName(id) {
+		return false
+	}
+	_, ok := loadMachinesAuth(id)
+	return ok
+}
+
+// LoadMachine reads .machines/<name>/machine.yml. A missing manifest wraps
+// ErrNotFound.
+func LoadMachine(name string) (*Machine, error) {
+	if !ValidMachineName(name) {
+		return nil, fmt.Errorf("machine %q: %w", name, ErrNotFound)
+	}
+	b, err := os.ReadFile(filepath.Join(machinesDir, name, machineManifest))
+	if os.IsNotExist(err) {
+		return nil, fmt.Errorf("machine %q: %w", name, ErrNotFound)
+	}
+	if err != nil {
+		return nil, err
+	}
+	m := Machine{Name: name}
+	if err := yaml.Unmarshal(b, &m); err != nil {
+		return nil, fmt.Errorf("machine %q: parsing %s: %w", name, machineManifest, err)
+	}
+	if !ValidMachineKind(m.Kind) {
+		return nil, fmt.Errorf("machine %q: invalid kind %q", name, m.Kind)
+	}
+	if m.Host == "" {
+		return nil, fmt.Errorf("machine %q: host is required", name)
+	}
+	return &m, nil
+}
+
+// ListMachines returns every registered machine, sorted by name.
+func ListMachines() ([]Machine, error) {
+	entries, err := os.ReadDir(machinesDir)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []Machine
+	for _, e := range entries {
+		if !e.IsDir() || !IsMachine(e.Name()) {
+			continue
+		}
+		m, err := LoadMachine(e.Name())
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *m)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
+// SaveMachine writes .machines/<name>/machine.yml.
+func SaveMachine(m Machine) error {
+	if !ValidMachineName(m.Name) {
+		return fmt.Errorf("invalid machine name %q", m.Name)
+	}
+	if !ValidMachineKind(m.Kind) {
+		return fmt.Errorf("invalid machine kind %q", m.Kind)
+	}
+	if m.Host == "" {
+		return fmt.Errorf("machine host is required")
+	}
+	dir := filepath.Join(machinesDir, m.Name)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	b, err := yaml.Marshal(m)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, machineManifest), b, 0o600)
+}
+
+// RemoveMachine deletes .machines/<name>/ (manifest and credentials).
+func RemoveMachine(name string) error {
+	if _, err := LoadMachine(name); err != nil && IsNotFound(err) {
+		return err
+	}
+	return os.RemoveAll(filepath.Join(machinesDir, name))
+}
+
+// Auth is the machine's stored credentials, or packer defaults before
+// setup_bot.yml has run. Lookup is by name only: a stale .machines/<ip>
+// entry from a VM must not shadow a machine.
+func (m Machine) Auth() Auth {
+	return ResolveAuth("", m.Name, DefaultAuth())
+}
+
+// MachineSSHCmd builds an interactive ssh command for the machine.
+func MachineSSHCmd(m Machine, extraArgs ...string) *exec.Cmd {
+	cmd := sshCommand(m.Host, m.Auth(), extraArgs)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd
+}
+
+// MachineRemoteCmd builds a non-interactive ssh command that runs argv on
+// the machine. connectTimeout (seconds) bounds the TCP connect; 0 means the
+// ssh default.
+func MachineRemoteCmd(m Machine, connectTimeout int, argv []string) *exec.Cmd {
+	var opts []string
+	if connectTimeout > 0 {
+		opts = []string{
+			"-o", fmt.Sprintf("ConnectTimeout=%d", connectTimeout),
+			"-o", "NumberOfPasswordPrompts=1",
+		}
+	}
+	return sshCommandOpts(m.Host, m.Auth(), opts, argv)
+}

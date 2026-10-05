@@ -5,6 +5,9 @@
 # then disables SSH password login, moves GUI autologin (gdm3/lightdm)
 # to bot, and deletes packer.
 #
+# With -e vmtool_kind=metal (or alien) the machine has an owner: password
+# login is disabled for bot only and display-manager autologin is untouched.
+#
 # Safe to re-run: existing local creds, bot user, sudoers, sshd config,
 # and the absence of packer are left alone.
 - name: Create bot user and local credentials
@@ -15,6 +18,9 @@
     dest_user: bot
     project_root: "{{ playbook_dir | dirname | dirname }}"
     machines_dir: "{{ project_root }}/.machines/{{ inventory_hostname }}"
+    # vm | metal | alien. Non-vm machines keep their sshd policy for other users.
+    vmtool_kind: vm
+    bot_sshd_dropin: /etc/ssh/sshd_config.d/01-vmtool-bot.conf
 
   handlers:
     - name: Restart ssh
@@ -230,9 +236,54 @@
           KbdInteractiveAuthentication no
           PubkeyAuthentication yes
       notify: Restart ssh
+      when: vmtool_kind == 'vm'
+
+    # Metal/alien machines have owners with their own accounts: only bot
+    # loses password login, everyone else keeps the machine's sshd policy.
+    - name: Disable SSH password authentication for bot only
+      when: vmtool_kind != 'vm'
+      block:
+        - name: Write bot Match drop-in
+          copy:
+            dest: "{{ bot_sshd_dropin }}"
+            mode: "0644"
+            content: |
+              # Managed by vmtool setup_bot.yml.
+              Match User {{ dest_user }}
+                  PasswordAuthentication no
+                  KbdInteractiveAuthentication no
+                  PubkeyAuthentication yes
+          notify: Restart ssh
+
+        - name: Validate full sshd config
+          command: sshd -t
+          changed_when: false
+
+        - name: Read effective sshd policy for bot
+          command: sshd -T -C user={{ dest_user }},host=localhost,addr=127.0.0.1
+          register: sshd_bot
+          changed_when: false
+
+        # Keyword case varies by OpenSSH version.
+        - name: Check bot has password login disabled
+          assert:
+            that:
+              - sshd_bot.stdout is search('(?im)^passwordauthentication no$')
+              - sshd_bot.stdout is search('(?im)^pubkeyauthentication yes$')
+            fail_msg: "{{ bot_sshd_dropin }} did not take effect for {{ dest_user }}"
+      rescue:
+        - name: Roll back bot Match drop-in
+          file:
+            path: "{{ bot_sshd_dropin }}"
+            state: absent
+
+        - name: Fail after rollback
+          fail:
+            msg: "bot sshd drop-in rolled back; sshd config unchanged. See the failed task above."
 
     # GUI images (install_gui.yml / install_minimal_gui.yml) autologin packer.
     # Point whichever display manager is present at bot; headless VMs skip this.
+    # Metal/alien desktops belong to their owner: leave autologin alone.
     - name: Check for gdm3 config
       stat:
         path: /etc/gdm3/custom.conf
@@ -254,7 +305,9 @@
       loop:
         - { option: AutomaticLoginEnable, value: "True" }
         - { option: AutomaticLogin, value: "{{ dest_user }}" }
-      when: gdm3_conf.stat.exists
+      when:
+        - gdm3_conf.stat.exists
+        - vmtool_kind == 'vm'
       notify: Restart gdm3
 
     - name: Configure lightdm autologin for bot
@@ -268,7 +321,9 @@
       loop:
         - { option: autologin-user, value: "{{ dest_user }}" }
         - { option: autologin-user-timeout, value: "0" }
-      when: lightdm_conf.stat.exists
+      when:
+        - lightdm_conf.stat.exists
+        - vmtool_kind == 'vm'
       notify: Restart lightdm
 
     # End packer's desktop session and log bot in before deleting packer.
@@ -279,6 +334,13 @@
       file:
         path: /etc/sudoers.d/{{ src_user }}
         state: absent
+
+    # Written by prep_machine.yml; inert once packer is gone, but don't leave it.
+    - name: Remove packer sshd Match drop-in
+      file:
+        path: /etc/ssh/sshd_config.d/01-vmtool-packer.conf
+        state: absent
+      notify: Restart ssh
 
     - name: Remove packer user
       user:

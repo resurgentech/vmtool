@@ -21,18 +21,23 @@ type Server struct {
 }
 
 // muxHandler serves JSON routes via the generated strict wrapper and overrides
-// OpenVMConsole so the WebSocket upgrade can hijack the connection.
+// OpenVMConsole and OpenMachineConsole so the WebSocket upgrade can hijack the
+// connection.
 type muxHandler struct {
 	api.ServerInterface
 	h *handlers
 }
 
 func (m muxHandler) OpenVMConsole(w http.ResponseWriter, r *http.Request, name api.VMName, params api.OpenVMConsoleParams) {
-	m.h.serveConsole(w, r, string(name), params)
+	m.h.serveConsole(w, r, consoleVM, string(name), params.Cols, params.Rows)
+}
+
+func (m muxHandler) OpenMachineConsole(w http.ResponseWriter, r *http.Request, name api.MachineName, params api.OpenMachineConsoleParams) {
+	m.h.serveConsole(w, r, consoleMachine, string(name), params.Cols, params.Rows)
 }
 
 // Handler returns the generated mux wrapped around StrictServerInterface,
-// with OpenVMConsole implemented on ServerInterface.
+// with the console upgrades implemented on ServerInterface.
 func (s *Server) Handler() http.Handler {
 	if s.PlaybookDir == "" {
 		s.PlaybookDir = "ansible/playbooks"

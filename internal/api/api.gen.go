@@ -25,6 +25,12 @@ import (
 	strictnethttp "github.com/oapi-codegen/runtime/strictmiddleware/nethttp"
 )
 
+// Defines values for AddMachineRequestKind.
+const (
+	AddMachineRequestKindAlien AddMachineRequestKind = "alien"
+	AddMachineRequestKindMetal AddMachineRequestKind = "metal"
+)
+
 // Defines values for CreateVMRequestMacvtapMode.
 const (
 	CreateVMRequestMacvtapModeBridge      CreateVMRequestMacvtapMode = "bridge"
@@ -38,6 +44,19 @@ const (
 	CreateVMRequestNetTypeBridge CreateVMRequestNetType = "bridge"
 	CreateVMRequestNetTypeDirect CreateVMRequestNetType = "direct"
 	CreateVMRequestNetTypeNat    CreateVMRequestNetType = "nat"
+)
+
+// Defines values for MachineInfoKind.
+const (
+	MachineInfoKindAlien MachineInfoKind = "alien"
+	MachineInfoKindMetal MachineInfoKind = "metal"
+)
+
+// Defines values for MachineInfoState.
+const (
+	Reachable   MachineInfoState = "reachable"
+	Rebooting   MachineInfoState = "rebooting"
+	Unreachable MachineInfoState = "unreachable"
 )
 
 // Defines values for VMInfoState.
@@ -68,6 +87,22 @@ type AddDiskResult struct {
 	Target string `json:"target"`
 	Vm     VMInfo `json:"vm"`
 }
+
+// AddMachineRequest defines model for AddMachineRequest.
+type AddMachineRequest struct {
+	// Commission alien only. Run commission.yml before setup_bot.yml: new hostname (= name), machine-id, and SSH host keys, then reboot. Use for aliens cloned from a vmtool image. 400 for metal.
+	Commission *bool `json:"commission,omitempty"`
+
+	// Host IP or DNS name
+	Host string                 `json:"host"`
+	Kind *AddMachineRequestKind `json:"kind,omitempty"`
+
+	// Name vmtool name and Ansible inventory hostname. Must not collide with a libvirt VM.
+	Name string `json:"name"`
+}
+
+// AddMachineRequestKind defines model for AddMachineRequest.Kind.
+type AddMachineRequestKind string
 
 // AutostartRequest defines model for AutostartRequest.
 type AutostartRequest struct {
@@ -152,6 +187,31 @@ type Error struct {
 // ExtraVars Ansible extra-vars (`--extra-vars key=value`). vmtool always sets deviceid to the VM name unless this map already contains deviceid.
 type ExtraVars map[string]string
 
+// MachineInfo defines model for MachineInfo.
+type MachineInfo struct {
+	// Error probe failure detail when unreachable
+	Error *string `json:"error,omitempty"`
+
+	// Host IP or DNS name vmtool SSHes to
+	Host string `json:"host"`
+
+	// Kind metal = physical machine. alien = a VM vmtool's libvirt cannot see (another hypervisor, a cloud). Both are SSH/Ansible targets only.
+	Kind MachineInfoKind `json:"kind"`
+	Name string          `json:"name"`
+
+	// Os PRETTY_NAME from /etc/os-release when reachable
+	Os *string `json:"os,omitempty"`
+
+	// State From an SSH probe with the stored credentials. rebooting is only returned by rebootMachine.
+	State MachineInfoState `json:"state"`
+}
+
+// MachineInfoKind metal = physical machine. alien = a VM vmtool's libvirt cannot see (another hypervisor, a cloud). Both are SSH/Ansible targets only.
+type MachineInfoKind string
+
+// MachineInfoState From an SSH probe with the stored credentials. rebooting is only returned by rebootMachine.
+type MachineInfoState string
+
 // MigrateDiskRequest defines model for MigrateDiskRequest.
 type MigrateDiskRequest struct {
 	Pool string `json:"pool"`
@@ -205,12 +265,21 @@ type VMInfo struct {
 // VMInfoState defines model for VMInfo.State.
 type VMInfoState string
 
+// MachineName defines model for MachineName.
+type MachineName = string
+
 // VMName defines model for VMName.
 type VMName = string
 
 // DeleteImageParams defines parameters for DeleteImage.
 type DeleteImageParams struct {
 	Pool *string `form:"pool,omitempty" json:"pool,omitempty"`
+}
+
+// OpenMachineConsoleParams defines parameters for OpenMachineConsole.
+type OpenMachineConsoleParams struct {
+	Cols *int `form:"cols,omitempty" json:"cols,omitempty"`
+	Rows *int `form:"rows,omitempty" json:"rows,omitempty"`
 }
 
 // DeleteVMParams defines parameters for DeleteVM.
@@ -224,6 +293,15 @@ type OpenVMConsoleParams struct {
 	Cols *int `form:"cols,omitempty" json:"cols,omitempty"`
 	Rows *int `form:"rows,omitempty" json:"rows,omitempty"`
 }
+
+// AddMachineJSONRequestBody defines body for AddMachine for application/json ContentType.
+type AddMachineJSONRequestBody = AddMachineRequest
+
+// RunMachineCommandJSONRequestBody defines body for RunMachineCommand for application/json ContentType.
+type RunMachineCommandJSONRequestBody = CmdRequest
+
+// RunMachinePlaybookJSONRequestBody defines body for RunMachinePlaybook for application/json ContentType.
+type RunMachinePlaybookJSONRequestBody = PlaybookRequest
 
 // CreatePoolJSONRequestBody defines body for CreatePool for application/json ContentType.
 type CreatePoolJSONRequestBody = CreatePoolRequest
@@ -333,6 +411,36 @@ type ClientInterface interface {
 
 	// DeleteImage request
 	DeleteImage(ctx context.Context, name string, params *DeleteImageParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListMachines request
+	ListMachines(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AddMachineWithBody request with any body
+	AddMachineWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	AddMachine(ctx context.Context, body AddMachineJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RemoveMachine request
+	RemoveMachine(ctx context.Context, name MachineName, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetMachine request
+	GetMachine(ctx context.Context, name MachineName, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RunMachineCommandWithBody request with any body
+	RunMachineCommandWithBody(ctx context.Context, name MachineName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	RunMachineCommand(ctx context.Context, name MachineName, body RunMachineCommandJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// OpenMachineConsole request
+	OpenMachineConsole(ctx context.Context, name MachineName, params *OpenMachineConsoleParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RunMachinePlaybookWithBody request with any body
+	RunMachinePlaybookWithBody(ctx context.Context, name MachineName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	RunMachinePlaybook(ctx context.Context, name MachineName, body RunMachinePlaybookJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RebootMachine request
+	RebootMachine(ctx context.Context, name MachineName, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListNetworks request
 	ListNetworks(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -455,6 +563,138 @@ func (c *Client) ListImages(ctx context.Context, reqEditors ...RequestEditorFn) 
 
 func (c *Client) DeleteImage(ctx context.Context, name string, params *DeleteImageParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDeleteImageRequest(c.Server, name, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListMachines(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListMachinesRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) AddMachineWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAddMachineRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) AddMachine(ctx context.Context, body AddMachineJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAddMachineRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) RemoveMachine(ctx context.Context, name MachineName, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRemoveMachineRequest(c.Server, name)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetMachine(ctx context.Context, name MachineName, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetMachineRequest(c.Server, name)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) RunMachineCommandWithBody(ctx context.Context, name MachineName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRunMachineCommandRequestWithBody(c.Server, name, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) RunMachineCommand(ctx context.Context, name MachineName, body RunMachineCommandJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRunMachineCommandRequest(c.Server, name, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) OpenMachineConsole(ctx context.Context, name MachineName, params *OpenMachineConsoleParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewOpenMachineConsoleRequest(c.Server, name, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) RunMachinePlaybookWithBody(ctx context.Context, name MachineName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRunMachinePlaybookRequestWithBody(c.Server, name, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) RunMachinePlaybook(ctx context.Context, name MachineName, body RunMachinePlaybookJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRunMachinePlaybookRequest(c.Server, name, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) RebootMachine(ctx context.Context, name MachineName, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRebootMachineRequest(c.Server, name)
 	if err != nil {
 		return nil, err
 	}
@@ -955,6 +1195,341 @@ func NewDeleteImageRequest(server string, name string, params *DeleteImageParams
 	}
 
 	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListMachinesRequest generates requests for ListMachines
+func NewListMachinesRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/metal")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewAddMachineRequest calls the generic AddMachine builder with application/json body
+func NewAddMachineRequest(server string, body AddMachineJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAddMachineRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewAddMachineRequestWithBody generates requests for AddMachine with any type of body
+func NewAddMachineRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/metal")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRemoveMachineRequest generates requests for RemoveMachine
+func NewRemoveMachineRequest(server string, name MachineName) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "name", runtime.ParamLocationPath, name)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/metal/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetMachineRequest generates requests for GetMachine
+func NewGetMachineRequest(server string, name MachineName) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "name", runtime.ParamLocationPath, name)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/metal/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewRunMachineCommandRequest calls the generic RunMachineCommand builder with application/json body
+func NewRunMachineCommandRequest(server string, name MachineName, body RunMachineCommandJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRunMachineCommandRequestWithBody(server, name, "application/json", bodyReader)
+}
+
+// NewRunMachineCommandRequestWithBody generates requests for RunMachineCommand with any type of body
+func NewRunMachineCommandRequestWithBody(server string, name MachineName, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "name", runtime.ParamLocationPath, name)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/metal/%s/cmd", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewOpenMachineConsoleRequest generates requests for OpenMachineConsole
+func NewOpenMachineConsoleRequest(server string, name MachineName, params *OpenMachineConsoleParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "name", runtime.ParamLocationPath, name)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/metal/%s/console", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Cols != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "cols", runtime.ParamLocationQuery, *params.Cols); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Rows != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "rows", runtime.ParamLocationQuery, *params.Rows); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewRunMachinePlaybookRequest calls the generic RunMachinePlaybook builder with application/json body
+func NewRunMachinePlaybookRequest(server string, name MachineName, body RunMachinePlaybookJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRunMachinePlaybookRequestWithBody(server, name, "application/json", bodyReader)
+}
+
+// NewRunMachinePlaybookRequestWithBody generates requests for RunMachinePlaybook with any type of body
+func NewRunMachinePlaybookRequestWithBody(server string, name MachineName, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "name", runtime.ParamLocationPath, name)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/metal/%s/playbook", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRebootMachineRequest generates requests for RebootMachine
+func NewRebootMachineRequest(server string, name MachineName) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "name", runtime.ParamLocationPath, name)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/metal/%s/reboot", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1873,6 +2448,36 @@ type ClientWithResponsesInterface interface {
 	// DeleteImageWithResponse request
 	DeleteImageWithResponse(ctx context.Context, name string, params *DeleteImageParams, reqEditors ...RequestEditorFn) (*DeleteImageResponse, error)
 
+	// ListMachinesWithResponse request
+	ListMachinesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListMachinesResponse, error)
+
+	// AddMachineWithBodyWithResponse request with any body
+	AddMachineWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AddMachineResponse, error)
+
+	AddMachineWithResponse(ctx context.Context, body AddMachineJSONRequestBody, reqEditors ...RequestEditorFn) (*AddMachineResponse, error)
+
+	// RemoveMachineWithResponse request
+	RemoveMachineWithResponse(ctx context.Context, name MachineName, reqEditors ...RequestEditorFn) (*RemoveMachineResponse, error)
+
+	// GetMachineWithResponse request
+	GetMachineWithResponse(ctx context.Context, name MachineName, reqEditors ...RequestEditorFn) (*GetMachineResponse, error)
+
+	// RunMachineCommandWithBodyWithResponse request with any body
+	RunMachineCommandWithBodyWithResponse(ctx context.Context, name MachineName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RunMachineCommandResponse, error)
+
+	RunMachineCommandWithResponse(ctx context.Context, name MachineName, body RunMachineCommandJSONRequestBody, reqEditors ...RequestEditorFn) (*RunMachineCommandResponse, error)
+
+	// OpenMachineConsoleWithResponse request
+	OpenMachineConsoleWithResponse(ctx context.Context, name MachineName, params *OpenMachineConsoleParams, reqEditors ...RequestEditorFn) (*OpenMachineConsoleResponse, error)
+
+	// RunMachinePlaybookWithBodyWithResponse request with any body
+	RunMachinePlaybookWithBodyWithResponse(ctx context.Context, name MachineName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RunMachinePlaybookResponse, error)
+
+	RunMachinePlaybookWithResponse(ctx context.Context, name MachineName, body RunMachinePlaybookJSONRequestBody, reqEditors ...RequestEditorFn) (*RunMachinePlaybookResponse, error)
+
+	// RebootMachineWithResponse request
+	RebootMachineWithResponse(ctx context.Context, name MachineName, reqEditors ...RequestEditorFn) (*RebootMachineResponse, error)
+
 	// ListNetworksWithResponse request
 	ListNetworksWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListNetworksResponse, error)
 
@@ -2046,6 +2651,204 @@ func (r DeleteImageResponse) StatusCode() int {
 	return 0
 }
 
+type ListMachinesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *[]MachineInfo
+	JSON500      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r ListMachinesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListMachinesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type AddMachineResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *MachineInfo
+	JSON400      *Error
+	JSON409      *Error
+	JSON500      *Error
+	JSON502      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r AddMachineResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AddMachineResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type RemoveMachineResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON404      *Error
+	JSON500      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r RemoveMachineResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RemoveMachineResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetMachineResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *MachineInfo
+	JSON404      *Error
+	JSON500      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r GetMachineResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetMachineResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type RunMachineCommandResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *CmdResult
+	JSON400      *Error
+	JSON404      *Error
+	JSON500      *Error
+	JSON502      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r RunMachineCommandResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RunMachineCommandResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type OpenMachineConsoleResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON400      *Error
+	JSON403      *Error
+	JSON404      *Error
+	JSON500      *Error
+	JSON502      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r OpenMachineConsoleResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r OpenMachineConsoleResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type RunMachinePlaybookResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *PlaybookResult
+	JSON400      *Error
+	JSON404      *Error
+	JSON500      *PlaybookResult
+}
+
+// Status returns HTTPResponse.Status
+func (r RunMachinePlaybookResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RunMachinePlaybookResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type RebootMachineResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *MachineInfo
+	JSON404      *Error
+	JSON500      *Error
+	JSON502      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r RebootMachineResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RebootMachineResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type ListNetworksResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -2212,6 +3015,7 @@ type CreateVMResponse struct {
 	JSON201      *VMInfo
 	JSON400      *Error
 	JSON404      *Error
+	JSON409      *Error
 	JSON500      *Error
 }
 
@@ -2614,6 +3418,102 @@ func (c *ClientWithResponses) DeleteImageWithResponse(ctx context.Context, name 
 	return ParseDeleteImageResponse(rsp)
 }
 
+// ListMachinesWithResponse request returning *ListMachinesResponse
+func (c *ClientWithResponses) ListMachinesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListMachinesResponse, error) {
+	rsp, err := c.ListMachines(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListMachinesResponse(rsp)
+}
+
+// AddMachineWithBodyWithResponse request with arbitrary body returning *AddMachineResponse
+func (c *ClientWithResponses) AddMachineWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AddMachineResponse, error) {
+	rsp, err := c.AddMachineWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAddMachineResponse(rsp)
+}
+
+func (c *ClientWithResponses) AddMachineWithResponse(ctx context.Context, body AddMachineJSONRequestBody, reqEditors ...RequestEditorFn) (*AddMachineResponse, error) {
+	rsp, err := c.AddMachine(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAddMachineResponse(rsp)
+}
+
+// RemoveMachineWithResponse request returning *RemoveMachineResponse
+func (c *ClientWithResponses) RemoveMachineWithResponse(ctx context.Context, name MachineName, reqEditors ...RequestEditorFn) (*RemoveMachineResponse, error) {
+	rsp, err := c.RemoveMachine(ctx, name, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRemoveMachineResponse(rsp)
+}
+
+// GetMachineWithResponse request returning *GetMachineResponse
+func (c *ClientWithResponses) GetMachineWithResponse(ctx context.Context, name MachineName, reqEditors ...RequestEditorFn) (*GetMachineResponse, error) {
+	rsp, err := c.GetMachine(ctx, name, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetMachineResponse(rsp)
+}
+
+// RunMachineCommandWithBodyWithResponse request with arbitrary body returning *RunMachineCommandResponse
+func (c *ClientWithResponses) RunMachineCommandWithBodyWithResponse(ctx context.Context, name MachineName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RunMachineCommandResponse, error) {
+	rsp, err := c.RunMachineCommandWithBody(ctx, name, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRunMachineCommandResponse(rsp)
+}
+
+func (c *ClientWithResponses) RunMachineCommandWithResponse(ctx context.Context, name MachineName, body RunMachineCommandJSONRequestBody, reqEditors ...RequestEditorFn) (*RunMachineCommandResponse, error) {
+	rsp, err := c.RunMachineCommand(ctx, name, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRunMachineCommandResponse(rsp)
+}
+
+// OpenMachineConsoleWithResponse request returning *OpenMachineConsoleResponse
+func (c *ClientWithResponses) OpenMachineConsoleWithResponse(ctx context.Context, name MachineName, params *OpenMachineConsoleParams, reqEditors ...RequestEditorFn) (*OpenMachineConsoleResponse, error) {
+	rsp, err := c.OpenMachineConsole(ctx, name, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseOpenMachineConsoleResponse(rsp)
+}
+
+// RunMachinePlaybookWithBodyWithResponse request with arbitrary body returning *RunMachinePlaybookResponse
+func (c *ClientWithResponses) RunMachinePlaybookWithBodyWithResponse(ctx context.Context, name MachineName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RunMachinePlaybookResponse, error) {
+	rsp, err := c.RunMachinePlaybookWithBody(ctx, name, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRunMachinePlaybookResponse(rsp)
+}
+
+func (c *ClientWithResponses) RunMachinePlaybookWithResponse(ctx context.Context, name MachineName, body RunMachinePlaybookJSONRequestBody, reqEditors ...RequestEditorFn) (*RunMachinePlaybookResponse, error) {
+	rsp, err := c.RunMachinePlaybook(ctx, name, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRunMachinePlaybookResponse(rsp)
+}
+
+// RebootMachineWithResponse request returning *RebootMachineResponse
+func (c *ClientWithResponses) RebootMachineWithResponse(ctx context.Context, name MachineName, reqEditors ...RequestEditorFn) (*RebootMachineResponse, error) {
+	rsp, err := c.RebootMachine(ctx, name, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRebootMachineResponse(rsp)
+}
+
 // ListNetworksWithResponse request returning *ListNetworksResponse
 func (c *ClientWithResponses) ListNetworksWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListNetworksResponse, error) {
 	rsp, err := c.ListNetworks(ctx, reqEditors...)
@@ -2991,6 +3891,368 @@ func ParseDeleteImageResponse(rsp *http.Response) (*DeleteImageResponse, error) 
 	return response, nil
 }
 
+// ParseListMachinesResponse parses an HTTP response from a ListMachinesWithResponse call
+func ParseListMachinesResponse(rsp *http.Response) (*ListMachinesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListMachinesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []MachineInfo
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAddMachineResponse parses an HTTP response from a AddMachineWithResponse call
+func ParseAddMachineResponse(rsp *http.Response) (*AddMachineResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AddMachineResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest MachineInfo
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON502 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRemoveMachineResponse parses an HTTP response from a RemoveMachineWithResponse call
+func ParseRemoveMachineResponse(rsp *http.Response) (*RemoveMachineResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RemoveMachineResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetMachineResponse parses an HTTP response from a GetMachineWithResponse call
+func ParseGetMachineResponse(rsp *http.Response) (*GetMachineResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetMachineResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest MachineInfo
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRunMachineCommandResponse parses an HTTP response from a RunMachineCommandWithResponse call
+func ParseRunMachineCommandResponse(rsp *http.Response) (*RunMachineCommandResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RunMachineCommandResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CmdResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON502 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseOpenMachineConsoleResponse parses an HTTP response from a OpenMachineConsoleWithResponse call
+func ParseOpenMachineConsoleResponse(rsp *http.Response) (*OpenMachineConsoleResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &OpenMachineConsoleResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON502 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRunMachinePlaybookResponse parses an HTTP response from a RunMachinePlaybookWithResponse call
+func ParseRunMachinePlaybookResponse(rsp *http.Response) (*RunMachinePlaybookResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RunMachinePlaybookResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PlaybookResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest PlaybookResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRebootMachineResponse parses an HTTP response from a RebootMachineWithResponse call
+func ParseRebootMachineResponse(rsp *http.Response) (*RebootMachineResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RebootMachineResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest MachineInfo
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON502 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListNetworksResponse parses an HTTP response from a ListNetworksWithResponse call
 func ParseListNetworksResponse(rsp *http.Response) (*ListNetworksResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -3249,6 +4511,13 @@ func ParseCreateVMResponse(rsp *http.Response) (*CreateVMResponse, error) {
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest Error
@@ -3913,6 +5182,30 @@ type ServerInterface interface {
 	// Delete a disk image
 	// (DELETE /images/{name})
 	DeleteImage(w http.ResponseWriter, r *http.Request, name string, params DeleteImageParams)
+	// List metal and alien machines
+	// (GET /metal)
+	ListMachines(w http.ResponseWriter, r *http.Request)
+	// Onboard a metal or alien machine
+	// (POST /metal)
+	AddMachine(w http.ResponseWriter, r *http.Request)
+	// Forget a machine
+	// (DELETE /metal/{name})
+	RemoveMachine(w http.ResponseWriter, r *http.Request, name MachineName)
+	// Show one machine (probes SSH)
+	// (GET /metal/{name})
+	GetMachine(w http.ResponseWriter, r *http.Request, name MachineName)
+	// Run a command over SSH
+	// (POST /metal/{name}/cmd)
+	RunMachineCommand(w http.ResponseWriter, r *http.Request, name MachineName)
+	// Interactive SSH (WebSocket upgrade)
+	// (GET /metal/{name}/console)
+	OpenMachineConsole(w http.ResponseWriter, r *http.Request, name MachineName, params OpenMachineConsoleParams)
+	// Run an Ansible playbook against the machine
+	// (POST /metal/{name}/playbook)
+	RunMachinePlaybook(w http.ResponseWriter, r *http.Request, name MachineName)
+	// Reboot a machine over SSH
+	// (POST /metal/{name}/reboot)
+	RebootMachine(w http.ResponseWriter, r *http.Request, name MachineName)
 	// List libvirt networks
 	// (GET /networks)
 	ListNetworks(w http.ResponseWriter, r *http.Request)
@@ -4059,6 +5352,203 @@ func (siw *ServerInterfaceWrapper) DeleteImage(w http.ResponseWriter, r *http.Re
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.DeleteImage(w, r, name, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListMachines operation middleware
+func (siw *ServerInterfaceWrapper) ListMachines(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListMachines(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AddMachine operation middleware
+func (siw *ServerInterfaceWrapper) AddMachine(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AddMachine(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RemoveMachine operation middleware
+func (siw *ServerInterfaceWrapper) RemoveMachine(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "name" -------------
+	var name MachineName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RemoveMachine(w, r, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetMachine operation middleware
+func (siw *ServerInterfaceWrapper) GetMachine(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "name" -------------
+	var name MachineName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetMachine(w, r, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RunMachineCommand operation middleware
+func (siw *ServerInterfaceWrapper) RunMachineCommand(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "name" -------------
+	var name MachineName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RunMachineCommand(w, r, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// OpenMachineConsole operation middleware
+func (siw *ServerInterfaceWrapper) OpenMachineConsole(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "name" -------------
+	var name MachineName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params OpenMachineConsoleParams
+
+	// ------------- Optional query parameter "cols" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "cols", r.URL.Query(), &params.Cols)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cols", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "rows" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "rows", r.URL.Query(), &params.Rows)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "rows", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.OpenMachineConsole(w, r, name, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RunMachinePlaybook operation middleware
+func (siw *ServerInterfaceWrapper) RunMachinePlaybook(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "name" -------------
+	var name MachineName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RunMachinePlaybook(w, r, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RebootMachine operation middleware
+func (siw *ServerInterfaceWrapper) RebootMachine(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "name" -------------
+	var name MachineName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RebootMachine(w, r, name)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -4684,6 +6174,14 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("GET "+options.BaseURL+"/bridges", wrapper.ListBridges)
 	m.HandleFunc("GET "+options.BaseURL+"/images", wrapper.ListImages)
 	m.HandleFunc("DELETE "+options.BaseURL+"/images/{name}", wrapper.DeleteImage)
+	m.HandleFunc("GET "+options.BaseURL+"/metal", wrapper.ListMachines)
+	m.HandleFunc("POST "+options.BaseURL+"/metal", wrapper.AddMachine)
+	m.HandleFunc("DELETE "+options.BaseURL+"/metal/{name}", wrapper.RemoveMachine)
+	m.HandleFunc("GET "+options.BaseURL+"/metal/{name}", wrapper.GetMachine)
+	m.HandleFunc("POST "+options.BaseURL+"/metal/{name}/cmd", wrapper.RunMachineCommand)
+	m.HandleFunc("GET "+options.BaseURL+"/metal/{name}/console", wrapper.OpenMachineConsole)
+	m.HandleFunc("POST "+options.BaseURL+"/metal/{name}/playbook", wrapper.RunMachinePlaybook)
+	m.HandleFunc("POST "+options.BaseURL+"/metal/{name}/reboot", wrapper.RebootMachine)
 	m.HandleFunc("GET "+options.BaseURL+"/networks", wrapper.ListNetworks)
 	m.HandleFunc("GET "+options.BaseURL+"/openapi.json", wrapper.GetOpenAPIJSON)
 	m.HandleFunc("GET "+options.BaseURL+"/openapi.yaml", wrapper.GetOpenAPISpec)
@@ -4819,6 +6317,358 @@ type DeleteImage500JSONResponse Error
 func (response DeleteImage500JSONResponse) VisitDeleteImageResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ListMachinesRequestObject struct {
+}
+
+type ListMachinesResponseObject interface {
+	VisitListMachinesResponse(w http.ResponseWriter) error
+}
+
+type ListMachines200JSONResponse []MachineInfo
+
+func (response ListMachines200JSONResponse) VisitListMachinesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ListMachines500JSONResponse struct{ ErrorJSONResponse }
+
+func (response ListMachines500JSONResponse) VisitListMachinesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type AddMachineRequestObject struct {
+	Body *AddMachineJSONRequestBody
+}
+
+type AddMachineResponseObject interface {
+	VisitAddMachineResponse(w http.ResponseWriter) error
+}
+
+type AddMachine201JSONResponse MachineInfo
+
+func (response AddMachine201JSONResponse) VisitAddMachineResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type AddMachine400JSONResponse struct{ ErrorJSONResponse }
+
+func (response AddMachine400JSONResponse) VisitAddMachineResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type AddMachine409JSONResponse Error
+
+func (response AddMachine409JSONResponse) VisitAddMachineResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type AddMachine500JSONResponse Error
+
+func (response AddMachine500JSONResponse) VisitAddMachineResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type AddMachine502JSONResponse Error
+
+func (response AddMachine502JSONResponse) VisitAddMachineResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(502)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type RemoveMachineRequestObject struct {
+	Name MachineName `json:"name"`
+}
+
+type RemoveMachineResponseObject interface {
+	VisitRemoveMachineResponse(w http.ResponseWriter) error
+}
+
+type RemoveMachine204Response struct {
+}
+
+func (response RemoveMachine204Response) VisitRemoveMachineResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type RemoveMachine404JSONResponse struct{ ErrorJSONResponse }
+
+func (response RemoveMachine404JSONResponse) VisitRemoveMachineResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type RemoveMachine500JSONResponse Error
+
+func (response RemoveMachine500JSONResponse) VisitRemoveMachineResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetMachineRequestObject struct {
+	Name MachineName `json:"name"`
+}
+
+type GetMachineResponseObject interface {
+	VisitGetMachineResponse(w http.ResponseWriter) error
+}
+
+type GetMachine200JSONResponse MachineInfo
+
+func (response GetMachine200JSONResponse) VisitGetMachineResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetMachine404JSONResponse struct{ ErrorJSONResponse }
+
+func (response GetMachine404JSONResponse) VisitGetMachineResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetMachine500JSONResponse Error
+
+func (response GetMachine500JSONResponse) VisitGetMachineResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type RunMachineCommandRequestObject struct {
+	Name MachineName `json:"name"`
+	Body *RunMachineCommandJSONRequestBody
+}
+
+type RunMachineCommandResponseObject interface {
+	VisitRunMachineCommandResponse(w http.ResponseWriter) error
+}
+
+type RunMachineCommand200JSONResponse CmdResult
+
+func (response RunMachineCommand200JSONResponse) VisitRunMachineCommandResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type RunMachineCommand400JSONResponse struct{ ErrorJSONResponse }
+
+func (response RunMachineCommand400JSONResponse) VisitRunMachineCommandResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type RunMachineCommand404JSONResponse Error
+
+func (response RunMachineCommand404JSONResponse) VisitRunMachineCommandResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type RunMachineCommand500JSONResponse Error
+
+func (response RunMachineCommand500JSONResponse) VisitRunMachineCommandResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type RunMachineCommand502JSONResponse Error
+
+func (response RunMachineCommand502JSONResponse) VisitRunMachineCommandResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(502)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type OpenMachineConsoleRequestObject struct {
+	Name   MachineName `json:"name"`
+	Params OpenMachineConsoleParams
+}
+
+type OpenMachineConsoleResponseObject interface {
+	VisitOpenMachineConsoleResponse(w http.ResponseWriter) error
+}
+
+type OpenMachineConsole101Response struct {
+}
+
+func (response OpenMachineConsole101Response) VisitOpenMachineConsoleResponse(w http.ResponseWriter) error {
+	w.WriteHeader(101)
+	return nil
+}
+
+type OpenMachineConsole400JSONResponse struct{ ErrorJSONResponse }
+
+func (response OpenMachineConsole400JSONResponse) VisitOpenMachineConsoleResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type OpenMachineConsole403JSONResponse Error
+
+func (response OpenMachineConsole403JSONResponse) VisitOpenMachineConsoleResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type OpenMachineConsole404JSONResponse Error
+
+func (response OpenMachineConsole404JSONResponse) VisitOpenMachineConsoleResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type OpenMachineConsole500JSONResponse Error
+
+func (response OpenMachineConsole500JSONResponse) VisitOpenMachineConsoleResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type OpenMachineConsole502JSONResponse Error
+
+func (response OpenMachineConsole502JSONResponse) VisitOpenMachineConsoleResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(502)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type RunMachinePlaybookRequestObject struct {
+	Name MachineName `json:"name"`
+	Body *RunMachinePlaybookJSONRequestBody
+}
+
+type RunMachinePlaybookResponseObject interface {
+	VisitRunMachinePlaybookResponse(w http.ResponseWriter) error
+}
+
+type RunMachinePlaybook200JSONResponse PlaybookResult
+
+func (response RunMachinePlaybook200JSONResponse) VisitRunMachinePlaybookResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type RunMachinePlaybook400JSONResponse struct{ ErrorJSONResponse }
+
+func (response RunMachinePlaybook400JSONResponse) VisitRunMachinePlaybookResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type RunMachinePlaybook404JSONResponse Error
+
+func (response RunMachinePlaybook404JSONResponse) VisitRunMachinePlaybookResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type RunMachinePlaybook500JSONResponse PlaybookResult
+
+func (response RunMachinePlaybook500JSONResponse) VisitRunMachinePlaybookResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type RebootMachineRequestObject struct {
+	Name MachineName `json:"name"`
+}
+
+type RebootMachineResponseObject interface {
+	VisitRebootMachineResponse(w http.ResponseWriter) error
+}
+
+type RebootMachine200JSONResponse MachineInfo
+
+func (response RebootMachine200JSONResponse) VisitRebootMachineResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type RebootMachine404JSONResponse struct{ ErrorJSONResponse }
+
+func (response RebootMachine404JSONResponse) VisitRebootMachineResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type RebootMachine500JSONResponse Error
+
+func (response RebootMachine500JSONResponse) VisitRebootMachineResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type RebootMachine502JSONResponse Error
+
+func (response RebootMachine502JSONResponse) VisitRebootMachineResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(502)
 
 	return json.NewEncoder(w).Encode(response)
 }
@@ -5031,6 +6881,15 @@ type CreateVM404JSONResponse Error
 func (response CreateVM404JSONResponse) VisitCreateVMResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CreateVM409JSONResponse Error
+
+func (response CreateVM409JSONResponse) VisitCreateVMResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
 
 	return json.NewEncoder(w).Encode(response)
 }
@@ -5671,6 +7530,30 @@ type StrictServerInterface interface {
 	// Delete a disk image
 	// (DELETE /images/{name})
 	DeleteImage(ctx context.Context, request DeleteImageRequestObject) (DeleteImageResponseObject, error)
+	// List metal and alien machines
+	// (GET /metal)
+	ListMachines(ctx context.Context, request ListMachinesRequestObject) (ListMachinesResponseObject, error)
+	// Onboard a metal or alien machine
+	// (POST /metal)
+	AddMachine(ctx context.Context, request AddMachineRequestObject) (AddMachineResponseObject, error)
+	// Forget a machine
+	// (DELETE /metal/{name})
+	RemoveMachine(ctx context.Context, request RemoveMachineRequestObject) (RemoveMachineResponseObject, error)
+	// Show one machine (probes SSH)
+	// (GET /metal/{name})
+	GetMachine(ctx context.Context, request GetMachineRequestObject) (GetMachineResponseObject, error)
+	// Run a command over SSH
+	// (POST /metal/{name}/cmd)
+	RunMachineCommand(ctx context.Context, request RunMachineCommandRequestObject) (RunMachineCommandResponseObject, error)
+	// Interactive SSH (WebSocket upgrade)
+	// (GET /metal/{name}/console)
+	OpenMachineConsole(ctx context.Context, request OpenMachineConsoleRequestObject) (OpenMachineConsoleResponseObject, error)
+	// Run an Ansible playbook against the machine
+	// (POST /metal/{name}/playbook)
+	RunMachinePlaybook(ctx context.Context, request RunMachinePlaybookRequestObject) (RunMachinePlaybookResponseObject, error)
+	// Reboot a machine over SSH
+	// (POST /metal/{name}/reboot)
+	RebootMachine(ctx context.Context, request RebootMachineRequestObject) (RebootMachineResponseObject, error)
 	// List libvirt networks
 	// (GET /networks)
 	ListNetworks(ctx context.Context, request ListNetworksRequestObject) (ListNetworksResponseObject, error)
@@ -5860,6 +7743,232 @@ func (sh *strictHandler) DeleteImage(w http.ResponseWriter, r *http.Request, nam
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(DeleteImageResponseObject); ok {
 		if err := validResponse.VisitDeleteImageResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListMachines operation middleware
+func (sh *strictHandler) ListMachines(w http.ResponseWriter, r *http.Request) {
+	var request ListMachinesRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListMachines(ctx, request.(ListMachinesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListMachines")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListMachinesResponseObject); ok {
+		if err := validResponse.VisitListMachinesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// AddMachine operation middleware
+func (sh *strictHandler) AddMachine(w http.ResponseWriter, r *http.Request) {
+	var request AddMachineRequestObject
+
+	var body AddMachineJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.AddMachine(ctx, request.(AddMachineRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "AddMachine")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(AddMachineResponseObject); ok {
+		if err := validResponse.VisitAddMachineResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RemoveMachine operation middleware
+func (sh *strictHandler) RemoveMachine(w http.ResponseWriter, r *http.Request, name MachineName) {
+	var request RemoveMachineRequestObject
+
+	request.Name = name
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RemoveMachine(ctx, request.(RemoveMachineRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RemoveMachine")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RemoveMachineResponseObject); ok {
+		if err := validResponse.VisitRemoveMachineResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetMachine operation middleware
+func (sh *strictHandler) GetMachine(w http.ResponseWriter, r *http.Request, name MachineName) {
+	var request GetMachineRequestObject
+
+	request.Name = name
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetMachine(ctx, request.(GetMachineRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetMachine")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetMachineResponseObject); ok {
+		if err := validResponse.VisitGetMachineResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RunMachineCommand operation middleware
+func (sh *strictHandler) RunMachineCommand(w http.ResponseWriter, r *http.Request, name MachineName) {
+	var request RunMachineCommandRequestObject
+
+	request.Name = name
+
+	var body RunMachineCommandJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RunMachineCommand(ctx, request.(RunMachineCommandRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RunMachineCommand")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RunMachineCommandResponseObject); ok {
+		if err := validResponse.VisitRunMachineCommandResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// OpenMachineConsole operation middleware
+func (sh *strictHandler) OpenMachineConsole(w http.ResponseWriter, r *http.Request, name MachineName, params OpenMachineConsoleParams) {
+	var request OpenMachineConsoleRequestObject
+
+	request.Name = name
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.OpenMachineConsole(ctx, request.(OpenMachineConsoleRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "OpenMachineConsole")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(OpenMachineConsoleResponseObject); ok {
+		if err := validResponse.VisitOpenMachineConsoleResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RunMachinePlaybook operation middleware
+func (sh *strictHandler) RunMachinePlaybook(w http.ResponseWriter, r *http.Request, name MachineName) {
+	var request RunMachinePlaybookRequestObject
+
+	request.Name = name
+
+	var body RunMachinePlaybookJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RunMachinePlaybook(ctx, request.(RunMachinePlaybookRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RunMachinePlaybook")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RunMachinePlaybookResponseObject); ok {
+		if err := validResponse.VisitRunMachinePlaybookResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RebootMachine operation middleware
+func (sh *strictHandler) RebootMachine(w http.ResponseWriter, r *http.Request, name MachineName) {
+	var request RebootMachineRequestObject
+
+	request.Name = name
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RebootMachine(ctx, request.(RebootMachineRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RebootMachine")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RebootMachineResponseObject); ok {
+		if err := validResponse.VisitRebootMachineResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -6484,69 +8593,92 @@ func (sh *strictHandler) StopVM(w http.ResponseWriter, r *http.Request, name VMN
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"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",
+	"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",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

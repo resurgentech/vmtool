@@ -23,7 +23,7 @@ var (
 	_ api.ServerInterface       = muxHandler{}
 )
 
-var errConsoleNotStrict = errors.New("openVMConsole must be served as a WebSocket upgrade")
+var errConsoleNotStrict = errors.New("console must be served as a WebSocket upgrade")
 
 var upgrader = websocket.Upgrader{
 	CheckOrigin: originAllowed,
@@ -35,7 +35,20 @@ func (h *handlers) OpenVMConsole(_ context.Context, _ api.OpenVMConsoleRequestOb
 	return nil, errConsoleNotStrict
 }
 
-func (h *handlers) serveConsole(w http.ResponseWriter, r *http.Request, name string, params api.OpenVMConsoleParams) {
+// OpenMachineConsole: see OpenVMConsole.
+func (h *handlers) OpenMachineConsole(_ context.Context, _ api.OpenMachineConsoleRequestObject) (api.OpenMachineConsoleResponseObject, error) {
+	return nil, errConsoleNotStrict
+}
+
+// consoleTarget picks what the console sshes to.
+type consoleTarget int
+
+const (
+	consoleVM consoleTarget = iota
+	consoleMachine
+)
+
+func (h *handlers) serveConsole(w http.ResponseWriter, r *http.Request, target consoleTarget, name string, cols, rows *int) {
 	if !originAllowed(r) {
 		writeJSONError(w, http.StatusForbidden, fmt.Errorf("origin not allowed"))
 		return
@@ -44,13 +57,13 @@ func (h *handlers) serveConsole(w http.ResponseWriter, r *http.Request, name str
 		writeJSONError(w, http.StatusBadRequest, fmt.Errorf("websocket upgrade required"))
 		return
 	}
-	cmd, err := h.lookupConsoleCmd(name)
+	cmd, err := h.lookupConsoleCmd(target, name)
 	if err != nil {
 		writeJSONError(w, consoleStatus(err), err)
 		return
 	}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = nil, nil, nil
-	ptmx, err := pty.StartWithSize(cmd, ptySize(params))
+	ptmx, err := pty.StartWithSize(cmd, ptySize(cols, rows))
 	if err != nil {
 		if cmd.Process != nil {
 			_ = cmd.Process.Kill()
@@ -71,9 +84,17 @@ func (h *handlers) serveConsole(w http.ResponseWriter, r *http.Request, name str
 	pipeConsole(conn, ptmx, cmd)
 }
 
-func (h *handlers) lookupConsoleCmd(name string) (*exec.Cmd, error) {
+func (h *handlers) lookupConsoleCmd(target consoleTarget, name string) (*exec.Cmd, error) {
 	if h.consoleCmd != nil {
 		return h.consoleCmd(name)
+	}
+	if target == consoleMachine {
+		c, err := h.svc.MachineSSHCmd(name)
+		if err != nil {
+			return nil, err
+		}
+		c.Stdin, c.Stdout, c.Stderr = nil, nil, nil
+		return c, nil
 	}
 	return defaultConsoleCmd(name)
 }
@@ -154,13 +175,13 @@ func pipeConsole(conn *websocket.Conn, ptyFile *os.File, cmd *exec.Cmd) {
 	<-done
 }
 
-func ptySize(params api.OpenVMConsoleParams) *pty.Winsize {
+func ptySize(colsP, rowsP *int) *pty.Winsize {
 	cols, rows := uint16(80), uint16(24)
-	if params.Cols != nil {
-		cols = clampUint16(*params.Cols, cols)
+	if colsP != nil {
+		cols = clampUint16(*colsP, cols)
 	}
-	if params.Rows != nil {
-		rows = clampUint16(*params.Rows, rows)
+	if rowsP != nil {
+		rows = clampUint16(*rowsP, rows)
 	}
 	return &pty.Winsize{Cols: cols, Rows: rows}
 }

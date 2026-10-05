@@ -165,6 +165,8 @@ func (h *handlers) CreateVM(ctx context.Context, req api.CreateVMRequestObject) 
 			return api.CreateVM400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
 		case app.KindNotFound:
 			return api.CreateVM404JSONResponse(apiErr(err)), nil
+		case app.KindConflict:
+			return api.CreateVM409JSONResponse(apiErr(err)), nil
 		default:
 			return api.CreateVM500JSONResponse(apiErrVM(err, info)), nil
 		}

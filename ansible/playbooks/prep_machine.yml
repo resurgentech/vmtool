@@ -1,0 +1,128 @@
+---
+# Prepare a metal or alien Ubuntu/Debian machine for vmtool.
+# Creates the packer user (password packer) with passwordless sudo and
+# allows SSH password login for packer only, so the box looks like a fresh
+# vmtool image. Afterwards `vmtool metal add` onboards it and runs
+# setup_bot.yml, which replaces packer with bot and key auth. Aliens built
+# from a vmtool image already have packer and can skip this.
+#
+# Run as an existing sudo-capable account on the machine:
+#   ansible-playbook -i '10.0.0.42,' -u <admin> -K ansible/playbooks/prep_machine.yml
+#
+# Password login is enabled through a Match block, so other accounts keep
+# their current sshd policy. The play verifies this and rolls back if not.
+# Safe to re-run.
+- name: Prepare metal/alien machine for vmtool
+  hosts: all
+  become: true
+  vars:
+    prep_user: packer
+    prep_password: packer
+    sshd_dropin: /etc/ssh/sshd_config.d/01-vmtool-packer.conf
+    # Probe a user that cannot exist to read the policy everyone else gets.
+    sshd_probe: "-C user=vmtool-probe-nobody,host=localhost,addr=127.0.0.1"
+
+  tasks:
+    - name: Require an Ubuntu-compatible machine
+      assert:
+        that: ansible_facts['os_family'] == 'Debian'
+        fail_msg: "vmtool machines require Ubuntu/Debian, found {{ ansible_facts['distribution'] }}"
+
+    - name: Ensure openssh-server and sudo are installed
+      apt:
+        name: [openssh-server, sudo]
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Ensure ssh is enabled and running
+      systemd:
+        name: ssh
+        enabled: true
+        state: started
+
+    - name: Create packer user
+      user:
+        name: "{{ prep_user }}"
+        password: "{{ prep_password | password_hash('sha512') }}"
+        update_password: on_create
+        shell: /bin/bash
+        groups: [sudo]
+        append: true
+        create_home: true
+        state: present
+
+    - name: Grant packer passwordless sudo
+      copy:
+        dest: /etc/sudoers.d/{{ prep_user }}
+        content: "{{ prep_user }} ALL=(ALL) NOPASSWD:ALL\n"
+        mode: "0440"
+        validate: visudo -cf %s
+
+    - name: Read sshd policy for other users before change
+      command: sshd -T {{ sshd_probe }}
+      register: sshd_before
+      changed_when: false
+
+    - name: Allow SSH password login for packer only
+      block:
+        - name: Write packer Match drop-in
+          copy:
+            dest: "{{ sshd_dropin }}"
+            mode: "0644"
+            content: |
+              # Managed by vmtool prep_machine.yml; removed by setup_bot.yml.
+              Match User {{ prep_user }}
+                  PasswordAuthentication yes
+                  KbdInteractiveAuthentication yes
+          register: dropin
+
+        - name: Validate full sshd config
+          command: sshd -t
+          changed_when: false
+
+        - name: Read effective sshd policy for packer
+          command: sshd -T -C user={{ prep_user }},host=localhost,addr=127.0.0.1
+          register: sshd_packer
+          changed_when: false
+
+        - name: Read sshd policy for other users after change
+          command: sshd -T {{ sshd_probe }}
+          register: sshd_after
+          changed_when: false
+
+        - name: Check packer gets password auth and nobody else changed
+          assert:
+            that:
+              # Keyword case varies by OpenSSH version.
+              - sshd_packer.stdout is search('(?im)^passwordauthentication yes$')
+              - sshd_before.stdout == sshd_after.stdout
+            fail_msg: >-
+              {{ sshd_dropin }} did not apply cleanly (an earlier sshd_config
+              entry may win, or the Match leaked to other users). Rolling back.
+      rescue:
+        - name: Roll back packer Match drop-in
+          file:
+            path: "{{ sshd_dropin }}"
+            state: absent
+
+        - name: Fail after rollback
+          fail:
+            msg: "sshd drop-in rolled back; sshd config unchanged. See the failed task above."
+
+    - name: Restart ssh when drop-in changed
+      systemd:
+        name: ssh
+        state: restarted
+      when: dropin is changed
+
+    - name: Verify packer/packer SSH login from the control host
+      command: >-
+        sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+        -o LogLevel=ERROR -o PubkeyAuthentication=no -o PreferredAuthentications=password
+        {{ prep_user }}@{{ ansible_host | default(inventory_hostname) }} sudo -n true
+      environment:
+        SSHPASS: "{{ prep_password }}"
+      delegate_to: localhost
+      become: false
+      changed_when: false

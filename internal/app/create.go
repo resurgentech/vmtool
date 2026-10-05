@@ -14,6 +14,9 @@ func (s *Service) CreateVM(_ context.Context, m Manager, in CreateVMInput) (*vmt
 	if in.NetType != "" && in.NetType != "nat" && in.NetType != "bridge" && in.NetType != "direct" {
 		return nil, invalid("create", fmt.Errorf("invalid net_type %q", in.NetType))
 	}
+	if vmtool.IsMachine(in.Name) {
+		return nil, conflict("create", fmt.Errorf("%q is registered as a metal/alien machine", in.Name))
+	}
 
 	diskPath, err := m.ImagePath(in.Image)
 	if err != nil {

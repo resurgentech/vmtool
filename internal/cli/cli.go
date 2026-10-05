@@ -45,6 +45,7 @@ func Execute() error {
 		migrateDiskCmd(),
 		resizeDiskCmd(),
 		addDiskCmd(),
+		metalCmd(),
 		serverCmd(),
 	)
 
@@ -375,6 +376,8 @@ and the remote exit code. Uses .machines credentials when present.
 			if err != nil {
 				return err
 			}
+			// RemoteCmd leaves stdio unset (it is also used for captured runs).
+			c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
 			err = c.Run()
 			if err == nil {
 				return nil

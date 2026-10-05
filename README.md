@@ -96,6 +96,37 @@ scripts/verify-generate.sh             # fail if generated code is stale
 # Interactive SSH from a client: GET ws://127.0.0.1:9473/vms/<name>/console
 ```
 
+## Metal and alien machines
+
+vmtool can also drive machines its libvirt does not manage: **metal** (physical
+boxes) and **alien** (VMs on another hypervisor or a cloud). They are
+SSH/Ansible targets only — cmd, ssh, playbook, reboot. There is no create,
+start, power-off, or disk management. Each one is registered in
+`.machines/<name>/machine.yml` (`kind`, `host`) next to its credentials, and
+shows up in the TUI list with its kind.
+
+Requirements: an Ubuntu-compatible OS, and SSH as `packer`/`packer` with
+passwordless sudo for onboarding. `prep_machine.yml` sets that up from any
+existing admin account; aliens built from a vmtool image already have it.
+
+```bash
+ansible-playbook -i '10.0.0.42,' -u <admin> -K ansible/playbooks/prep_machine.yml
+./vmtool metal add nuc1 10.0.0.42                         # probe, register, run setup_bot.yml
+./vmtool metal add cloud1 203.0.113.7 --kind alien --commission  # cloned alien: new identity first
+./vmtool metal ls                                         # probes each machine over SSH
+./vmtool metal cmd nuc1 uname -a
+./vmtool metal playbook nuc1 vm_upgrade.yml
+./vmtool metal reboot nuc1
+./vmtool metal rm nuc1                                    # forget locally; the machine is untouched
+```
+
+Onboarding runs `setup_bot.yml` with `vmtool_kind=<kind>`: it replaces packer
+with `bot` and key auth, but on machines it disables password login for `bot`
+only and leaves display-manager autologin alone, since the machine has an
+owner. `commission.yml` is refused for machines except through
+`add --kind alien --commission`. A VM delete or create never touches a
+registered machine's `.machines` entry, and VM and machine names cannot collide.
+
 ## Troubleshooting
 
 ### A new VM never gets an IP

@@ -35,6 +35,7 @@ const (
 	modeOutput
 	modeConfirm
 	modeBridge
+	modeAddMachine
 )
 
 type pane int
@@ -90,6 +91,14 @@ const (
 	numBridgeFields
 )
 
+const (
+	mfName = iota
+	mfHost
+	mfKind
+	mfCommission
+	numMachineFields
+)
+
 // --- Command log ---
 
 type logStatus int
@@ -111,8 +120,11 @@ type logEntry struct {
 type model struct {
 	manager *vmtool.Manager
 	vms     []vmtool.VMInfo
-	cursor  int
-	err     error
+	// machines (metal/alien) are listed after vms; cursor spans both.
+	machines   []app.MachineInfo
+	machineErr error
+	cursor     int
+	err        error
 
 	mode       viewMode
 	focus      pane
@@ -151,11 +163,18 @@ type model struct {
 	bridgeField  int
 	bridgeFields []formField
 	bridgeValues []string
+
+	// add machine form
+	machineField  int
+	machineFields []formField
+	machineValues []string
 }
 
 type refreshMsg struct {
-	vms []vmtool.VMInfo
-	err error
+	vms        []vmtool.VMInfo
+	err        error
+	machines   []app.MachineInfo
+	machineErr error
 }
 
 type cmdDoneMsg struct {
@@ -165,6 +184,8 @@ type cmdDoneMsg struct {
 	output string
 	vms    []vmtool.VMInfo
 	err    error
+	// machines, if non-nil, replaces the machine rows.
+	machines []app.MachineInfo
 }
 
 type sshDoneMsg struct {
@@ -201,10 +222,44 @@ type createStageMsg struct {
 	nextFn    func(nextIdx int) tea.Msg // function for next stage
 }
 
-func refresh(m *vmtool.Manager) tea.Cmd {
+// refresh lists VMs and probes machines concurrently; a dead machine costs
+// a few seconds of probe timeout, not the VM list.
+func refresh(m *vmtool.Manager, svc *app.Service) tea.Cmd {
 	return func() tea.Msg {
-		vms, err := m.List()
-		return refreshMsg{vms: vms, err: err}
+		var msg refreshMsg
+		done := make(chan struct{})
+		go func() {
+			msg.machines, msg.machineErr = svc.ListMachines(context.Background())
+			close(done)
+		}()
+		msg.vms, msg.err = m.List()
+		<-done
+		return msg
+	}
+}
+
+func (m model) rowCount() int {
+	return len(m.vms) + len(m.machines)
+}
+
+func (m model) selectedVM() (vmtool.VMInfo, bool) {
+	if m.cursor < len(m.vms) {
+		return m.vms[m.cursor], true
+	}
+	return vmtool.VMInfo{}, false
+}
+
+func (m model) selectedMachine() (app.MachineInfo, bool) {
+	i := m.cursor - len(m.vms)
+	if i >= 0 && i < len(m.machines) {
+		return m.machines[i], true
+	}
+	return app.MachineInfo{}, false
+}
+
+func (m *model) clampCursor() {
+	if n := m.rowCount(); m.cursor >= n && n > 0 {
+		m.cursor = n - 1
 	}
 }
 
@@ -243,7 +298,7 @@ func initialModel(mgr *vmtool.Manager, playbookDir, inventoryPath string) model 
 }
 
 func (m model) Init() tea.Cmd {
-	return refresh(m.manager)
+	return refresh(m.manager, m.svc())
 }
 
 // --- Update dispatch ---
@@ -258,9 +313,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case refreshMsg:
 		m.vms = msg.vms
 		m.err = msg.err
-		if m.cursor >= len(m.vms) && len(m.vms) > 0 {
-			m.cursor = len(m.vms) - 1
-		}
+		m.machines = msg.machines
+		m.machineErr = msg.machineErr
+		m.clampCursor()
 		return m, nil
 
 	case sshDoneMsg:
@@ -268,7 +323,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			idx := m.addLog(fmt.Sprintf("ssh %s: %v", msg.name, msg.err))
 			m.log[idx].status = logStatusError
 		}
-		return m, refresh(m.manager)
+		return m, refresh(m.manager, m.svc())
 
 	case cmdDoneMsg:
 		if msg.logIdx >= 0 && msg.logIdx < len(m.log) {
@@ -279,10 +334,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.vms != nil {
 			m.vms = msg.vms
 			m.err = msg.err
-			if m.cursor >= len(m.vms) && len(m.vms) > 0 {
-				m.cursor = len(m.vms) - 1
-			}
 		}
+		if msg.machines != nil {
+			m.machines = msg.machines
+			m.machineErr = nil
+		}
+		m.clampCursor()
 		return m, nil
 
 	case bridgeCreatedMsg:
@@ -310,9 +367,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.vms != nil {
 			m.vms = msg.vms
 			m.err = msg.err
-			if m.cursor >= len(m.vms) && len(m.vms) > 0 {
-				m.cursor = len(m.vms) - 1
-			}
+			m.clampCursor()
 		}
 		// Chain to next stage if there is one
 		if msg.nextFn != nil {
@@ -334,6 +389,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateBridge(msg)
 		case modePlaybook:
 			return m.updatePlaybook(msg)
+		case modeAddMachine:
+			return m.updateAddMachine(msg)
 		default:
 			return m.updateList(msg)
 		}
@@ -365,7 +422,7 @@ func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "down", "j":
 		if m.focus == paneVMs {
-			if m.cursor < len(m.vms)-1 {
+			if m.cursor < m.rowCount()-1 {
 				m.cursor++
 			}
 		} else {
@@ -384,22 +441,29 @@ func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case "t":
-		if m.focus == paneVMs && len(m.vms) > 0 {
+		if m.focus == paneVMs && m.rowCount() > 0 {
 			return m.sshSelected()
 		}
 	case "r":
-		return m, refresh(m.manager)
+		return m, refresh(m.manager, m.svc())
 	case "c":
 		if m.focus == paneVMs {
 			return m.enterCreateMode()
+		}
+	case "m":
+		if m.focus == paneVMs {
+			return m.enterAddMachineMode()
+		}
+	case "b":
+		if m.focus == paneVMs {
+			return m.confirmReboot()
 		}
 	case "p":
 		if m.focus == paneVMs {
 			return m.enterPlaybookMode()
 		}
 	case "s", "S":
-		if m.focus == paneVMs && len(m.vms) > 0 {
-			vm := m.vms[m.cursor]
+		if vm, ok := m.selectedVM(); ok && m.focus == paneVMs {
 			switch vm.State {
 			case vmtool.StateShutoff:
 				return m.runLifecycle("start", vm.Name, func(svc *app.Service, mgr *vmtool.Manager) error {
@@ -420,8 +484,7 @@ func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case "a":
-		if m.focus == paneVMs && len(m.vms) > 0 {
-			vm := m.vms[m.cursor]
+		if vm, ok := m.selectedVM(); ok && m.focus == paneVMs {
 			newState := !vm.Autostart
 			label := "enable"
 			if !newState {
@@ -436,8 +499,18 @@ func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			})
 		}
 	case "D":
-		if m.focus == paneVMs && len(m.vms) > 0 {
-			vm := m.vms[m.cursor]
+		if mi, ok := m.selectedMachine(); ok && m.focus == paneVMs {
+			name := mi.Name
+			m.confirmMsg = fmt.Sprintf("Forget %s %q? Removes .machines/%s; the machine itself is untouched.", mi.Kind, name, name)
+			m.confirmAction = func() (tea.Model, tea.Cmd) {
+				m.mode = modeList
+				return m.runMachineOp("forget", name, func(svc *app.Service) error {
+					return svc.RemoveMachine(context.Background(), name)
+				})
+			}
+			m.mode = modeConfirm
+		}
+		if vm, ok := m.selectedVM(); ok && m.focus == paneVMs {
 			vmName := vm.Name
 			m.confirmMsg = fmt.Sprintf("Delete %q? This will destroy the VM and remove its disk.", vmName)
 			m.confirmAction = func() (tea.Model, tea.Cmd) {
@@ -453,7 +526,19 @@ func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) sshSelected() (tea.Model, tea.Cmd) {
-	vm := m.vms[m.cursor]
+	if mi, ok := m.selectedMachine(); ok {
+		cmd, err := m.svc().MachineSSHCmd(mi.Name)
+		if err != nil {
+			idx := m.addLog(fmt.Sprintf("ssh %s: %v", mi.Name, err))
+			m.log[idx].status = logStatusError
+			return m, nil
+		}
+		name := mi.Name
+		return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
+			return sshDoneMsg{name: name, err: err}
+		})
+	}
+	vm, _ := m.selectedVM()
 	if vm.State != vmtool.StateRunning || vm.IP == "" {
 		idx := m.addLog(fmt.Sprintf("ssh %s: no IP", vm.Name))
 		m.log[idx].status = logStatusError
@@ -1126,16 +1211,30 @@ func (m model) submitBridge() (tea.Model, tea.Cmd) {
 // --- Playbook mode ---
 
 func (m model) enterPlaybookMode() (tea.Model, tea.Cmd) {
-	if len(m.vms) == 0 {
-		return m, nil
-	}
-	vm := m.vms[m.cursor]
-	if vm.State != vmtool.StateRunning || vm.IP == "" {
+	mi, isMachine := m.selectedMachine()
+	if isMachine {
+		if mi.State != app.MachineReachable {
+			return m, nil
+		}
+	} else if vm, ok := m.selectedVM(); !ok || vm.State != vmtool.StateRunning || vm.IP == "" {
 		return m, nil
 	}
 
 	playbooks, err := vmtool.ListPlaybooks(m.playbookDir)
-	if err != nil || len(playbooks) == 0 {
+	if err != nil {
+		return m, nil
+	}
+	if isMachine {
+		// The service refuses commission.yml on machines; don't offer it.
+		kept := playbooks[:0]
+		for _, pb := range playbooks {
+			if pb != "commission.yml" {
+				kept = append(kept, pb)
+			}
+		}
+		playbooks = kept
+	}
+	if len(playbooks) == 0 {
 		return m, nil
 	}
 
@@ -1167,8 +1266,19 @@ func (m model) updatePlaybook(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) runPlaybook() (tea.Model, tea.Cmd) {
-	vm := m.vms[m.cursor]
 	pb := m.playbooks[m.playbookIdx]
+	if mi, ok := m.selectedMachine(); ok {
+		name := mi.Name
+		m.mode = modeList
+		return m.runMachineOutput(pb+" on "+name, func(svc *app.Service) (string, error) {
+			res, err := svc.RunMachinePlaybook(context.Background(), name, pb, nil)
+			if res == nil {
+				return "", err
+			}
+			return res.Output, err
+		})
+	}
+	vm, _ := m.selectedVM()
 
 	logIdx := m.addLog(fmt.Sprintf("running %s on %s...", pb, vm.Name))
 	m.mode = modeList
@@ -1243,6 +1353,8 @@ func (m model) View() string {
 		return b.String() + m.viewOutput()
 	case modeConfirm:
 		return b.String() + m.viewConfirm()
+	case modeAddMachine:
+		return b.String() + m.viewAddMachine()
 	}
 
 	// --- VM list pane ---
@@ -1250,14 +1362,21 @@ func (m model) View() string {
 
 	if m.err != nil {
 		b.WriteString(fmt.Sprintf("Error: %v\n", m.err))
-	} else if len(m.vms) == 0 {
-		b.WriteString("  No VMs found.\n")
+	}
+	if m.machineErr != nil {
+		b.WriteString(fmt.Sprintf("Machines error: %v\n", m.machineErr))
+	}
+	if m.rowCount() == 0 {
+		if m.err == nil {
+			b.WriteString("  No VMs or machines found.\n")
+		}
 	} else {
-		header := fmt.Sprintf("  %-20s %-10s %-6s %-10s %-11s %s", "NAME", "STATE", "VCPUS", "MEMORY", "AUTOSTART", "IP")
+		header := fmt.Sprintf("  %-20s %-6s %-12s %-6s %-10s %-11s %s", "NAME", "KIND", "STATE", "VCPUS", "MEMORY", "AUTOSTART", "IP/HOST")
 		b.WriteString(statusStyle.Render(header))
 		b.WriteString("\n")
 
-		for i, vm := range m.vms {
+		lines := make([]string, 0, m.rowCount())
+		for _, vm := range m.vms {
 			ip := vm.IP
 			if ip == "" {
 				ip = "-"
@@ -1266,9 +1385,15 @@ func (m model) View() string {
 			if vm.Autostart {
 				autostart = "on"
 			}
-			line := fmt.Sprintf("  %-20s %-10s %-6d %-10s %-11s %s",
-				vm.Name, vm.State, vm.VCPUs, fmt.Sprintf("%d GiB", vm.Memory), autostart, ip)
+			lines = append(lines, fmt.Sprintf("  %-20s %-6s %-12s %-6d %-10s %-11s %s",
+				vm.Name, "vm", vm.State, vm.VCPUs, fmt.Sprintf("%d GiB", vm.Memory), autostart, ip))
+		}
+		for _, mi := range m.machines {
+			lines = append(lines, fmt.Sprintf("  %-20s %-6s %-12s %-6s %-10s %-11s %s",
+				mi.Name, mi.Kind, mi.State, "-", "-", "-", mi.Host))
+		}
 
+		for i, line := range lines {
 			if i == m.cursor && vmFocus {
 				b.WriteString(selectedStyle.Render("> " + line[2:]))
 			} else if i == m.cursor {
@@ -1345,7 +1470,7 @@ func (m model) View() string {
 
 	b.WriteString("\n")
 	if m.focus == paneVMs {
-		b.WriteString(helpStyle.Render("c=create  s=start/stop  a=autostart  p=playbook  t=ssh  D=delete  r=refresh  tab=log  q=quit"))
+		b.WriteString(helpStyle.Render("c=create  m=add machine  s=start/stop  b=reboot  a=autostart  p=playbook  t=ssh  D=delete/forget  r=refresh  tab=log  q=quit"))
 	} else {
 		b.WriteString(helpStyle.Render("enter=view output  tab=vms  q=quit"))
 	}
@@ -1425,8 +1550,13 @@ func (m model) viewBridge() string {
 
 func (m model) viewPlaybook() string {
 	var b strings.Builder
-	vm := m.vms[m.cursor]
-	b.WriteString(promptStyle.Render(fmt.Sprintf("Run playbook on %s (%s)", vm.Name, vm.IP)))
+	name, addr := "", ""
+	if mi, ok := m.selectedMachine(); ok {
+		name, addr = mi.Name, mi.Host
+	} else if vm, ok := m.selectedVM(); ok {
+		name, addr = vm.Name, vm.IP
+	}
+	b.WriteString(promptStyle.Render(fmt.Sprintf("Run playbook on %s (%s)", name, addr)))
 	b.WriteString("\n\n")
 
 	for i, pb := range m.playbooks {
