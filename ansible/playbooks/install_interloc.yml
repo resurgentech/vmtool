@@ -120,3 +120,39 @@
         regexp: '^\s*(export\s+)?INTERLOCD_USER='
         line: "INTERLOCD_USER={{ interloc_user }}"
       notify: Restart interlocd
+
+    # The deb can't know the agent's home, so link its Hermes skill in here.
+    # Symlink to the packaged dir so deb upgrades update the skill in place.
+    - name: Check for packaged Hermes skill
+      stat:
+        path: /usr/share/interlocd/skills/interloc-docs/SKILL.md
+      register: interloc_skill
+
+    - name: Look up {{ interloc_user }} home
+      getent:
+        database: passwd
+        key: "{{ interloc_user }}"
+      when: interloc_skill.stat.exists
+
+    - name: Create Hermes skills dir for {{ interloc_user }}
+      file:
+        path: "{{ getent_passwd[interloc_user][4] }}/{{ item }}"
+        state: directory
+        owner: "{{ interloc_user }}"
+        group: "{{ interloc_user }}"
+        mode: "0755"
+      loop:
+        - .hermes
+        - .hermes/skills
+        - .hermes/skills/documents
+      when: interloc_skill.stat.exists
+
+    - name: Link interloc-docs skill into Hermes
+      file:
+        src: /usr/share/interlocd/skills/interloc-docs
+        dest: "{{ getent_passwd[interloc_user][4] }}/.hermes/skills/documents/interloc-docs"
+        state: link
+        force: true
+        owner: "{{ interloc_user }}"
+        group: "{{ interloc_user }}"
+      when: interloc_skill.stat.exists
