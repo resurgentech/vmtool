@@ -60,6 +60,37 @@ The paths and versions are variables at the top of the [`justfile`](justfile)
 (`hv_dir`, `hv_pool_dir`, `go_min`, `go_install_version`). Re-running is a
 no-op.
 
+Then put the daemon on it, from the workstation:
+
+```bash
+just prereqs veritech04     # once per host: vmtool user, /opt/vmtool, pool
+just deploy veritech04      # build, certify, configure, start
+```
+
+`just deploy <host>` stops before copying anything if the host's Go is too
+old or if `just prereqs <host>` has not run (no `vmtool` user or no
+`/opt/vmtool`). It copies the tracked files to
+`~/.cache/vmtool-deploy/src` on the host and builds there as your login user
+(nothing is built with sudo), issues the host's certificate, writes
+`config.yml` (role `hypervisor`, the token's hash only; the token goes over
+ssh stdin, never in an argument and never through a sudo prompt) and then
+installs everything with a single `sudo`, which may ask for your password
+once. The service runs as `vmtool`, never as your user:
+
+```
+/opt/vmtool/                 vmtool:vmtool 0750  working directory and HOME
+  vmtool                     0755  the daemon
+  config.yml                 0600  role: hypervisor, listen 0.0.0.0:9473, token hash
+  tls/<host>.labtwo.crt      0644
+  tls/<host>.labtwo.key      0600
+  image-manifest.yml         written by the daemon
+/etc/systemd/system/vmtool.service   User=vmtool, ExecStart=/opt/vmtool/vmtool server
+```
+
+The staged `config.yml` and key are removed after the install. `just cert
+<host>` on its own renews the certificate the same way (into
+`/opt/vmtool/tls`, owner `vmtool`) and restarts the service if it is running.
+
 ### Ubuntu / Debian (manual)
 
 ```bash

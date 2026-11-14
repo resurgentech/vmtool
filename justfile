@@ -31,7 +31,7 @@ token:
 token-fetch:
     VMTOOL_ROOT="{{ root }}" BAO_TOKEN_PATH="{{ bao_token_path }}" "{{ root }}/scripts/token.sh" fetch
 
-# Issue a TLS cert for <host> from the OpenBao CA (workstation only; remote hosts get it over scp)
+# Issue a TLS cert for <host> from the OpenBao CA (workstation only); a remote host gets it in hv_dir/tls (one sudo) and vmtool is try-restarted
 cert host:
     VMTOOL_ROOT="{{ root }}" VMTOOL_DOMAIN="{{ domain }}" BAO_CA_PATH="{{ bao_ca_path }}" CERT_DAYS="{{ cert_days }}" HV_DIR="{{ hv_dir }}" "{{ root }}/scripts/cert.sh" "{{ host }}"
 
@@ -43,7 +43,7 @@ install:
 prereqs *ARGS:
     VMTOOL_ROOT="{{ root }}" HV_DIR="{{ hv_dir }}" HV_POOL_DIR="{{ hv_pool_dir }}" GO_MIN="{{ go_min }}" GO_INSTALL_VERSION="{{ go_install_version }}" "{{ root }}/scripts/prereqs.sh" {{ ARGS }}
 
-# Build vmtool on <host> over ssh, certify it, write its config.yml and run it as a systemd service
+# Build vmtool on <host> over ssh (after `just prereqs <host>`), install it into hv_dir with one sudo and run it as the vmtool user
 deploy host:
     VMTOOL_ROOT="{{ root }}" VMTOOL_DOMAIN="{{ domain }}" BAO_CA_PATH="{{ bao_ca_path }}" CERT_DAYS="{{ cert_days }}" HV_DIR="{{ hv_dir }}" GO_MIN="{{ go_min }}" "{{ root }}/scripts/deploy.sh" "{{ host }}"
 

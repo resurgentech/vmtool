@@ -35,8 +35,8 @@ func newCertEnv(t *testing.T, config string) *certEnv {
 	e := &certEnv{stub: t.TempDir(), wd: t.TempDir(), caCrt: filepath.Join(ca, "ca.crt"), caKey: filepath.Join(ca, "ca.key")}
 	addStub(t, e.stub, "bao", `if [[ "$1 $2 $3" == "kv get -field=string" ]]; then
   case "$4" in
-    */crt) cat `+e.caCrt+` ;;
-    */key) cat `+e.caKey+` ;;
+    */crt) cat '`+e.caCrt+`' ;;
+    */key) cat '`+e.caKey+`' ;;
     *) exit 3 ;;
   esac
 fi`)
@@ -148,33 +148,134 @@ func TestCertRemote(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(e.wd, "tls", "optimus.labtwo.key")); err == nil {
 		t.Error("local key not deleted after scp")
 	}
-	ssh := readOr(t, filepath.Join(e.stub, "ssh.argv"))
-	if !strings.Contains(ssh, "alice@10.0.0.5 mkdir -p /home/alice/vmtool/tls") {
-		t.Errorf("ssh argv: %q", ssh)
+	lines := strings.Split(strings.TrimSpace(readOr(t, filepath.Join(e.stub, "ssh.argv"))), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("want 2 ssh calls (stage dir, sudo install), got %q", lines)
+	}
+	if l := lines[0]; !strings.HasPrefix(l, "alice@10.0.0.5 ") || !strings.Contains(l, `umask 077 && mkdir -p "$HOME/.cache/vmtool-deploy/stage/tls"`) || strings.Contains(l, "sudo") {
+		t.Errorf("staging call: %q", l)
 	}
 	scp := readOr(t, filepath.Join(e.stub, "scp.argv"))
 	if !strings.Contains(scp, "optimus.labtwo.crt") || !strings.Contains(scp, "optimus.labtwo.key") ||
-		!strings.Contains(scp, "alice@10.0.0.5:/home/alice/vmtool/tls/") {
+		!strings.Contains(scp, "alice@10.0.0.5:.cache/vmtool-deploy/stage/tls/") {
 		t.Errorf("scp argv: %q", scp)
 	}
 	files := readOr(t, filepath.Join(e.stub, "scp.files"))
 	if !regexp.MustCompile(`optimus\.labtwo\.key 600`).MatchString(files) {
 		t.Errorf("key not 0600 when copied: %q", files)
 	}
+	inst := lines[1]
+	if !strings.HasPrefix(inst, "-t alice@10.0.0.5 ") || strings.Count(inst, "sudo") != 1 {
+		t.Errorf("want one ssh -t call with one sudo: %q", inst)
+	}
+	for _, w := range []string{
+		"sudo sh -c",
+		"install -o vmtool -g vmtool -m 0644 \"$1/tls/optimus.labtwo.crt\" /opt/vmtool/tls/optimus.labtwo.crt",
+		"install -o vmtool -g vmtool -m 0600 \"$1/tls/optimus.labtwo.key\" /opt/vmtool/tls/optimus.labtwo.key",
+		"systemctl try-restart vmtool",
+		`rm -f "$s/tls/optimus.labtwo.key"`,
+	} {
+		if !strings.Contains(inst, w) {
+			t.Errorf("install call lacks %q: %q", w, inst)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(e.stub, "sudo.argv")); err == nil {
+		t.Error("sudo run on the workstation")
+	}
 	e.noCAKey(t)
 }
 
-func TestCertRemoteDirOverride(t *testing.T) {
+// deploy sets CERT_STAGE_ONLY=1: cert.sh stages the files and runs no sudo.
+func TestCertRemoteStageOnly(t *testing.T) {
 	e := newCertEnv(t, "role: workstation\nname: jetfire\n")
 	addStub(t, e.stub, "vmtool", `echo "10.0.0.5 alice"`)
-	r := e.run(t, []string{"REMOTE_DIR=/srv/vm"}, "optimus")
+	r := e.run(t, []string{"CERT_STAGE_ONLY=1"}, "optimus")
 	if r.code != 0 {
 		t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
 	}
-	if !strings.Contains(readOr(t, filepath.Join(e.stub, "ssh.argv")), "mkdir -p /srv/vm/tls") ||
-		!strings.Contains(readOr(t, filepath.Join(e.stub, "scp.argv")), ":/srv/vm/tls/") {
-		t.Error("REMOTE_DIR not used")
+	ssh := readOr(t, filepath.Join(e.stub, "ssh.argv"))
+	if strings.Count(ssh, "\n") != 1 || strings.Contains(ssh, "sudo") || strings.Contains(ssh, "-t ") || strings.Contains(ssh, "try-restart") {
+		t.Errorf("stage-only ran more than the staging call: %q", ssh)
 	}
+	if !strings.Contains(readOr(t, filepath.Join(e.stub, "scp.argv")), "alice@10.0.0.5:.cache/vmtool-deploy/stage/tls/") {
+		t.Error("not staged")
+	}
+	if _, err := os.Stat(filepath.Join(e.wd, "tls", "optimus.labtwo.key")); err == nil {
+		t.Error("local key not deleted after scp")
+	}
+}
+
+// HV_DIR moves the install target; an old REMOTE_DIR is ignored.
+func TestCertHVDirOverride(t *testing.T) {
+	e := newCertEnv(t, "role: workstation\nname: jetfire\n")
+	addStub(t, e.stub, "vmtool", `echo "10.0.0.5 alice"`)
+	r := e.run(t, []string{"HV_DIR=/srv/vm", "REMOTE_DIR=/elsewhere"}, "optimus")
+	if r.code != 0 {
+		t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
+	}
+	ssh := readOr(t, filepath.Join(e.stub, "ssh.argv"))
+	if !strings.Contains(ssh, "/srv/vm/tls/optimus.labtwo.key") || strings.Contains(ssh, "/opt/vmtool") {
+		t.Errorf("HV_DIR not used: %q", ssh)
+	}
+	if strings.Contains(ssh+readOr(t, filepath.Join(e.stub, "scp.argv")), "/elsewhere") {
+		t.Error("REMOTE_DIR used")
+	}
+	if !strings.Contains(r.stderr, "REMOTE_DIR") {
+		t.Errorf("no warning that REMOTE_DIR is ignored: %q", r.stderr)
+	}
+}
+
+func TestCertUnsafeHVDir(t *testing.T) {
+	for _, d := range []string{"srv/vm", "/srv/v m", "/srv/$(id)", "/srv/v'm", "/"} {
+		t.Run(d, func(t *testing.T) {
+			e := newCertEnv(t, "role: workstation\nname: jetfire\n")
+			addStub(t, e.stub, "vmtool", `echo "10.0.0.5 alice"`)
+			r := e.run(t, []string{"HV_DIR=" + d}, "optimus")
+			if r.code == 0 || !strings.Contains(r.stderr, "HV_DIR") {
+				t.Fatalf("want HV_DIR refusal, got %d %q", r.code, r.stderr)
+			}
+			for _, f := range []string{"bao.argv", "ssh.argv", "scp.argv"} {
+				if _, err := os.Stat(filepath.Join(e.stub, f)); err == nil {
+					t.Errorf("%s called despite an unsafe HV_DIR", f)
+				}
+			}
+		})
+	}
+}
+
+// `just cert <host>` on its own, with the remote side run for real (see
+// newRemoteEnv): staged, installed for vmtool, staged key removed,
+// try-restart, one sudo.
+func TestCertRemoteCommandsRun(t *testing.T) {
+	e, rhome, hv := newRemoteEnv(t)
+	r := e.run(t, []string{"HV_DIR=" + hv}, "veritech01")
+	if r.code != 0 {
+		t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
+	}
+	want := hv + "/tls/veritech01.labtwo.crt 0644\n" + hv + "/tls/veritech01.labtwo.key 0600\n"
+	if got := readOr(t, filepath.Join(e.stub, "installed.list")); got != want {
+		t.Errorf("installed:\n%s\nwant:\n%s", got, want)
+	}
+	if !strings.Contains(readOr(t, filepath.Join(e.stub, "installed", "veritech01.labtwo.key")), "PRIVATE KEY") {
+		t.Error("installed key is not a key")
+	}
+	if got := strings.TrimSpace(readOr(t, filepath.Join(e.stub, "systemctl.argv"))); got != "try-restart vmtool" {
+		t.Errorf("systemctl %q", got)
+	}
+	if n := strings.Count(readOr(t, filepath.Join(e.stub, "sudo.argv")), "\n"); n != 1 {
+		t.Errorf("sudo ran %d times", n)
+	}
+	stage := filepath.Join(rhome, ".cache", "vmtool-deploy", "stage", "tls")
+	if m := fileMode(t, stage); m != 0o700 {
+		t.Errorf("stage/tls mode %v", m)
+	}
+	if _, err := os.Stat(filepath.Join(stage, "veritech01.labtwo.key")); err == nil {
+		t.Error("staged key not removed")
+	}
+	if _, err := os.Stat(filepath.Join(e.wd, "tls", "veritech01.labtwo.key")); err == nil {
+		t.Error("local key kept")
+	}
+	e.noCAKey(t)
 }
 
 func TestCertScpFailureKeepsKey(t *testing.T) {
@@ -187,6 +288,9 @@ func TestCertScpFailureKeepsKey(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(e.wd, "tls", "optimus.labtwo.key")); err != nil {
 		t.Error("key deleted although scp failed")
+	}
+	if strings.Contains(readOr(t, filepath.Join(e.stub, "ssh.argv")), "sudo") {
+		t.Error("install attempted although scp failed")
 	}
 }
 

@@ -2,8 +2,11 @@
 # Issue a TLS certificate for a host, signed by the private CA held in OpenBao.
 #
 #   scripts/cert.sh <host>       tls/<host>.<domain>.{crt,key}; for a host other
-#                                than this one, copy both to the host and drop
-#                                the local key
+#                                than this one, copy both to the host's staging
+#                                dir ~/.cache/vmtool-deploy/stage/tls, drop the
+#                                local key, then (one `ssh -t`, one sudo)
+#                                install them into HV_DIR/tls owned by vmtool,
+#                                remove the staged key and try-restart vmtool
 #   scripts/cert.sh --local-name print this machine's host name (name: in
 #                                config.yml, else `hostname -s`)
 #
@@ -12,8 +15,9 @@
 #   VMTOOL_DOMAIN   DNS domain appended to the host name
 #   BAO_CA_PATH     OpenBao kv path holding the CA: <path>/crt and <path>/key
 #   CERT_DAYS       certificate lifetime in days
-#   REMOTE_DIR      vmtool directory on the remote host
-#                   (default /home/<ssh_user>/vmtool)
+#   HV_DIR          daemon directory on a remote host (default /opt/vmtool)
+#   CERT_STAGE_ONLY 1: stop after staging (deploy installs the files itself)
+# REMOTE_DIR (the old home-directory layout) is ignored, with a warning.
 #   VMTOOL_BIN      vmtool binary, used for `config host` (default <root>/vmtool)
 #
 # The CA key is read by `bao` straight into an openssl process substitution
@@ -74,7 +78,15 @@ if [[ $host != "$(local_name)" ]]; then
   read -r addr ssh_user < <(cd "$root" && "$vmtool_bin" config host "$host") \
     || die "'vmtool config host $host' failed; is $host in config.yml?"
   [[ -n ${addr:-} && -n ${ssh_user:-} ]] || die "no address/ssh_user for host $host in config.yml."
-  rdir="${REMOTE_DIR:-/home/$ssh_user/vmtool}"
+  # Both form ssh's destination argument: nothing ssh could read as an option.
+  [[ $ssh_user =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ ]] || die "ssh_user '$ssh_user' for $host in config.yml is not a plain user name."
+  [[ $addr =~ ^[A-Za-z0-9][A-Za-z0-9.:-]*$ ]] || die "address '$addr' for $host in config.yml is not a plain host name or IP."
+  target="$ssh_user@$addr"
+  hv="${HV_DIR:-/opt/vmtool}"
+  # hv and fqdn land in a remote shell command unquoted.
+  [[ $hv =~ ^/[A-Za-z0-9._/-]+$ ]] || die "HV_DIR '$hv' has characters unsafe in a shell command."
+  [[ $domain =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] || die "invalid domain '$domain'"
+  [[ -z ${REMOTE_DIR:-} ]] || echo "WARNING: REMOTE_DIR is no longer used and is ignored; the certificate goes to HV_DIR ($hv)." >&2
 fi
 
 umask 077
@@ -108,9 +120,26 @@ mv -f "$tmp/crt" "$crt"
 echo "Wrote $crt and $key (mode 0600)."
 
 if [[ $remote == yes ]]; then
-  ssh "$ssh_user@$addr" mkdir -p "$rdir/tls" || die "ssh $ssh_user@$addr failed; the key stays at $key."
-  scp -p "$crt" "$key" "$ssh_user@$addr:$rdir/tls/" || die "scp to $ssh_user@$addr failed; the key stays at $key."
-  ssh "$ssh_user@$addr" chmod 600 "$rdir/tls/$fqdn.key" || die "could not chmod the remote key; the key stays at $key."
+  # Staging dir in the login user's home; $HOME is expanded remotely.
+  stage='$HOME/.cache/vmtool-deploy/stage'
+  ssh "$target" "umask 077 && mkdir -p \"$stage/tls\" && chmod 700 \"\$HOME/.cache/vmtool-deploy\" \"$stage\" \"$stage/tls\"" \
+    || die "ssh $target failed; the key stays at $key."
+  # scp -p keeps the key's 0600; a relative path is under the remote home.
+  scp -p "$crt" "$key" "$target:.cache/vmtool-deploy/stage/tls/" || die "scp to $target failed; the key stays at $key."
   rm -f "$key"
-  echo "Copied to $ssh_user@$addr:$rdir/tls/ and removed the local key."
+  echo "Copied to $target:~/.cache/vmtool-deploy/stage/tls/ and removed the local key."
+  [[ ${CERT_STAGE_ONLY:-} != 1 ]] || exit 0
+
+  # One sudo (run by `sh -c`, staging dir as $1; no single quotes inside).
+  # -t so a password prompt works. The staged key is removed either way.
+  own='install -o vmtool -g vmtool'
+  script="set -e"
+  script+="; test -d $hv || { echo \"$hv missing: run just prereqs $host first\" >&2; exit 1; }"
+  script+="; install -d -o vmtool -g vmtool -m 0700 $hv/tls"
+  script+="; $own -m 0644 \"\$1/tls/$fqdn.crt\" $hv/tls/$fqdn.crt"
+  script+="; $own -m 0600 \"\$1/tls/$fqdn.key\" $hv/tls/$fqdn.key"
+  script+="; systemctl try-restart vmtool"
+  ssh -t "$target" "s=\"$stage\"; sudo sh -c '$script' sh \"\$s\"; rc=\$?; rm -f \"\$s/tls/$fqdn.key\"; exit \$rc" \
+    || die "installing the certificate into $hv/tls on $host failed; the staged key was removed. Re-run 'just cert $host'."
+  echo "Installed into $host:$hv/tls (owner vmtool); vmtool restarted if it was running."
 fi
