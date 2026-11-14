@@ -18,6 +18,9 @@ type handlers struct {
 	listen string
 	// hosts maps {host} to a Manager; chain fills it when nil.
 	hosts *hosts.Resolver
+	// role is the server's config.yml role. config.RoleHypervisor makes chain
+	// refuse the workstation-only operations; empty means workstation.
+	role string
 	// vmIP and dialGuest are the tunnel's VM lookup and guest dial (tunnel.go).
 	// nil means the resolver's Manager and a 5 s TCP dial; tests inject fakes.
 	vmIP      func(ctx context.Context, host, name string) (string, error)

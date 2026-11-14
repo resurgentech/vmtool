@@ -69,6 +69,21 @@ const (
 	Unreachable MachineInfoState = "unreachable"
 )
 
+// Defines values for NetworkConfigMacvtapMode.
+const (
+	NetworkConfigMacvtapModeBridge      NetworkConfigMacvtapMode = "bridge"
+	NetworkConfigMacvtapModePassthrough NetworkConfigMacvtapMode = "passthrough"
+	NetworkConfigMacvtapModePrivate     NetworkConfigMacvtapMode = "private"
+	NetworkConfigMacvtapModeVepa        NetworkConfigMacvtapMode = "vepa"
+)
+
+// Defines values for NetworkConfigType.
+const (
+	NetworkConfigTypeBridge NetworkConfigType = "bridge"
+	NetworkConfigTypeDirect NetworkConfigType = "direct"
+	NetworkConfigTypeNat    NetworkConfigType = "nat"
+)
+
 // Defines values for VMInfoState.
 const (
 	Crashed   VMInfoState = "crashed"
@@ -117,6 +132,18 @@ type AddMachineRequestKind string
 // AutostartRequest defines model for AutostartRequest.
 type AutostartRequest struct {
 	Enabled bool `json:"enabled"`
+}
+
+// CloneVolumeRequest defines model for CloneVolumeRequest.
+type CloneVolumeRequest struct {
+	// BasePath volume to clone; must resolve inside a storage pool
+	BasePath string `json:"base_path"`
+
+	// NewName plain name; the clone is {new_name}.qcow2
+	NewName string `json:"new_name"`
+
+	// TargetPool default is `default`
+	TargetPool *string `json:"target_pool,omitempty"`
 }
 
 // CmdRequest defines model for CmdRequest.
@@ -185,6 +212,42 @@ type CreateVMRequestMacvtapMode string
 // CreateVMRequestNetType nat = libvirt virtual network (default). bridge = host bridge. direct = macvtap on a physical NIC.
 type CreateVMRequestNetType string
 
+// CreateVolumeRequest defines model for CreateVolumeRequest.
+type CreateVolumeRequest struct {
+	// Name plain file name; .qcow2 is appended if missing
+	Name string `json:"name"`
+
+	// Pool storage pool; default is `default`
+	Pool   *string `json:"pool,omitempty"`
+	SizeGb int     `json:"size_gb"`
+}
+
+// DefineVMRequest Mirrors the Go VMConfig minus the VM name (it is in the path) and minus ssh_user and ssh_pass, which never reach a daemon.
+type DefineVMRequest struct {
+	// DiskPath boot volume; must resolve inside a storage pool
+	DiskPath string `json:"disk_path"`
+
+	// DiskSizeGb 0 keeps the volume size
+	DiskSizeGb      *int          `json:"disk_size_gb,omitempty"`
+	ExtraDiskPool   *string       `json:"extra_disk_pool,omitempty"`
+	ExtraDiskSizeGb *int          `json:"extra_disk_size_gb,omitempty"`
+	ExtraDisks      *[]DiskDevice `json:"extra_disks,omitempty"`
+	MemoryGib       int           `json:"memory_gib"`
+	Network         NetworkConfig `json:"network"`
+	Noclone         *bool         `json:"noclone,omitempty"`
+	Pool            *string       `json:"pool,omitempty"`
+	Vcpus           int           `json:"vcpus"`
+}
+
+// DiskDevice defines model for DiskDevice.
+type DiskDevice struct {
+	// Path volume path; must resolve inside a storage pool
+	Path string `json:"path"`
+
+	// Target guest virtio device name (vdb, vdc, …)
+	Target string `json:"target"`
+}
+
 // Error defines model for Error.
 type Error struct {
 	Error string `json:"error"`
@@ -238,6 +301,28 @@ type MigrateDiskRequest struct {
 	Pool string `json:"pool"`
 }
 
+// NetworkConfig defines model for NetworkConfig.
+type NetworkConfig struct {
+	// MacvtapMode only used when type is direct
+	MacvtapMode *NetworkConfigMacvtapMode `json:"macvtap_mode,omitempty"`
+
+	// Source network name (nat), bridge name (bridge) or host NIC (direct)
+	Source *string           `json:"source,omitempty"`
+	Type   NetworkConfigType `json:"type"`
+}
+
+// NetworkConfigMacvtapMode only used when type is direct
+type NetworkConfigMacvtapMode string
+
+// NetworkConfigType defines model for NetworkConfig.Type.
+type NetworkConfigType string
+
+// PathResult defines model for PathResult.
+type PathResult struct {
+	// Path absolute path on the hypervisor
+	Path string `json:"path"`
+}
+
 // PlaybookRequest defines model for PlaybookRequest.
 type PlaybookRequest struct {
 	// ExtraVars Ansible extra-vars (`--extra-vars key=value`). vmtool always sets deviceid to the VM name unless this map already contains deviceid.
@@ -271,6 +356,18 @@ type ResizeDiskResult struct {
 	Vm              VMInfo  `json:"vm"`
 }
 
+// ResizeVMVolumeRequest defines model for ResizeVMVolumeRequest.
+type ResizeVMVolumeRequest struct {
+	SizeGb int `json:"size_gb"`
+}
+
+// ResizeVolumeRequest defines model for ResizeVolumeRequest.
+type ResizeVolumeRequest struct {
+	// Path volume path; must resolve inside a storage pool
+	Path      string `json:"path"`
+	SizeBytes int64  `json:"size_bytes"`
+}
+
 // VMInfo defines model for VMInfo.
 type VMInfo struct {
 	Autostart bool   `json:"autostart"`
@@ -298,8 +395,21 @@ type VersionInfo struct {
 	Host string `json:"host"`
 }
 
+// WaitIPRequest defines model for WaitIPRequest.
+type WaitIPRequest struct {
+	TimeoutSeconds *int `json:"timeout_seconds,omitempty"`
+}
+
+// WaitIPResult defines model for WaitIPResult.
+type WaitIPResult struct {
+	Ip string `json:"ip"`
+}
+
 // HostName defines model for HostName.
 type HostName = string
+
+// ImageName defines model for ImageName.
+type ImageName = string
 
 // MachineName defines model for MachineName.
 type MachineName = string
@@ -310,6 +420,9 @@ type VMName = string
 // Unauthorized defines model for Unauthorized.
 type Unauthorized = Error
 
+// WorkstationOnly defines model for WorkstationOnly.
+type WorkstationOnly = Error
+
 // DeleteImageParams defines parameters for DeleteImage.
 type DeleteImageParams struct {
 	Pool *string `form:"pool,omitempty" json:"pool,omitempty"`
@@ -317,6 +430,12 @@ type DeleteImageParams struct {
 
 // DeleteVMParams defines parameters for DeleteVM.
 type DeleteVMParams struct {
+	// Noclone if true, undefine only and keep the disk
+	Noclone *bool `form:"noclone,omitempty" json:"noclone,omitempty"`
+}
+
+// DeleteVMDefinitionParams defines parameters for DeleteVMDefinition.
+type DeleteVMDefinitionParams struct {
 	// Noclone if true, undefine only and keep the disk
 	Noclone *bool `form:"noclone,omitempty" json:"noclone,omitempty"`
 }
@@ -336,6 +455,9 @@ type SetAutostartJSONRequestBody = AutostartRequest
 // RunVMCommandJSONRequestBody defines body for RunVMCommand for application/json ContentType.
 type RunVMCommandJSONRequestBody = CmdRequest
 
+// DefineVMJSONRequestBody defines body for DefineVM for application/json ContentType.
+type DefineVMJSONRequestBody = DefineVMRequest
+
 // MigrateDiskJSONRequestBody defines body for MigrateDisk for application/json ContentType.
 type MigrateDiskJSONRequestBody = MigrateDiskRequest
 
@@ -344,6 +466,21 @@ type RunPlaybookJSONRequestBody = PlaybookRequest
 
 // ResizeDiskJSONRequestBody defines body for ResizeDisk for application/json ContentType.
 type ResizeDiskJSONRequestBody = ResizeDiskRequest
+
+// ResizeVMVolumeJSONRequestBody defines body for ResizeVMVolume for application/json ContentType.
+type ResizeVMVolumeJSONRequestBody = ResizeVMVolumeRequest
+
+// WaitVMIPJSONRequestBody defines body for WaitVMIP for application/json ContentType.
+type WaitVMIPJSONRequestBody = WaitIPRequest
+
+// CreateVolumeJSONRequestBody defines body for CreateVolume for application/json ContentType.
+type CreateVolumeJSONRequestBody = CreateVolumeRequest
+
+// CloneVolumeJSONRequestBody defines body for CloneVolume for application/json ContentType.
+type CloneVolumeJSONRequestBody = CloneVolumeRequest
+
+// ResizeVolumeJSONRequestBody defines body for ResizeVolume for application/json ContentType.
+type ResizeVolumeJSONRequestBody = ResizeVolumeRequest
 
 // AddMachineJSONRequestBody defines body for AddMachine for application/json ContentType.
 type AddMachineJSONRequestBody = AddMachineRequest
@@ -448,6 +585,9 @@ type ClientInterface interface {
 	// DeleteImage request
 	DeleteImage(ctx context.Context, host HostName, name string, params *DeleteImageParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetImagePath request
+	GetImagePath(ctx context.Context, host HostName, name ImageName, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListNetworks request
 	ListNetworks(ctx context.Context, host HostName, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -488,6 +628,14 @@ type ClientInterface interface {
 
 	RunVMCommand(ctx context.Context, host HostName, name VMName, body RunVMCommandJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// DeleteVMDefinition request
+	DeleteVMDefinition(ctx context.Context, host HostName, name VMName, params *DeleteVMDefinitionParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DefineVMWithBody request with any body
+	DefineVMWithBody(ctx context.Context, host HostName, name VMName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	DefineVM(ctx context.Context, host HostName, name VMName, body DefineVMJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// MigrateDiskWithBody request with any body
 	MigrateDiskWithBody(ctx context.Context, host HostName, name VMName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -509,6 +657,11 @@ type ClientInterface interface {
 
 	ResizeDisk(ctx context.Context, host HostName, name VMName, body ResizeDiskJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ResizeVMVolumeWithBody request with any body
+	ResizeVMVolumeWithBody(ctx context.Context, host HostName, name VMName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	ResizeVMVolume(ctx context.Context, host HostName, name VMName, body ResizeVMVolumeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ResumeVM request
 	ResumeVM(ctx context.Context, host HostName, name VMName, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -520,6 +673,26 @@ type ClientInterface interface {
 
 	// OpenVMTunnel request
 	OpenVMTunnel(ctx context.Context, host HostName, name VMName, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// WaitVMIPWithBody request with any body
+	WaitVMIPWithBody(ctx context.Context, host HostName, name VMName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	WaitVMIP(ctx context.Context, host HostName, name VMName, body WaitVMIPJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateVolumeWithBody request with any body
+	CreateVolumeWithBody(ctx context.Context, host HostName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	CreateVolume(ctx context.Context, host HostName, body CreateVolumeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CloneVolumeWithBody request with any body
+	CloneVolumeWithBody(ctx context.Context, host HostName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	CloneVolume(ctx context.Context, host HostName, body CloneVolumeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ResizeVolumeWithBody request with any body
+	ResizeVolumeWithBody(ctx context.Context, host HostName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	ResizeVolume(ctx context.Context, host HostName, body ResizeVolumeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListMachines request
 	ListMachines(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -629,6 +802,18 @@ func (c *Client) ListImages(ctx context.Context, host HostName, reqEditors ...Re
 
 func (c *Client) DeleteImage(ctx context.Context, host HostName, name string, params *DeleteImageParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDeleteImageRequest(c.Server, host, name, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetImagePath(ctx context.Context, host HostName, name ImageName, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetImagePathRequest(c.Server, host, name)
 	if err != nil {
 		return nil, err
 	}
@@ -819,6 +1004,42 @@ func (c *Client) RunVMCommand(ctx context.Context, host HostName, name VMName, b
 	return c.Client.Do(req)
 }
 
+func (c *Client) DeleteVMDefinition(ctx context.Context, host HostName, name VMName, params *DeleteVMDefinitionParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteVMDefinitionRequest(c.Server, host, name, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DefineVMWithBody(ctx context.Context, host HostName, name VMName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDefineVMRequestWithBody(c.Server, host, name, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DefineVM(ctx context.Context, host HostName, name VMName, body DefineVMJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDefineVMRequest(c.Server, host, name, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) MigrateDiskWithBody(ctx context.Context, host HostName, name VMName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewMigrateDiskRequestWithBody(c.Server, host, name, contentType, body)
 	if err != nil {
@@ -915,6 +1136,30 @@ func (c *Client) ResizeDisk(ctx context.Context, host HostName, name VMName, bod
 	return c.Client.Do(req)
 }
 
+func (c *Client) ResizeVMVolumeWithBody(ctx context.Context, host HostName, name VMName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewResizeVMVolumeRequestWithBody(c.Server, host, name, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ResizeVMVolume(ctx context.Context, host HostName, name VMName, body ResizeVMVolumeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewResizeVMVolumeRequest(c.Server, host, name, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) ResumeVM(ctx context.Context, host HostName, name VMName, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewResumeVMRequest(c.Server, host, name)
 	if err != nil {
@@ -953,6 +1198,102 @@ func (c *Client) StopVM(ctx context.Context, host HostName, name VMName, reqEdit
 
 func (c *Client) OpenVMTunnel(ctx context.Context, host HostName, name VMName, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewOpenVMTunnelRequest(c.Server, host, name)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) WaitVMIPWithBody(ctx context.Context, host HostName, name VMName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewWaitVMIPRequestWithBody(c.Server, host, name, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) WaitVMIP(ctx context.Context, host HostName, name VMName, body WaitVMIPJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewWaitVMIPRequest(c.Server, host, name, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateVolumeWithBody(ctx context.Context, host HostName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateVolumeRequestWithBody(c.Server, host, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateVolume(ctx context.Context, host HostName, body CreateVolumeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateVolumeRequest(c.Server, host, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CloneVolumeWithBody(ctx context.Context, host HostName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCloneVolumeRequestWithBody(c.Server, host, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CloneVolume(ctx context.Context, host HostName, body CloneVolumeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCloneVolumeRequest(c.Server, host, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ResizeVolumeWithBody(ctx context.Context, host HostName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewResizeVolumeRequestWithBody(c.Server, host, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ResizeVolume(ctx context.Context, host HostName, body ResizeVolumeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewResizeVolumeRequest(c.Server, host, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1339,6 +1680,47 @@ func NewDeleteImageRequest(server string, host HostName, name string, params *De
 	}
 
 	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetImagePathRequest generates requests for GetImagePath
+func NewGetImagePathRequest(server string, host HostName, name ImageName) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "host", runtime.ParamLocationPath, host)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "name", runtime.ParamLocationPath, name)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/hosts/%s/images/%s/path", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1808,6 +2190,123 @@ func NewRunVMCommandRequestWithBody(server string, host HostName, name VMName, c
 	return req, nil
 }
 
+// NewDeleteVMDefinitionRequest generates requests for DeleteVMDefinition
+func NewDeleteVMDefinitionRequest(server string, host HostName, name VMName, params *DeleteVMDefinitionParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "host", runtime.ParamLocationPath, host)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "name", runtime.ParamLocationPath, name)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/hosts/%s/vms/%s/definition", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Noclone != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "noclone", runtime.ParamLocationQuery, *params.Noclone); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewDefineVMRequest calls the generic DefineVM builder with application/json body
+func NewDefineVMRequest(server string, host HostName, name VMName, body DefineVMJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewDefineVMRequestWithBody(server, host, name, "application/json", bodyReader)
+}
+
+// NewDefineVMRequestWithBody generates requests for DefineVM with any type of body
+func NewDefineVMRequestWithBody(server string, host HostName, name VMName, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "host", runtime.ParamLocationPath, host)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "name", runtime.ParamLocationPath, name)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/hosts/%s/vms/%s/definition", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PUT", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewMigrateDiskRequest calls the generic MigrateDisk builder with application/json body
 func NewMigrateDiskRequest(server string, host HostName, name VMName, body MigrateDiskJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -2052,6 +2551,60 @@ func NewResizeDiskRequestWithBody(server string, host HostName, name VMName, con
 	return req, nil
 }
 
+// NewResizeVMVolumeRequest calls the generic ResizeVMVolume builder with application/json body
+func NewResizeVMVolumeRequest(server string, host HostName, name VMName, body ResizeVMVolumeJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewResizeVMVolumeRequestWithBody(server, host, name, "application/json", bodyReader)
+}
+
+// NewResizeVMVolumeRequestWithBody generates requests for ResizeVMVolume with any type of body
+func NewResizeVMVolumeRequestWithBody(server string, host HostName, name VMName, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "host", runtime.ParamLocationPath, host)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "name", runtime.ParamLocationPath, name)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/hosts/%s/vms/%s/resize-volume", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewResumeVMRequest generates requests for ResumeVM
 func NewResumeVMRequest(server string, host HostName, name VMName) (*http.Request, error) {
 	var err error
@@ -2212,6 +2765,201 @@ func NewOpenVMTunnelRequest(server string, host HostName, name VMName) (*http.Re
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewWaitVMIPRequest calls the generic WaitVMIP builder with application/json body
+func NewWaitVMIPRequest(server string, host HostName, name VMName, body WaitVMIPJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewWaitVMIPRequestWithBody(server, host, name, "application/json", bodyReader)
+}
+
+// NewWaitVMIPRequestWithBody generates requests for WaitVMIP with any type of body
+func NewWaitVMIPRequestWithBody(server string, host HostName, name VMName, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "host", runtime.ParamLocationPath, host)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "name", runtime.ParamLocationPath, name)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/hosts/%s/vms/%s/wait-ip", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewCreateVolumeRequest calls the generic CreateVolume builder with application/json body
+func NewCreateVolumeRequest(server string, host HostName, body CreateVolumeJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateVolumeRequestWithBody(server, host, "application/json", bodyReader)
+}
+
+// NewCreateVolumeRequestWithBody generates requests for CreateVolume with any type of body
+func NewCreateVolumeRequestWithBody(server string, host HostName, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "host", runtime.ParamLocationPath, host)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/hosts/%s/volumes", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewCloneVolumeRequest calls the generic CloneVolume builder with application/json body
+func NewCloneVolumeRequest(server string, host HostName, body CloneVolumeJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCloneVolumeRequestWithBody(server, host, "application/json", bodyReader)
+}
+
+// NewCloneVolumeRequestWithBody generates requests for CloneVolume with any type of body
+func NewCloneVolumeRequestWithBody(server string, host HostName, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "host", runtime.ParamLocationPath, host)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/hosts/%s/volumes/clone", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewResizeVolumeRequest calls the generic ResizeVolume builder with application/json body
+func NewResizeVolumeRequest(server string, host HostName, body ResizeVolumeJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewResizeVolumeRequestWithBody(server, host, "application/json", bodyReader)
+}
+
+// NewResizeVolumeRequestWithBody generates requests for ResizeVolume with any type of body
+func NewResizeVolumeRequestWithBody(server string, host HostName, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "host", runtime.ParamLocationPath, host)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/hosts/%s/volumes/resize", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -2597,6 +3345,9 @@ type ClientWithResponsesInterface interface {
 	// DeleteImageWithResponse request
 	DeleteImageWithResponse(ctx context.Context, host HostName, name string, params *DeleteImageParams, reqEditors ...RequestEditorFn) (*DeleteImageResponse, error)
 
+	// GetImagePathWithResponse request
+	GetImagePathWithResponse(ctx context.Context, host HostName, name ImageName, reqEditors ...RequestEditorFn) (*GetImagePathResponse, error)
+
 	// ListNetworksWithResponse request
 	ListNetworksWithResponse(ctx context.Context, host HostName, reqEditors ...RequestEditorFn) (*ListNetworksResponse, error)
 
@@ -2637,6 +3388,14 @@ type ClientWithResponsesInterface interface {
 
 	RunVMCommandWithResponse(ctx context.Context, host HostName, name VMName, body RunVMCommandJSONRequestBody, reqEditors ...RequestEditorFn) (*RunVMCommandResponse, error)
 
+	// DeleteVMDefinitionWithResponse request
+	DeleteVMDefinitionWithResponse(ctx context.Context, host HostName, name VMName, params *DeleteVMDefinitionParams, reqEditors ...RequestEditorFn) (*DeleteVMDefinitionResponse, error)
+
+	// DefineVMWithBodyWithResponse request with any body
+	DefineVMWithBodyWithResponse(ctx context.Context, host HostName, name VMName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DefineVMResponse, error)
+
+	DefineVMWithResponse(ctx context.Context, host HostName, name VMName, body DefineVMJSONRequestBody, reqEditors ...RequestEditorFn) (*DefineVMResponse, error)
+
 	// MigrateDiskWithBodyWithResponse request with any body
 	MigrateDiskWithBodyWithResponse(ctx context.Context, host HostName, name VMName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MigrateDiskResponse, error)
 
@@ -2658,6 +3417,11 @@ type ClientWithResponsesInterface interface {
 
 	ResizeDiskWithResponse(ctx context.Context, host HostName, name VMName, body ResizeDiskJSONRequestBody, reqEditors ...RequestEditorFn) (*ResizeDiskResponse, error)
 
+	// ResizeVMVolumeWithBodyWithResponse request with any body
+	ResizeVMVolumeWithBodyWithResponse(ctx context.Context, host HostName, name VMName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ResizeVMVolumeResponse, error)
+
+	ResizeVMVolumeWithResponse(ctx context.Context, host HostName, name VMName, body ResizeVMVolumeJSONRequestBody, reqEditors ...RequestEditorFn) (*ResizeVMVolumeResponse, error)
+
 	// ResumeVMWithResponse request
 	ResumeVMWithResponse(ctx context.Context, host HostName, name VMName, reqEditors ...RequestEditorFn) (*ResumeVMResponse, error)
 
@@ -2669,6 +3433,26 @@ type ClientWithResponsesInterface interface {
 
 	// OpenVMTunnelWithResponse request
 	OpenVMTunnelWithResponse(ctx context.Context, host HostName, name VMName, reqEditors ...RequestEditorFn) (*OpenVMTunnelResponse, error)
+
+	// WaitVMIPWithBodyWithResponse request with any body
+	WaitVMIPWithBodyWithResponse(ctx context.Context, host HostName, name VMName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*WaitVMIPResponse, error)
+
+	WaitVMIPWithResponse(ctx context.Context, host HostName, name VMName, body WaitVMIPJSONRequestBody, reqEditors ...RequestEditorFn) (*WaitVMIPResponse, error)
+
+	// CreateVolumeWithBodyWithResponse request with any body
+	CreateVolumeWithBodyWithResponse(ctx context.Context, host HostName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateVolumeResponse, error)
+
+	CreateVolumeWithResponse(ctx context.Context, host HostName, body CreateVolumeJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateVolumeResponse, error)
+
+	// CloneVolumeWithBodyWithResponse request with any body
+	CloneVolumeWithBodyWithResponse(ctx context.Context, host HostName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CloneVolumeResponse, error)
+
+	CloneVolumeWithResponse(ctx context.Context, host HostName, body CloneVolumeJSONRequestBody, reqEditors ...RequestEditorFn) (*CloneVolumeResponse, error)
+
+	// ResizeVolumeWithBodyWithResponse request with any body
+	ResizeVolumeWithBodyWithResponse(ctx context.Context, host HostName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ResizeVolumeResponse, error)
+
+	ResizeVolumeWithResponse(ctx context.Context, host HostName, body ResizeVolumeJSONRequestBody, reqEditors ...RequestEditorFn) (*ResizeVolumeResponse, error)
 
 	// ListMachinesWithResponse request
 	ListMachinesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListMachinesResponse, error)
@@ -2866,6 +3650,31 @@ func (r DeleteImageResponse) StatusCode() int {
 	return 0
 }
 
+type GetImagePathResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *PathResult
+	JSON401      *Unauthorized
+	JSON404      *Error
+	JSON500      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r GetImagePathResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetImagePathResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type ListNetworksResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -2973,6 +3782,7 @@ type CreateVMResponse struct {
 	JSON201      *VMInfo
 	JSON400      *Error
 	JSON401      *Unauthorized
+	JSON403      *WorkstationOnly
 	JSON404      *Error
 	JSON409      *Error
 	JSON500      *Error
@@ -3101,6 +3911,7 @@ type RunVMCommandResponse struct {
 	JSON200      *CmdResult
 	JSON400      *Error
 	JSON401      *Unauthorized
+	JSON403      *WorkstationOnly
 	JSON404      *Error
 	JSON409      *Error
 	JSON500      *Error
@@ -3117,6 +3928,55 @@ func (r RunVMCommandResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r RunVMCommandResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type DeleteVMDefinitionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON401      *Unauthorized
+	JSON404      *Error
+	JSON500      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteVMDefinitionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteVMDefinitionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type DefineVMResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON400      *Error
+	JSON401      *Unauthorized
+	JSON404      *Error
+	JSON500      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r DefineVMResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DefineVMResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -3155,6 +4015,7 @@ type RunPlaybookResponse struct {
 	JSON200      *PlaybookResult
 	JSON400      *Error
 	JSON401      *Unauthorized
+	JSON403      *WorkstationOnly
 	JSON404      *Error
 	JSON409      *Error
 	JSON500      *PlaybookResult
@@ -3232,6 +4093,7 @@ type ResizeDiskResponse struct {
 	JSON200      *ResizeDiskResult
 	JSON400      *Error
 	JSON401      *Unauthorized
+	JSON403      *WorkstationOnly
 	JSON404      *Error
 	JSON500      *Error
 }
@@ -3246,6 +4108,31 @@ func (r ResizeDiskResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r ResizeDiskResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ResizeVMVolumeResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON400      *Error
+	JSON401      *Unauthorized
+	JSON404      *Error
+	JSON500      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r ResizeVMVolumeResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ResizeVMVolumeResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -3355,11 +4242,115 @@ func (r OpenVMTunnelResponse) StatusCode() int {
 	return 0
 }
 
+type WaitVMIPResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *WaitIPResult
+	JSON400      *Error
+	JSON401      *Unauthorized
+	JSON404      *Error
+	JSON500      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r WaitVMIPResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r WaitVMIPResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type CreateVolumeResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *PathResult
+	JSON400      *Error
+	JSON401      *Unauthorized
+	JSON404      *Error
+	JSON500      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateVolumeResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateVolumeResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type CloneVolumeResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *PathResult
+	JSON400      *Error
+	JSON401      *Unauthorized
+	JSON404      *Error
+	JSON500      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r CloneVolumeResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CloneVolumeResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ResizeVolumeResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON400      *Error
+	JSON401      *Unauthorized
+	JSON404      *Error
+	JSON500      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r ResizeVolumeResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ResizeVolumeResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type ListMachinesResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *[]MachineInfo
 	JSON401      *Unauthorized
+	JSON403      *WorkstationOnly
 	JSON500      *Error
 }
 
@@ -3385,6 +4376,7 @@ type AddMachineResponse struct {
 	JSON201      *MachineInfo
 	JSON400      *Error
 	JSON401      *Unauthorized
+	JSON403      *WorkstationOnly
 	JSON409      *Error
 	JSON500      *Error
 	JSON502      *Error
@@ -3410,6 +4402,7 @@ type RemoveMachineResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON401      *Unauthorized
+	JSON403      *WorkstationOnly
 	JSON404      *Error
 	JSON500      *Error
 }
@@ -3435,6 +4428,7 @@ type GetMachineResponse struct {
 	HTTPResponse *http.Response
 	JSON200      *MachineInfo
 	JSON401      *Unauthorized
+	JSON403      *WorkstationOnly
 	JSON404      *Error
 	JSON500      *Error
 }
@@ -3461,6 +4455,7 @@ type RunMachineCommandResponse struct {
 	JSON200      *CmdResult
 	JSON400      *Error
 	JSON401      *Unauthorized
+	JSON403      *WorkstationOnly
 	JSON404      *Error
 	JSON500      *Error
 	JSON502      *Error
@@ -3488,6 +4483,7 @@ type RunMachinePlaybookResponse struct {
 	JSON200      *PlaybookResult
 	JSON400      *Error
 	JSON401      *Unauthorized
+	JSON403      *WorkstationOnly
 	JSON404      *Error
 	JSON500      *PlaybookResult
 }
@@ -3513,6 +4509,7 @@ type RebootMachineResponse struct {
 	HTTPResponse *http.Response
 	JSON200      *MachineInfo
 	JSON401      *Unauthorized
+	JSON403      *WorkstationOnly
 	JSON404      *Error
 	JSON500      *Error
 	JSON502      *Error
@@ -3539,6 +4536,7 @@ type ListPlaybooksResponse struct {
 	HTTPResponse *http.Response
 	JSON200      *[]string
 	JSON401      *Unauthorized
+	JSON403      *WorkstationOnly
 	JSON500      *Error
 }
 
@@ -3642,6 +4640,15 @@ func (c *ClientWithResponses) DeleteImageWithResponse(ctx context.Context, host 
 		return nil, err
 	}
 	return ParseDeleteImageResponse(rsp)
+}
+
+// GetImagePathWithResponse request returning *GetImagePathResponse
+func (c *ClientWithResponses) GetImagePathWithResponse(ctx context.Context, host HostName, name ImageName, reqEditors ...RequestEditorFn) (*GetImagePathResponse, error) {
+	rsp, err := c.GetImagePath(ctx, host, name, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetImagePathResponse(rsp)
 }
 
 // ListNetworksWithResponse request returning *ListNetworksResponse
@@ -3774,6 +4781,32 @@ func (c *ClientWithResponses) RunVMCommandWithResponse(ctx context.Context, host
 	return ParseRunVMCommandResponse(rsp)
 }
 
+// DeleteVMDefinitionWithResponse request returning *DeleteVMDefinitionResponse
+func (c *ClientWithResponses) DeleteVMDefinitionWithResponse(ctx context.Context, host HostName, name VMName, params *DeleteVMDefinitionParams, reqEditors ...RequestEditorFn) (*DeleteVMDefinitionResponse, error) {
+	rsp, err := c.DeleteVMDefinition(ctx, host, name, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteVMDefinitionResponse(rsp)
+}
+
+// DefineVMWithBodyWithResponse request with arbitrary body returning *DefineVMResponse
+func (c *ClientWithResponses) DefineVMWithBodyWithResponse(ctx context.Context, host HostName, name VMName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DefineVMResponse, error) {
+	rsp, err := c.DefineVMWithBody(ctx, host, name, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDefineVMResponse(rsp)
+}
+
+func (c *ClientWithResponses) DefineVMWithResponse(ctx context.Context, host HostName, name VMName, body DefineVMJSONRequestBody, reqEditors ...RequestEditorFn) (*DefineVMResponse, error) {
+	rsp, err := c.DefineVM(ctx, host, name, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDefineVMResponse(rsp)
+}
+
 // MigrateDiskWithBodyWithResponse request with arbitrary body returning *MigrateDiskResponse
 func (c *ClientWithResponses) MigrateDiskWithBodyWithResponse(ctx context.Context, host HostName, name VMName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MigrateDiskResponse, error) {
 	rsp, err := c.MigrateDiskWithBody(ctx, host, name, contentType, body, reqEditors...)
@@ -3843,6 +4876,23 @@ func (c *ClientWithResponses) ResizeDiskWithResponse(ctx context.Context, host H
 	return ParseResizeDiskResponse(rsp)
 }
 
+// ResizeVMVolumeWithBodyWithResponse request with arbitrary body returning *ResizeVMVolumeResponse
+func (c *ClientWithResponses) ResizeVMVolumeWithBodyWithResponse(ctx context.Context, host HostName, name VMName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ResizeVMVolumeResponse, error) {
+	rsp, err := c.ResizeVMVolumeWithBody(ctx, host, name, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseResizeVMVolumeResponse(rsp)
+}
+
+func (c *ClientWithResponses) ResizeVMVolumeWithResponse(ctx context.Context, host HostName, name VMName, body ResizeVMVolumeJSONRequestBody, reqEditors ...RequestEditorFn) (*ResizeVMVolumeResponse, error) {
+	rsp, err := c.ResizeVMVolume(ctx, host, name, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseResizeVMVolumeResponse(rsp)
+}
+
 // ResumeVMWithResponse request returning *ResumeVMResponse
 func (c *ClientWithResponses) ResumeVMWithResponse(ctx context.Context, host HostName, name VMName, reqEditors ...RequestEditorFn) (*ResumeVMResponse, error) {
 	rsp, err := c.ResumeVM(ctx, host, name, reqEditors...)
@@ -3877,6 +4927,74 @@ func (c *ClientWithResponses) OpenVMTunnelWithResponse(ctx context.Context, host
 		return nil, err
 	}
 	return ParseOpenVMTunnelResponse(rsp)
+}
+
+// WaitVMIPWithBodyWithResponse request with arbitrary body returning *WaitVMIPResponse
+func (c *ClientWithResponses) WaitVMIPWithBodyWithResponse(ctx context.Context, host HostName, name VMName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*WaitVMIPResponse, error) {
+	rsp, err := c.WaitVMIPWithBody(ctx, host, name, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseWaitVMIPResponse(rsp)
+}
+
+func (c *ClientWithResponses) WaitVMIPWithResponse(ctx context.Context, host HostName, name VMName, body WaitVMIPJSONRequestBody, reqEditors ...RequestEditorFn) (*WaitVMIPResponse, error) {
+	rsp, err := c.WaitVMIP(ctx, host, name, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseWaitVMIPResponse(rsp)
+}
+
+// CreateVolumeWithBodyWithResponse request with arbitrary body returning *CreateVolumeResponse
+func (c *ClientWithResponses) CreateVolumeWithBodyWithResponse(ctx context.Context, host HostName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateVolumeResponse, error) {
+	rsp, err := c.CreateVolumeWithBody(ctx, host, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateVolumeResponse(rsp)
+}
+
+func (c *ClientWithResponses) CreateVolumeWithResponse(ctx context.Context, host HostName, body CreateVolumeJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateVolumeResponse, error) {
+	rsp, err := c.CreateVolume(ctx, host, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateVolumeResponse(rsp)
+}
+
+// CloneVolumeWithBodyWithResponse request with arbitrary body returning *CloneVolumeResponse
+func (c *ClientWithResponses) CloneVolumeWithBodyWithResponse(ctx context.Context, host HostName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CloneVolumeResponse, error) {
+	rsp, err := c.CloneVolumeWithBody(ctx, host, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCloneVolumeResponse(rsp)
+}
+
+func (c *ClientWithResponses) CloneVolumeWithResponse(ctx context.Context, host HostName, body CloneVolumeJSONRequestBody, reqEditors ...RequestEditorFn) (*CloneVolumeResponse, error) {
+	rsp, err := c.CloneVolume(ctx, host, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCloneVolumeResponse(rsp)
+}
+
+// ResizeVolumeWithBodyWithResponse request with arbitrary body returning *ResizeVolumeResponse
+func (c *ClientWithResponses) ResizeVolumeWithBodyWithResponse(ctx context.Context, host HostName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ResizeVolumeResponse, error) {
+	rsp, err := c.ResizeVolumeWithBody(ctx, host, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseResizeVolumeResponse(rsp)
+}
+
+func (c *ClientWithResponses) ResizeVolumeWithResponse(ctx context.Context, host HostName, body ResizeVolumeJSONRequestBody, reqEditors ...RequestEditorFn) (*ResizeVolumeResponse, error) {
+	rsp, err := c.ResizeVolume(ctx, host, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseResizeVolumeResponse(rsp)
 }
 
 // ListMachinesWithResponse request returning *ListMachinesResponse
@@ -4219,6 +5337,53 @@ func ParseDeleteImageResponse(rsp *http.Response) (*DeleteImageResponse, error) 
 	return response, nil
 }
 
+// ParseGetImagePathResponse parses an HTTP response from a GetImagePathWithResponse call
+func ParseGetImagePathResponse(rsp *http.Response) (*GetImagePathResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetImagePathResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PathResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListNetworksResponse parses an HTTP response from a ListNetworksWithResponse call
 func ParseListNetworksResponse(rsp *http.Response) (*ListNetworksResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -4448,6 +5613,13 @@ func ParseCreateVMResponse(rsp *http.Response) (*CreateVMResponse, error) {
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest WorkstationOnly
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest Error
@@ -4705,6 +5877,13 @@ func ParseRunVMCommandResponse(rsp *http.Response) (*RunVMCommandResponse, error
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest WorkstationOnly
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -4732,6 +5911,93 @@ func ParseRunVMCommandResponse(rsp *http.Response) (*RunVMCommandResponse, error
 			return nil, err
 		}
 		response.JSON502 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteVMDefinitionResponse parses an HTTP response from a DeleteVMDefinitionWithResponse call
+func ParseDeleteVMDefinitionResponse(rsp *http.Response) (*DeleteVMDefinitionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteVMDefinitionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDefineVMResponse parses an HTTP response from a DefineVMWithResponse call
+func ParseDefineVMResponse(rsp *http.Response) (*DefineVMResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DefineVMResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -4826,6 +6092,13 @@ func ParseRunPlaybookResponse(rsp *http.Response) (*RunPlaybookResponse, error) 
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest WorkstationOnly
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest Error
@@ -4968,6 +6241,60 @@ func ParseResizeDiskResponse(rsp *http.Response) (*ResizeDiskResponse, error) {
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest WorkstationOnly
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseResizeVMVolumeResponse parses an HTTP response from a ResizeVMVolumeWithResponse call
+func ParseResizeVMVolumeResponse(rsp *http.Response) (*ResizeVMVolumeResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ResizeVMVolumeResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -5210,6 +6537,215 @@ func ParseOpenVMTunnelResponse(rsp *http.Response) (*OpenVMTunnelResponse, error
 	return response, nil
 }
 
+// ParseWaitVMIPResponse parses an HTTP response from a WaitVMIPWithResponse call
+func ParseWaitVMIPResponse(rsp *http.Response) (*WaitVMIPResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &WaitVMIPResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest WaitIPResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateVolumeResponse parses an HTTP response from a CreateVolumeWithResponse call
+func ParseCreateVolumeResponse(rsp *http.Response) (*CreateVolumeResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateVolumeResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest PathResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCloneVolumeResponse parses an HTTP response from a CloneVolumeWithResponse call
+func ParseCloneVolumeResponse(rsp *http.Response) (*CloneVolumeResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CloneVolumeResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest PathResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseResizeVolumeResponse parses an HTTP response from a ResizeVolumeWithResponse call
+func ParseResizeVolumeResponse(rsp *http.Response) (*ResizeVolumeResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ResizeVolumeResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListMachinesResponse parses an HTTP response from a ListMachinesWithResponse call
 func ParseListMachinesResponse(rsp *http.Response) (*ListMachinesResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -5237,6 +6773,13 @@ func ParseListMachinesResponse(rsp *http.Response) (*ListMachinesResponse, error
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest WorkstationOnly
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest Error
@@ -5285,6 +6828,13 @@ func ParseAddMachineResponse(rsp *http.Response) (*AddMachineResponse, error) {
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest WorkstationOnly
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -5332,6 +6882,13 @@ func ParseRemoveMachineResponse(rsp *http.Response) (*RemoveMachineResponse, err
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest WorkstationOnly
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -5378,6 +6935,13 @@ func ParseGetMachineResponse(rsp *http.Response) (*GetMachineResponse, error) {
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest WorkstationOnly
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest Error
@@ -5432,6 +6996,13 @@ func ParseRunMachineCommandResponse(rsp *http.Response) (*RunMachineCommandRespo
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest WorkstationOnly
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest Error
@@ -5494,6 +7065,13 @@ func ParseRunMachinePlaybookResponse(rsp *http.Response) (*RunMachinePlaybookRes
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest WorkstationOnly
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -5540,6 +7118,13 @@ func ParseRebootMachineResponse(rsp *http.Response) (*RebootMachineResponse, err
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest WorkstationOnly
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest Error
@@ -5594,6 +7179,13 @@ func ParseListPlaybooksResponse(rsp *http.Response) (*ListPlaybooksResponse, err
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest WorkstationOnly
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest Error
@@ -5663,6 +7255,9 @@ type ServerInterface interface {
 	// Delete a disk image
 	// (DELETE /v1/hosts/{host}/images/{name})
 	DeleteImage(w http.ResponseWriter, r *http.Request, host HostName, name string, params DeleteImageParams)
+	// Host path of a disk image
+	// (GET /v1/hosts/{host}/images/{name}/path)
+	GetImagePath(w http.ResponseWriter, r *http.Request, host HostName, name ImageName)
 	// List libvirt networks
 	// (GET /v1/hosts/{host}/networks)
 	ListNetworks(w http.ResponseWriter, r *http.Request, host HostName)
@@ -5693,6 +7288,12 @@ type ServerInterface interface {
 	// Run a command over SSH
 	// (POST /v1/hosts/{host}/vms/{name}/cmd)
 	RunVMCommand(w http.ResponseWriter, r *http.Request, host HostName, name VMName)
+	// Force off and undefine a VM (raw)
+	// (DELETE /v1/hosts/{host}/vms/{name}/definition)
+	DeleteVMDefinition(w http.ResponseWriter, r *http.Request, host HostName, name VMName, params DeleteVMDefinitionParams)
+	// Define a VM from a primitive configuration
+	// (PUT /v1/hosts/{host}/vms/{name}/definition)
+	DefineVM(w http.ResponseWriter, r *http.Request, host HostName, name VMName)
 	// Move the VM disk to another pool
 	// (POST /v1/hosts/{host}/vms/{name}/migrate-disk)
 	MigrateDisk(w http.ResponseWriter, r *http.Request, host HostName, name VMName)
@@ -5708,6 +7309,9 @@ type ServerInterface interface {
 	// Grow the VM disk and filesystem if running
 	// (POST /v1/hosts/{host}/vms/{name}/resize-disk)
 	ResizeDisk(w http.ResponseWriter, r *http.Request, host HostName, name VMName)
+	// Grow the VM disk volume (libvirt only)
+	// (POST /v1/hosts/{host}/vms/{name}/resize-volume)
+	ResizeVMVolume(w http.ResponseWriter, r *http.Request, host HostName, name VMName)
 	// Resume a paused VM
 	// (POST /v1/hosts/{host}/vms/{name}/resume)
 	ResumeVM(w http.ResponseWriter, r *http.Request, host HostName, name VMName)
@@ -5720,6 +7324,18 @@ type ServerInterface interface {
 	// Upgrade the connection to a raw byte stream to the guest's SSH port
 	// (GET /v1/hosts/{host}/vms/{name}/tunnel)
 	OpenVMTunnel(w http.ResponseWriter, r *http.Request, host HostName, name VMName)
+	// Wait for the VM to get an IP address
+	// (POST /v1/hosts/{host}/vms/{name}/wait-ip)
+	WaitVMIP(w http.ResponseWriter, r *http.Request, host HostName, name VMName)
+	// Create an empty qcow2 volume
+	// (POST /v1/hosts/{host}/volumes)
+	CreateVolume(w http.ResponseWriter, r *http.Request, host HostName)
+	// Clone a volume into a pool
+	// (POST /v1/hosts/{host}/volumes/clone)
+	CloneVolume(w http.ResponseWriter, r *http.Request, host HostName)
+	// Resize a volume by path
+	// (POST /v1/hosts/{host}/volumes/resize)
+	ResizeVolume(w http.ResponseWriter, r *http.Request, host HostName)
 	// List metal and alien machines
 	// (GET /v1/metal)
 	ListMachines(w http.ResponseWriter, r *http.Request)
@@ -5924,6 +7540,46 @@ func (siw *ServerInterfaceWrapper) DeleteImage(w http.ResponseWriter, r *http.Re
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.DeleteImage(w, r, host, name, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetImagePath operation middleware
+func (siw *ServerInterfaceWrapper) GetImagePath(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "host" -------------
+	var host HostName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "host", r.PathValue("host"), &host, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "host", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "name" -------------
+	var name ImageName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetImagePath(w, r, host, name)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -6299,6 +7955,97 @@ func (siw *ServerInterfaceWrapper) RunVMCommand(w http.ResponseWriter, r *http.R
 	handler.ServeHTTP(w, r)
 }
 
+// DeleteVMDefinition operation middleware
+func (siw *ServerInterfaceWrapper) DeleteVMDefinition(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "host" -------------
+	var host HostName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "host", r.PathValue("host"), &host, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "host", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "name" -------------
+	var name VMName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params DeleteVMDefinitionParams
+
+	// ------------- Optional query parameter "noclone" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "noclone", r.URL.Query(), &params.Noclone)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "noclone", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteVMDefinition(w, r, host, name, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DefineVM operation middleware
+func (siw *ServerInterfaceWrapper) DefineVM(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "host" -------------
+	var host HostName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "host", r.PathValue("host"), &host, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "host", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "name" -------------
+	var name VMName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DefineVM(w, r, host, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // MigrateDisk operation middleware
 func (siw *ServerInterfaceWrapper) MigrateDisk(w http.ResponseWriter, r *http.Request) {
 
@@ -6499,6 +8246,46 @@ func (siw *ServerInterfaceWrapper) ResizeDisk(w http.ResponseWriter, r *http.Req
 	handler.ServeHTTP(w, r)
 }
 
+// ResizeVMVolume operation middleware
+func (siw *ServerInterfaceWrapper) ResizeVMVolume(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "host" -------------
+	var host HostName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "host", r.PathValue("host"), &host, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "host", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "name" -------------
+	var name VMName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ResizeVMVolume(w, r, host, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ResumeVM operation middleware
 func (siw *ServerInterfaceWrapper) ResumeVM(w http.ResponseWriter, r *http.Request) {
 
@@ -6650,6 +8437,139 @@ func (siw *ServerInterfaceWrapper) OpenVMTunnel(w http.ResponseWriter, r *http.R
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.OpenVMTunnel(w, r, host, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// WaitVMIP operation middleware
+func (siw *ServerInterfaceWrapper) WaitVMIP(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "host" -------------
+	var host HostName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "host", r.PathValue("host"), &host, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "host", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "name" -------------
+	var name VMName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.WaitVMIP(w, r, host, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateVolume operation middleware
+func (siw *ServerInterfaceWrapper) CreateVolume(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "host" -------------
+	var host HostName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "host", r.PathValue("host"), &host, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "host", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateVolume(w, r, host)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CloneVolume operation middleware
+func (siw *ServerInterfaceWrapper) CloneVolume(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "host" -------------
+	var host HostName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "host", r.PathValue("host"), &host, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "host", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CloneVolume(w, r, host)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ResizeVolume operation middleware
+func (siw *ServerInterfaceWrapper) ResizeVolume(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "host" -------------
+	var host HostName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "host", r.PathValue("host"), &host, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "host", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ResizeVolume(w, r, host)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -7021,6 +8941,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("GET "+options.BaseURL+"/v1/hosts/{host}/bridges", wrapper.ListBridges)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/hosts/{host}/images", wrapper.ListImages)
 	m.HandleFunc("DELETE "+options.BaseURL+"/v1/hosts/{host}/images/{name}", wrapper.DeleteImage)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/hosts/{host}/images/{name}/path", wrapper.GetImagePath)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/hosts/{host}/networks", wrapper.ListNetworks)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/hosts/{host}/pools", wrapper.ListPools)
 	m.HandleFunc("POST "+options.BaseURL+"/v1/hosts/{host}/pools", wrapper.CreatePool)
@@ -7031,15 +8952,22 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("POST "+options.BaseURL+"/v1/hosts/{host}/vms/{name}/add-disk", wrapper.AddDisk)
 	m.HandleFunc("PUT "+options.BaseURL+"/v1/hosts/{host}/vms/{name}/autostart", wrapper.SetAutostart)
 	m.HandleFunc("POST "+options.BaseURL+"/v1/hosts/{host}/vms/{name}/cmd", wrapper.RunVMCommand)
+	m.HandleFunc("DELETE "+options.BaseURL+"/v1/hosts/{host}/vms/{name}/definition", wrapper.DeleteVMDefinition)
+	m.HandleFunc("PUT "+options.BaseURL+"/v1/hosts/{host}/vms/{name}/definition", wrapper.DefineVM)
 	m.HandleFunc("POST "+options.BaseURL+"/v1/hosts/{host}/vms/{name}/migrate-disk", wrapper.MigrateDisk)
 	m.HandleFunc("POST "+options.BaseURL+"/v1/hosts/{host}/vms/{name}/playbook", wrapper.RunPlaybook)
 	m.HandleFunc("POST "+options.BaseURL+"/v1/hosts/{host}/vms/{name}/poweroff", wrapper.PoweroffVM)
 	m.HandleFunc("POST "+options.BaseURL+"/v1/hosts/{host}/vms/{name}/reboot", wrapper.RebootVM)
 	m.HandleFunc("POST "+options.BaseURL+"/v1/hosts/{host}/vms/{name}/resize-disk", wrapper.ResizeDisk)
+	m.HandleFunc("POST "+options.BaseURL+"/v1/hosts/{host}/vms/{name}/resize-volume", wrapper.ResizeVMVolume)
 	m.HandleFunc("POST "+options.BaseURL+"/v1/hosts/{host}/vms/{name}/resume", wrapper.ResumeVM)
 	m.HandleFunc("POST "+options.BaseURL+"/v1/hosts/{host}/vms/{name}/start", wrapper.StartVM)
 	m.HandleFunc("POST "+options.BaseURL+"/v1/hosts/{host}/vms/{name}/stop", wrapper.StopVM)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/hosts/{host}/vms/{name}/tunnel", wrapper.OpenVMTunnel)
+	m.HandleFunc("POST "+options.BaseURL+"/v1/hosts/{host}/vms/{name}/wait-ip", wrapper.WaitVMIP)
+	m.HandleFunc("POST "+options.BaseURL+"/v1/hosts/{host}/volumes", wrapper.CreateVolume)
+	m.HandleFunc("POST "+options.BaseURL+"/v1/hosts/{host}/volumes/clone", wrapper.CloneVolume)
+	m.HandleFunc("POST "+options.BaseURL+"/v1/hosts/{host}/volumes/resize", wrapper.ResizeVolume)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/metal", wrapper.ListMachines)
 	m.HandleFunc("POST "+options.BaseURL+"/v1/metal", wrapper.AddMachine)
 	m.HandleFunc("DELETE "+options.BaseURL+"/v1/metal/{name}", wrapper.RemoveMachine)
@@ -7063,6 +8991,8 @@ type UnauthorizedJSONResponse struct {
 
 	Headers UnauthorizedResponseHeaders
 }
+
+type WorkstationOnlyJSONResponse Error
 
 type GetDocsRequestObject struct {
 }
@@ -7294,6 +9224,52 @@ func (response DeleteImage500JSONResponse) VisitDeleteImageResponse(w http.Respo
 	return json.NewEncoder(w).Encode(response)
 }
 
+type GetImagePathRequestObject struct {
+	Host HostName  `json:"host"`
+	Name ImageName `json:"name"`
+}
+
+type GetImagePathResponseObject interface {
+	VisitGetImagePathResponse(w http.ResponseWriter) error
+}
+
+type GetImagePath200JSONResponse PathResult
+
+func (response GetImagePath200JSONResponse) VisitGetImagePathResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetImagePath401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response GetImagePath401JSONResponse) VisitGetImagePathResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
+type GetImagePath404JSONResponse struct{ ErrorJSONResponse }
+
+func (response GetImagePath404JSONResponse) VisitGetImagePathResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetImagePath500JSONResponse Error
+
+func (response GetImagePath500JSONResponse) VisitGetImagePathResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
 type ListNetworksRequestObject struct {
 	Host HostName `json:"host"`
 }
@@ -7519,6 +9495,15 @@ func (response CreateVM401JSONResponse) VisitCreateVMResponse(w http.ResponseWri
 	w.WriteHeader(401)
 
 	return json.NewEncoder(w).Encode(response.Body)
+}
+
+type CreateVM403JSONResponse struct{ WorkstationOnlyJSONResponse }
+
+func (response CreateVM403JSONResponse) VisitCreateVMResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+
+	return json.NewEncoder(w).Encode(response)
 }
 
 type CreateVM404JSONResponse Error
@@ -7790,6 +9775,15 @@ func (response RunVMCommand401JSONResponse) VisitRunVMCommandResponse(w http.Res
 	return json.NewEncoder(w).Encode(response.Body)
 }
 
+type RunVMCommand403JSONResponse struct{ WorkstationOnlyJSONResponse }
+
+func (response RunVMCommand403JSONResponse) VisitRunVMCommandResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
 type RunVMCommand404JSONResponse Error
 
 func (response RunVMCommand404JSONResponse) VisitRunVMCommandResponse(w http.ResponseWriter) error {
@@ -7822,6 +9816,107 @@ type RunVMCommand502JSONResponse Error
 func (response RunVMCommand502JSONResponse) VisitRunVMCommandResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(502)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteVMDefinitionRequestObject struct {
+	Host   HostName `json:"host"`
+	Name   VMName   `json:"name"`
+	Params DeleteVMDefinitionParams
+}
+
+type DeleteVMDefinitionResponseObject interface {
+	VisitDeleteVMDefinitionResponse(w http.ResponseWriter) error
+}
+
+type DeleteVMDefinition204Response struct {
+}
+
+func (response DeleteVMDefinition204Response) VisitDeleteVMDefinitionResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteVMDefinition401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response DeleteVMDefinition401JSONResponse) VisitDeleteVMDefinitionResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
+type DeleteVMDefinition404JSONResponse struct{ ErrorJSONResponse }
+
+func (response DeleteVMDefinition404JSONResponse) VisitDeleteVMDefinitionResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteVMDefinition500JSONResponse Error
+
+func (response DeleteVMDefinition500JSONResponse) VisitDeleteVMDefinitionResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DefineVMRequestObject struct {
+	Host HostName `json:"host"`
+	Name VMName   `json:"name"`
+	Body *DefineVMJSONRequestBody
+}
+
+type DefineVMResponseObject interface {
+	VisitDefineVMResponse(w http.ResponseWriter) error
+}
+
+type DefineVM204Response struct {
+}
+
+func (response DefineVM204Response) VisitDefineVMResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DefineVM400JSONResponse struct{ ErrorJSONResponse }
+
+func (response DefineVM400JSONResponse) VisitDefineVMResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DefineVM401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response DefineVM401JSONResponse) VisitDefineVMResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
+type DefineVM404JSONResponse Error
+
+func (response DefineVM404JSONResponse) VisitDefineVMResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DefineVM500JSONResponse Error
+
+func (response DefineVM500JSONResponse) VisitDefineVMResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
 
 	return json.NewEncoder(w).Encode(response)
 }
@@ -7918,6 +10013,15 @@ func (response RunPlaybook401JSONResponse) VisitRunPlaybookResponse(w http.Respo
 	w.WriteHeader(401)
 
 	return json.NewEncoder(w).Encode(response.Body)
+}
+
+type RunPlaybook403JSONResponse struct{ WorkstationOnlyJSONResponse }
+
+func (response RunPlaybook403JSONResponse) VisitRunPlaybookResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+
+	return json.NewEncoder(w).Encode(response)
 }
 
 type RunPlaybook404JSONResponse Error
@@ -8077,6 +10181,15 @@ func (response ResizeDisk401JSONResponse) VisitResizeDiskResponse(w http.Respons
 	return json.NewEncoder(w).Encode(response.Body)
 }
 
+type ResizeDisk403JSONResponse struct{ WorkstationOnlyJSONResponse }
+
+func (response ResizeDisk403JSONResponse) VisitResizeDiskResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
 type ResizeDisk404JSONResponse Error
 
 func (response ResizeDisk404JSONResponse) VisitResizeDiskResponse(w http.ResponseWriter) error {
@@ -8089,6 +10202,61 @@ func (response ResizeDisk404JSONResponse) VisitResizeDiskResponse(w http.Respons
 type ResizeDisk500JSONResponse Error
 
 func (response ResizeDisk500JSONResponse) VisitResizeDiskResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ResizeVMVolumeRequestObject struct {
+	Host HostName `json:"host"`
+	Name VMName   `json:"name"`
+	Body *ResizeVMVolumeJSONRequestBody
+}
+
+type ResizeVMVolumeResponseObject interface {
+	VisitResizeVMVolumeResponse(w http.ResponseWriter) error
+}
+
+type ResizeVMVolume204Response struct {
+}
+
+func (response ResizeVMVolume204Response) VisitResizeVMVolumeResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type ResizeVMVolume400JSONResponse struct{ ErrorJSONResponse }
+
+func (response ResizeVMVolume400JSONResponse) VisitResizeVMVolumeResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ResizeVMVolume401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response ResizeVMVolume401JSONResponse) VisitResizeVMVolumeResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
+type ResizeVMVolume404JSONResponse Error
+
+func (response ResizeVMVolume404JSONResponse) VisitResizeVMVolumeResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ResizeVMVolume500JSONResponse Error
+
+func (response ResizeVMVolume500JSONResponse) VisitResizeVMVolumeResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(500)
 
@@ -8330,6 +10498,226 @@ func (response OpenVMTunnel502JSONResponse) VisitOpenVMTunnelResponse(w http.Res
 	return json.NewEncoder(w).Encode(response)
 }
 
+type WaitVMIPRequestObject struct {
+	Host HostName `json:"host"`
+	Name VMName   `json:"name"`
+	Body *WaitVMIPJSONRequestBody
+}
+
+type WaitVMIPResponseObject interface {
+	VisitWaitVMIPResponse(w http.ResponseWriter) error
+}
+
+type WaitVMIP200JSONResponse WaitIPResult
+
+func (response WaitVMIP200JSONResponse) VisitWaitVMIPResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type WaitVMIP400JSONResponse struct{ ErrorJSONResponse }
+
+func (response WaitVMIP400JSONResponse) VisitWaitVMIPResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type WaitVMIP401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response WaitVMIP401JSONResponse) VisitWaitVMIPResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
+type WaitVMIP404JSONResponse Error
+
+func (response WaitVMIP404JSONResponse) VisitWaitVMIPResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type WaitVMIP500JSONResponse Error
+
+func (response WaitVMIP500JSONResponse) VisitWaitVMIPResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CreateVolumeRequestObject struct {
+	Host HostName `json:"host"`
+	Body *CreateVolumeJSONRequestBody
+}
+
+type CreateVolumeResponseObject interface {
+	VisitCreateVolumeResponse(w http.ResponseWriter) error
+}
+
+type CreateVolume201JSONResponse PathResult
+
+func (response CreateVolume201JSONResponse) VisitCreateVolumeResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CreateVolume400JSONResponse struct{ ErrorJSONResponse }
+
+func (response CreateVolume400JSONResponse) VisitCreateVolumeResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CreateVolume401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response CreateVolume401JSONResponse) VisitCreateVolumeResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
+type CreateVolume404JSONResponse Error
+
+func (response CreateVolume404JSONResponse) VisitCreateVolumeResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CreateVolume500JSONResponse Error
+
+func (response CreateVolume500JSONResponse) VisitCreateVolumeResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CloneVolumeRequestObject struct {
+	Host HostName `json:"host"`
+	Body *CloneVolumeJSONRequestBody
+}
+
+type CloneVolumeResponseObject interface {
+	VisitCloneVolumeResponse(w http.ResponseWriter) error
+}
+
+type CloneVolume201JSONResponse PathResult
+
+func (response CloneVolume201JSONResponse) VisitCloneVolumeResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CloneVolume400JSONResponse struct{ ErrorJSONResponse }
+
+func (response CloneVolume400JSONResponse) VisitCloneVolumeResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CloneVolume401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response CloneVolume401JSONResponse) VisitCloneVolumeResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
+type CloneVolume404JSONResponse Error
+
+func (response CloneVolume404JSONResponse) VisitCloneVolumeResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CloneVolume500JSONResponse Error
+
+func (response CloneVolume500JSONResponse) VisitCloneVolumeResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ResizeVolumeRequestObject struct {
+	Host HostName `json:"host"`
+	Body *ResizeVolumeJSONRequestBody
+}
+
+type ResizeVolumeResponseObject interface {
+	VisitResizeVolumeResponse(w http.ResponseWriter) error
+}
+
+type ResizeVolume204Response struct {
+}
+
+func (response ResizeVolume204Response) VisitResizeVolumeResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type ResizeVolume400JSONResponse struct{ ErrorJSONResponse }
+
+func (response ResizeVolume400JSONResponse) VisitResizeVolumeResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ResizeVolume401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response ResizeVolume401JSONResponse) VisitResizeVolumeResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
+type ResizeVolume404JSONResponse Error
+
+func (response ResizeVolume404JSONResponse) VisitResizeVolumeResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ResizeVolume500JSONResponse Error
+
+func (response ResizeVolume500JSONResponse) VisitResizeVolumeResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
 type ListMachinesRequestObject struct {
 }
 
@@ -8354,6 +10742,15 @@ func (response ListMachines401JSONResponse) VisitListMachinesResponse(w http.Res
 	w.WriteHeader(401)
 
 	return json.NewEncoder(w).Encode(response.Body)
+}
+
+type ListMachines403JSONResponse struct{ WorkstationOnlyJSONResponse }
+
+func (response ListMachines403JSONResponse) VisitListMachinesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+
+	return json.NewEncoder(w).Encode(response)
 }
 
 type ListMachines500JSONResponse struct{ ErrorJSONResponse }
@@ -8399,6 +10796,15 @@ func (response AddMachine401JSONResponse) VisitAddMachineResponse(w http.Respons
 	w.WriteHeader(401)
 
 	return json.NewEncoder(w).Encode(response.Body)
+}
+
+type AddMachine403JSONResponse struct{ WorkstationOnlyJSONResponse }
+
+func (response AddMachine403JSONResponse) VisitAddMachineResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+
+	return json.NewEncoder(w).Encode(response)
 }
 
 type AddMachine409JSONResponse Error
@@ -8454,6 +10860,15 @@ func (response RemoveMachine401JSONResponse) VisitRemoveMachineResponse(w http.R
 	return json.NewEncoder(w).Encode(response.Body)
 }
 
+type RemoveMachine403JSONResponse struct{ WorkstationOnlyJSONResponse }
+
+func (response RemoveMachine403JSONResponse) VisitRemoveMachineResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
 type RemoveMachine404JSONResponse struct{ ErrorJSONResponse }
 
 func (response RemoveMachine404JSONResponse) VisitRemoveMachineResponse(w http.ResponseWriter) error {
@@ -8497,6 +10912,15 @@ func (response GetMachine401JSONResponse) VisitGetMachineResponse(w http.Respons
 	w.WriteHeader(401)
 
 	return json.NewEncoder(w).Encode(response.Body)
+}
+
+type GetMachine403JSONResponse struct{ WorkstationOnlyJSONResponse }
+
+func (response GetMachine403JSONResponse) VisitGetMachineResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+
+	return json.NewEncoder(w).Encode(response)
 }
 
 type GetMachine404JSONResponse struct{ ErrorJSONResponse }
@@ -8552,6 +10976,15 @@ func (response RunMachineCommand401JSONResponse) VisitRunMachineCommandResponse(
 	w.WriteHeader(401)
 
 	return json.NewEncoder(w).Encode(response.Body)
+}
+
+type RunMachineCommand403JSONResponse struct{ WorkstationOnlyJSONResponse }
+
+func (response RunMachineCommand403JSONResponse) VisitRunMachineCommandResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+
+	return json.NewEncoder(w).Encode(response)
 }
 
 type RunMachineCommand404JSONResponse Error
@@ -8618,6 +11051,15 @@ func (response RunMachinePlaybook401JSONResponse) VisitRunMachinePlaybookRespons
 	return json.NewEncoder(w).Encode(response.Body)
 }
 
+type RunMachinePlaybook403JSONResponse struct{ WorkstationOnlyJSONResponse }
+
+func (response RunMachinePlaybook403JSONResponse) VisitRunMachinePlaybookResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
 type RunMachinePlaybook404JSONResponse Error
 
 func (response RunMachinePlaybook404JSONResponse) VisitRunMachinePlaybookResponse(w http.ResponseWriter) error {
@@ -8661,6 +11103,15 @@ func (response RebootMachine401JSONResponse) VisitRebootMachineResponse(w http.R
 	w.WriteHeader(401)
 
 	return json.NewEncoder(w).Encode(response.Body)
+}
+
+type RebootMachine403JSONResponse struct{ WorkstationOnlyJSONResponse }
+
+func (response RebootMachine403JSONResponse) VisitRebootMachineResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+
+	return json.NewEncoder(w).Encode(response)
 }
 
 type RebootMachine404JSONResponse struct{ ErrorJSONResponse }
@@ -8714,6 +11165,15 @@ func (response ListPlaybooks401JSONResponse) VisitListPlaybooksResponse(w http.R
 	w.WriteHeader(401)
 
 	return json.NewEncoder(w).Encode(response.Body)
+}
+
+type ListPlaybooks403JSONResponse struct{ WorkstationOnlyJSONResponse }
+
+func (response ListPlaybooks403JSONResponse) VisitListPlaybooksResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+
+	return json.NewEncoder(w).Encode(response)
 }
 
 type ListPlaybooks500JSONResponse struct{ ErrorJSONResponse }
@@ -8774,6 +11234,9 @@ type StrictServerInterface interface {
 	// Delete a disk image
 	// (DELETE /v1/hosts/{host}/images/{name})
 	DeleteImage(ctx context.Context, request DeleteImageRequestObject) (DeleteImageResponseObject, error)
+	// Host path of a disk image
+	// (GET /v1/hosts/{host}/images/{name}/path)
+	GetImagePath(ctx context.Context, request GetImagePathRequestObject) (GetImagePathResponseObject, error)
 	// List libvirt networks
 	// (GET /v1/hosts/{host}/networks)
 	ListNetworks(ctx context.Context, request ListNetworksRequestObject) (ListNetworksResponseObject, error)
@@ -8804,6 +11267,12 @@ type StrictServerInterface interface {
 	// Run a command over SSH
 	// (POST /v1/hosts/{host}/vms/{name}/cmd)
 	RunVMCommand(ctx context.Context, request RunVMCommandRequestObject) (RunVMCommandResponseObject, error)
+	// Force off and undefine a VM (raw)
+	// (DELETE /v1/hosts/{host}/vms/{name}/definition)
+	DeleteVMDefinition(ctx context.Context, request DeleteVMDefinitionRequestObject) (DeleteVMDefinitionResponseObject, error)
+	// Define a VM from a primitive configuration
+	// (PUT /v1/hosts/{host}/vms/{name}/definition)
+	DefineVM(ctx context.Context, request DefineVMRequestObject) (DefineVMResponseObject, error)
 	// Move the VM disk to another pool
 	// (POST /v1/hosts/{host}/vms/{name}/migrate-disk)
 	MigrateDisk(ctx context.Context, request MigrateDiskRequestObject) (MigrateDiskResponseObject, error)
@@ -8819,6 +11288,9 @@ type StrictServerInterface interface {
 	// Grow the VM disk and filesystem if running
 	// (POST /v1/hosts/{host}/vms/{name}/resize-disk)
 	ResizeDisk(ctx context.Context, request ResizeDiskRequestObject) (ResizeDiskResponseObject, error)
+	// Grow the VM disk volume (libvirt only)
+	// (POST /v1/hosts/{host}/vms/{name}/resize-volume)
+	ResizeVMVolume(ctx context.Context, request ResizeVMVolumeRequestObject) (ResizeVMVolumeResponseObject, error)
 	// Resume a paused VM
 	// (POST /v1/hosts/{host}/vms/{name}/resume)
 	ResumeVM(ctx context.Context, request ResumeVMRequestObject) (ResumeVMResponseObject, error)
@@ -8831,6 +11303,18 @@ type StrictServerInterface interface {
 	// Upgrade the connection to a raw byte stream to the guest's SSH port
 	// (GET /v1/hosts/{host}/vms/{name}/tunnel)
 	OpenVMTunnel(ctx context.Context, request OpenVMTunnelRequestObject) (OpenVMTunnelResponseObject, error)
+	// Wait for the VM to get an IP address
+	// (POST /v1/hosts/{host}/vms/{name}/wait-ip)
+	WaitVMIP(ctx context.Context, request WaitVMIPRequestObject) (WaitVMIPResponseObject, error)
+	// Create an empty qcow2 volume
+	// (POST /v1/hosts/{host}/volumes)
+	CreateVolume(ctx context.Context, request CreateVolumeRequestObject) (CreateVolumeResponseObject, error)
+	// Clone a volume into a pool
+	// (POST /v1/hosts/{host}/volumes/clone)
+	CloneVolume(ctx context.Context, request CloneVolumeRequestObject) (CloneVolumeResponseObject, error)
+	// Resize a volume by path
+	// (POST /v1/hosts/{host}/volumes/resize)
+	ResizeVolume(ctx context.Context, request ResizeVolumeRequestObject) (ResizeVolumeResponseObject, error)
 	// List metal and alien machines
 	// (GET /v1/metal)
 	ListMachines(ctx context.Context, request ListMachinesRequestObject) (ListMachinesResponseObject, error)
@@ -9058,6 +11542,33 @@ func (sh *strictHandler) DeleteImage(w http.ResponseWriter, r *http.Request, hos
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(DeleteImageResponseObject); ok {
 		if err := validResponse.VisitDeleteImageResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetImagePath operation middleware
+func (sh *strictHandler) GetImagePath(w http.ResponseWriter, r *http.Request, host HostName, name ImageName) {
+	var request GetImagePathRequestObject
+
+	request.Host = host
+	request.Name = name
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetImagePath(ctx, request.(GetImagePathRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetImagePath")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetImagePathResponseObject); ok {
+		if err := validResponse.VisitGetImagePathResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -9366,6 +11877,68 @@ func (sh *strictHandler) RunVMCommand(w http.ResponseWriter, r *http.Request, ho
 	}
 }
 
+// DeleteVMDefinition operation middleware
+func (sh *strictHandler) DeleteVMDefinition(w http.ResponseWriter, r *http.Request, host HostName, name VMName, params DeleteVMDefinitionParams) {
+	var request DeleteVMDefinitionRequestObject
+
+	request.Host = host
+	request.Name = name
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteVMDefinition(ctx, request.(DeleteVMDefinitionRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteVMDefinition")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteVMDefinitionResponseObject); ok {
+		if err := validResponse.VisitDeleteVMDefinitionResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DefineVM operation middleware
+func (sh *strictHandler) DefineVM(w http.ResponseWriter, r *http.Request, host HostName, name VMName) {
+	var request DefineVMRequestObject
+
+	request.Host = host
+	request.Name = name
+
+	var body DefineVMJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DefineVM(ctx, request.(DefineVMRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DefineVM")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DefineVMResponseObject); ok {
+		if err := validResponse.VisitDefineVMResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // MigrateDisk operation middleware
 func (sh *strictHandler) MigrateDisk(w http.ResponseWriter, r *http.Request, host HostName, name VMName) {
 	var request MigrateDiskRequestObject
@@ -9522,6 +12095,40 @@ func (sh *strictHandler) ResizeDisk(w http.ResponseWriter, r *http.Request, host
 	}
 }
 
+// ResizeVMVolume operation middleware
+func (sh *strictHandler) ResizeVMVolume(w http.ResponseWriter, r *http.Request, host HostName, name VMName) {
+	var request ResizeVMVolumeRequestObject
+
+	request.Host = host
+	request.Name = name
+
+	var body ResizeVMVolumeJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ResizeVMVolume(ctx, request.(ResizeVMVolumeRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ResizeVMVolume")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ResizeVMVolumeResponseObject); ok {
+		if err := validResponse.VisitResizeVMVolumeResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // ResumeVM operation middleware
 func (sh *strictHandler) ResumeVM(w http.ResponseWriter, r *http.Request, host HostName, name VMName) {
 	var request ResumeVMRequestObject
@@ -9623,6 +12230,139 @@ func (sh *strictHandler) OpenVMTunnel(w http.ResponseWriter, r *http.Request, ho
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(OpenVMTunnelResponseObject); ok {
 		if err := validResponse.VisitOpenVMTunnelResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// WaitVMIP operation middleware
+func (sh *strictHandler) WaitVMIP(w http.ResponseWriter, r *http.Request, host HostName, name VMName) {
+	var request WaitVMIPRequestObject
+
+	request.Host = host
+	request.Name = name
+
+	var body WaitVMIPJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.WaitVMIP(ctx, request.(WaitVMIPRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "WaitVMIP")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(WaitVMIPResponseObject); ok {
+		if err := validResponse.VisitWaitVMIPResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateVolume operation middleware
+func (sh *strictHandler) CreateVolume(w http.ResponseWriter, r *http.Request, host HostName) {
+	var request CreateVolumeRequestObject
+
+	request.Host = host
+
+	var body CreateVolumeJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateVolume(ctx, request.(CreateVolumeRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateVolume")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateVolumeResponseObject); ok {
+		if err := validResponse.VisitCreateVolumeResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CloneVolume operation middleware
+func (sh *strictHandler) CloneVolume(w http.ResponseWriter, r *http.Request, host HostName) {
+	var request CloneVolumeRequestObject
+
+	request.Host = host
+
+	var body CloneVolumeJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CloneVolume(ctx, request.(CloneVolumeRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CloneVolume")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CloneVolumeResponseObject); ok {
+		if err := validResponse.VisitCloneVolumeResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ResizeVolume operation middleware
+func (sh *strictHandler) ResizeVolume(w http.ResponseWriter, r *http.Request, host HostName) {
+	var request ResizeVolumeRequestObject
+
+	request.Host = host
+
+	var body ResizeVolumeJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ResizeVolume(ctx, request.(ResizeVolumeRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ResizeVolume")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ResizeVolumeResponseObject); ok {
+		if err := validResponse.VisitResizeVolumeResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -9880,110 +12620,136 @@ func (sh *strictHandler) GetVersion(w http.ResponseWriter, r *http.Request) {
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"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",
+	"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",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

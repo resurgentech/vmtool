@@ -106,6 +106,7 @@ paths:
         '500': { $ref: '#/components/responses/Error' }
     post:
       operationId: createVM
+      x-vmtool-workstation-only: true
       summary: Create and start a VM
       description: >
         Synchronous. May wait up to 120s for an IP and then run an optional
@@ -114,6 +115,7 @@ paths:
         is a valid 201 when no grow/playbook was requested. Failures after the
         domain exists are 500; the VM is never auto-undefined. 409 if the
         name is registered as a metal or alien machine.
+        Served by the workstation only: on a server whose config.yml role is hypervisor this operation answers 403 "served by the workstation" before reading the body.
       requestBody:
         required: true
         content:
@@ -134,6 +136,7 @@ paths:
               schema: { $ref: '#/components/schemas/VMInfo' }
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/WorkstationOnly' }
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
@@ -279,8 +282,11 @@ paths:
       - $ref: '#/components/parameters/VMName'
     post:
       operationId: runVMCommand
+      x-vmtool-workstation-only: true
       summary: Run a command over SSH
-      description: Returns remote stdout, stderr, and exit_code. 200 even when exit_code is non-zero. 502 if SSH transport fails.
+      description: >
+        Returns remote stdout, stderr, and exit_code. 200 even when exit_code is non-zero. 502 if SSH transport fails.
+        Served by the workstation only: on a server whose config.yml role is hypervisor this operation answers 403 "served by the workstation" before reading the body.
       requestBody:
         required: true
         content:
@@ -296,6 +302,7 @@ paths:
               schema: { $ref: '#/components/schemas/CmdResult' }
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/WorkstationOnly' }
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
@@ -372,8 +379,11 @@ paths:
       - $ref: '#/components/parameters/VMName'
     post:
       operationId: runPlaybook
+      x-vmtool-workstation-only: true
       summary: Run an Ansible playbook against the VM
-      description: Synchronous; may run for many minutes. Bare names resolve under ansible/playbooks.
+      description: >
+        Synchronous; may run for many minutes. Bare names resolve under ansible/playbooks.
+        Served by the workstation only: on a server whose config.yml role is hypervisor this operation answers 403 "served by the workstation" before reading the body.
       requestBody:
         required: true
         content:
@@ -389,6 +399,7 @@ paths:
               schema: { $ref: '#/components/schemas/PlaybookResult' }
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/WorkstationOnly' }
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
         '500':
@@ -424,7 +435,10 @@ paths:
       - $ref: '#/components/parameters/VMName'
     post:
       operationId: resizeDisk
+      x-vmtool-workstation-only: true
       summary: Grow the VM disk and filesystem if running
+      description: >
+        Served by the workstation only: on a server whose config.yml role is hypervisor this operation answers 403 "served by the workstation" before reading the body.
       requestBody:
         required: true
         content:
@@ -438,6 +452,7 @@ paths:
               schema: { $ref: '#/components/schemas/ResizeDiskResult' }
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/WorkstationOnly' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
   /v1/hosts/{host}/vms/{name}/add-disk:
@@ -574,10 +589,196 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+  /v1/hosts/{host}/images/{name}/path:
+    parameters:
+      - $ref: '#/components/parameters/HostName'
+      - $ref: '#/components/parameters/ImageName'
+    get:
+      operationId: getImagePath
+      summary: Host path of a disk image
+      description: >
+        Daemon primitive (Manager.ImagePath). Searches every storage pool for a
+        volume called {name} and returns its path on the hypervisor. 404 if no
+        pool holds it.
+      responses:
+        '200':
+          description: path
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PathResult' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+  /v1/hosts/{host}/volumes:
+    parameters:
+      - $ref: '#/components/parameters/HostName'
+    post:
+      operationId: createVolume
+      summary: Create an empty qcow2 volume
+      description: >
+        Daemon primitive (Manager.CreateVolume). Creates {name}.qcow2 of
+        size_gb GB in pool (default `default`) and returns its path. `name`
+        must be a plain file name: letters, digits, `.`, `_`, `-`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateVolumeRequest' }
+      responses:
+        '201':
+          description: created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PathResult' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+  /v1/hosts/{host}/volumes/clone:
+    parameters:
+      - $ref: '#/components/parameters/HostName'
+    post:
+      operationId: cloneVolume
+      summary: Clone a volume into a pool
+      description: >
+        Daemon primitive (Manager.CloneImage). Clones the volume at base_path
+        into target_pool (default `default`) as {new_name}.qcow2 and returns
+        the new path. base_path must resolve inside a libvirt storage pool
+        (symlinks and `..` are resolved first); anything else is 400.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CloneVolumeRequest' }
+      responses:
+        '201':
+          description: cloned
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PathResult' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+  /v1/hosts/{host}/volumes/resize:
+    parameters:
+      - $ref: '#/components/parameters/HostName'
+    post:
+      operationId: resizeVolume
+      summary: Resize a volume by path
+      description: >
+        Daemon primitive (Manager.ResizeVolume). path must resolve inside a
+        libvirt storage pool; anything else is 400. No guest filesystem is
+        touched.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ResizeVolumeRequest' }
+      responses:
+        '204': { description: resized }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+  /v1/hosts/{host}/vms/{name}/definition:
+    parameters:
+      - $ref: '#/components/parameters/HostName'
+      - $ref: '#/components/parameters/VMName'
+    put:
+      operationId: defineVM
+      summary: Define a VM from a primitive configuration
+      description: >
+        Daemon primitive (Manager.Define). Registers the domain without
+        starting it. The body carries no ssh_user or ssh_pass: a daemon never
+        holds guest secrets. disk_path and every extra_disks[].path must
+        resolve inside a libvirt storage pool; anything else is 400. The VM
+        name in the path must be a plain name (letters, digits, `.`, `_`, `-`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DefineVMRequest' }
+      responses:
+        '204': { description: defined }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+    delete:
+      operationId: deleteVMDefinition
+      summary: Force off and undefine a VM (raw)
+      description: >
+        Daemon primitive (Manager.Delete). Unlike deleteVM it never touches
+        guest credentials under .machines/: it only stops, undefines and, unless
+        noclone, deletes the VM's disk volumes. Remote clients use this form.
+      parameters:
+        - name: noclone
+          in: query
+          required: false
+          description: if true, undefine only and keep the disk
+          schema: { type: boolean, default: false }
+      responses:
+        '204': { description: deleted }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+  /v1/hosts/{host}/vms/{name}/wait-ip:
+    parameters:
+      - $ref: '#/components/parameters/HostName'
+      - $ref: '#/components/parameters/VMName'
+    post:
+      operationId: waitVMIP
+      summary: Wait for the VM to get an IP address
+      description: >
+        Daemon primitive (Manager.WaitForIP). Blocks up to timeout_seconds
+        (1 to 3600, default 120; send {} for the default), so clients
+        need a long HTTP timeout. A timeout is 500 with the libvirt-side
+        message.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WaitIPRequest' }
+      responses:
+        '200':
+          description: the address
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WaitIPResult' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+  /v1/hosts/{host}/vms/{name}/resize-volume:
+    parameters:
+      - $ref: '#/components/parameters/HostName'
+      - $ref: '#/components/parameters/VMName'
+    post:
+      operationId: resizeVMVolume
+      summary: Grow the VM disk volume (libvirt only)
+      description: >
+        Daemon primitive (Manager.ResizeDisk). Grows the volume to size_gb GB
+        and nothing else: no guest filesystem grow, no credentials. The
+        workstation-only resizeDisk is the workflow that also grows the guest.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ResizeVMVolumeRequest' }
+      responses:
+        '204': { description: resized }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
   /v1/playbooks:
     get:
       operationId: listPlaybooks
+      x-vmtool-workstation-only: true
       summary: List playbooks in ansible/playbooks
+      description: >
+        Served by the workstation only: on a server whose config.yml role is hypervisor this operation answers 403 "served by the workstation" before reading the body.
       responses:
         '200':
           description: playbook filenames
@@ -585,16 +786,19 @@ paths:
             application/json:
               schema: { type: array, items: { type: string } }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/WorkstationOnly' }
         '500': { $ref: '#/components/responses/Error' }
 
   /v1/metal:
     get:
       operationId: listMachines
+      x-vmtool-workstation-only: true
       summary: List metal and alien machines
       description: >
         Machines registered under .machines/<name>/machine.yml. Each one is
         probed over SSH concurrently with a short connect timeout, so state is
         live but a dead machine costs at most a few seconds.
+        Served by the workstation only: on a server whose config.yml role is hypervisor this operation answers 403 "served by the workstation" before reading the body.
       responses:
         '200':
           description: machines
@@ -604,9 +808,11 @@ paths:
                 type: array
                 items: { $ref: '#/components/schemas/MachineInfo' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/WorkstationOnly' }
         '500': { $ref: '#/components/responses/Error' }
     post:
       operationId: addMachine
+      x-vmtool-workstation-only: true
       summary: Onboard a metal or alien machine
       description: >
         Synchronous; runs setup_bot.yml (and commission.yml when requested) so
@@ -619,6 +825,7 @@ paths:
         VM credentials, or is registered with a different host or kind, and
         if the machine is not Ubuntu-compatible or lacks passwordless sudo.
         502 if SSH to the machine fails.
+        Served by the workstation only: on a server whose config.yml role is hypervisor this operation answers 403 "served by the workstation" before reading the body.
       requestBody:
         required: true
         content:
@@ -636,6 +843,7 @@ paths:
               schema: { $ref: '#/components/schemas/MachineInfo' }
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/WorkstationOnly' }
         '409': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
         '502': { $ref: '#/components/responses/Error' }
@@ -644,7 +852,10 @@ paths:
       - $ref: '#/components/parameters/MachineName'
     get:
       operationId: getMachine
+      x-vmtool-workstation-only: true
       summary: Show one machine (probes SSH)
+      description: >
+        Served by the workstation only: on a server whose config.yml role is hypervisor this operation answers 403 "served by the workstation" before reading the body.
       responses:
         '200':
           description: machine
@@ -652,17 +863,21 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/MachineInfo' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/WorkstationOnly' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
     delete:
       operationId: removeMachine
+      x-vmtool-workstation-only: true
       summary: Forget a machine
       description: >
         Removes .machines/<name>/ (manifest and credentials). Nothing is
         changed on the machine itself; the bot user and its key stay there.
+        Served by the workstation only: on a server whose config.yml role is hypervisor this operation answers 403 "served by the workstation" before reading the body.
       responses:
         '204': { description: removed }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/WorkstationOnly' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
   /v1/metal/{name}/reboot:
@@ -670,11 +885,13 @@ paths:
       - $ref: '#/components/parameters/MachineName'
     post:
       operationId: rebootMachine
+      x-vmtool-workstation-only: true
       summary: Reboot a machine over SSH
       description: >
         Schedules `systemctl reboot` one second out via sudo and returns
         immediately with state rebooting. There is no power-off or start for
         machines.
+        Served by the workstation only: on a server whose config.yml role is hypervisor this operation answers 403 "served by the workstation" before reading the body.
       responses:
         '200':
           description: machine
@@ -682,6 +899,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/MachineInfo' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/WorkstationOnly' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
         '502': { $ref: '#/components/responses/Error' }
@@ -690,8 +908,11 @@ paths:
       - $ref: '#/components/parameters/MachineName'
     post:
       operationId: runMachineCommand
+      x-vmtool-workstation-only: true
       summary: Run a command over SSH
-      description: Same contract as runVMCommand. 200 even when exit_code is non-zero. 502 if SSH transport fails.
+      description: >
+        Same contract as runVMCommand. 200 even when exit_code is non-zero. 502 if SSH transport fails.
+        Served by the workstation only: on a server whose config.yml role is hypervisor this operation answers 403 "served by the workstation" before reading the body.
       requestBody:
         required: true
         content:
@@ -707,6 +928,7 @@ paths:
               schema: { $ref: '#/components/schemas/CmdResult' }
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/WorkstationOnly' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
         '502': { $ref: '#/components/responses/Error' }
@@ -715,6 +937,7 @@ paths:
       - $ref: '#/components/parameters/MachineName'
     post:
       operationId: runMachinePlaybook
+      x-vmtool-workstation-only: true
       summary: Run an Ansible playbook against the machine
       description: >
         Synchronous; may run for many minutes. Bare names resolve under
@@ -722,6 +945,7 @@ paths:
         vmtool_kind to its kind unless extra_vars already contains them.
         commission.yml is refused (400); it rewrites machine identity and is
         only run on aliens via addMachine with commission true.
+        Served by the workstation only: on a server whose config.yml role is hypervisor this operation answers 403 "served by the workstation" before reading the body.
       requestBody:
         required: true
         content:
@@ -737,6 +961,7 @@ paths:
               schema: { $ref: '#/components/schemas/PlaybookResult' }
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/WorkstationOnly' }
         '404': { $ref: '#/components/responses/Error' }
         '500':
           description: ansible or orchestration failed
@@ -771,9 +996,21 @@ components:
       in: path
       required: true
       schema: { type: string }
+    ImageName:
+      name: name
+      in: path
+      required: true
+      schema: { type: string }
   responses:
     Error:
       description: error
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    WorkstationOnly:
+      description: >
+        The server's role is hypervisor and this operation is served by the
+        workstation. Sent before the body is read; no libvirt work is done.
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
@@ -1011,3 +1248,77 @@ components:
         name: { type: string }
         path: { type: string }
         active: { type: boolean }
+    PathResult:
+      type: object
+      required: [path]
+      properties:
+        path: { type: string, description: "absolute path on the hypervisor" }
+    CreateVolumeRequest:
+      type: object
+      required: [name, size_gb]
+      properties:
+        pool: { type: string, description: "storage pool; default is `default`" }
+        name: { type: string, description: "plain file name; .qcow2 is appended if missing" }
+        size_gb: { type: integer, minimum: 1 }
+    CloneVolumeRequest:
+      type: object
+      required: [base_path, new_name]
+      properties:
+        base_path: { type: string, description: "volume to clone; must resolve inside a storage pool" }
+        new_name: { type: string, description: "plain name; the clone is {new_name}.qcow2" }
+        target_pool: { type: string, description: "default is `default`" }
+    ResizeVolumeRequest:
+      type: object
+      required: [path, size_bytes]
+      properties:
+        path: { type: string, description: "volume path; must resolve inside a storage pool" }
+        size_bytes: { type: integer, format: int64, minimum: 1 }
+    ResizeVMVolumeRequest:
+      type: object
+      required: [size_gb]
+      properties:
+        size_gb: { type: integer, minimum: 1 }
+    NetworkConfig:
+      type: object
+      required: [type]
+      properties:
+        type: { type: string, enum: [nat, bridge, direct] }
+        source: { type: string, description: "network name (nat), bridge name (bridge) or host NIC (direct)" }
+        macvtap_mode:
+          type: string
+          enum: [bridge, vepa, private, passthrough]
+          description: only used when type is direct
+    DiskDevice:
+      type: object
+      required: [path, target]
+      properties:
+        path: { type: string, description: "volume path; must resolve inside a storage pool" }
+        target: { type: string, description: "guest virtio device name (vdb, vdc, …)" }
+    DefineVMRequest:
+      type: object
+      description: >
+        Mirrors the Go VMConfig minus the VM name (it is in the path) and
+        minus ssh_user and ssh_pass, which never reach a daemon.
+      required: [vcpus, memory_gib, disk_path, network]
+      properties:
+        vcpus: { type: integer, minimum: 1 }
+        memory_gib: { type: integer, minimum: 1 }
+        disk_path: { type: string, description: "boot volume; must resolve inside a storage pool" }
+        disk_size_gb: { type: integer, minimum: 0, description: "0 keeps the volume size" }
+        pool: { type: string }
+        network: { $ref: '#/components/schemas/NetworkConfig' }
+        noclone: { type: boolean }
+        extra_disk_size_gb: { type: integer, minimum: 0 }
+        extra_disk_pool: { type: string }
+        extra_disks:
+          type: array
+          items: { $ref: '#/components/schemas/DiskDevice' }
+    WaitIPRequest:
+      type: object
+      properties:
+        timeout_seconds: { type: integer, minimum: 1, maximum: 3600, default: 120 }
+    WaitIPResult:
+      type: object
+      required: [ip]
+      properties:
+        ip: { type: string }

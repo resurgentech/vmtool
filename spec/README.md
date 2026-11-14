@@ -81,6 +81,59 @@ A breaking change bumps the major version in `info.version` and the path
 prefix (`/v2/...`). Clients require an exact `api_version` match and refuse a
 server that reports anything else.
 
+## Hypervisor role and daemon primitives
+
+A server whose `config.yml` has `role: hypervisor` is a remote daemon: it does
+libvirt work only and holds no guest secrets. Every operation the spec marks
+`x-vmtool-workstation-only: true` answers `403` with
+`{"error":"<operationId> is served by the workstation, not by hypervisor <name>"}`.
+The check runs once, in `internal/server` (`gateWorkstationOnly`), after the
+bearer check and before the body is read, driven by that extension read from
+the spec, so the set cannot drift. The marked operations are `createVM`,
+`runVMCommand`, `runPlaybook`, `resizeDisk` (the workflow form that also grows
+the guest and uses credentials), `listPlaybooks` (playbooks live on the
+workstation) and every `/v1/metal` operation. `openVMTunnel` is not marked: a
+hypervisor exists to serve it. `TestWorkstationOnlySet` pins the exact set.
+
+`remote.Manager` (an HTTP client implementing `app.Manager`) calls these
+routes. Every Manager method maps onto one route; the lifecycle routes run
+`Manager.X` then `Manager.Info` and return the `VMInfo`, so the client drops
+the body and keeps the error.
+
+| `app.Manager` method | operationId | Notes |
+|---|---|---|
+| `Start` / `Stop` / `Resume` / `Reboot` | `startVM` / `stopVM` / `resumeVM` / `rebootVM` | Method, then `Info`. Returns `VMInfo`. |
+| `Destroy` | `poweroffVM` | Same shape. |
+| `SetAutostart` | `setAutostart` | Same shape. |
+| `Info` | `getVM` | `VMInfo` carries every field of `vmtool.VMInfo`. |
+| `List` | `listVMs` | |
+| `Delete(name, noclone)` | `deleteVMDefinition` | Raw. `deleteVM` is the workstation workflow: it also forgets `.machines/<host>/<vm>/` credentials. |
+| `MigrateDisk` | `migrateDisk` | Method, then `Info`. |
+| `AddDisk` | `addDisk` | Method, then `Info`; result carries `path` and `target` (`DiskDevice`). |
+| `ResizeDisk` | `resizeVMVolume` | New. libvirt only. `resizeDisk` is the workstation workflow that also grows the guest. |
+| `WaitForIP` | `waitVMIP` | New. `timeout_seconds` 1..3600, default 120. |
+| `Define` | `defineVM` | New. `PUT vms/{name}/definition`; no `ssh_user`/`ssh_pass`. |
+| `CreateVolume` | `createVolume` | New. Returns `{path}`. |
+| `CloneImage` | `cloneVolume` | New. `base_path` must be inside a pool. Returns `{path}`. |
+| `ResizeVolume` | `resizeVolume` | New. `path` must be inside a pool. |
+| `ImagePath` | `getImagePath` | New. 404 if no pool has it. |
+| `ListNetworks` / `ListBridges` | `listNetworks` / `listBridges` | |
+| `ListImagesByPool` | `listImages` | `{pool: [image]}`. |
+| `DeleteImage` | `deleteImage` | `pool` query, default `default`. |
+| `ListPools` | `listPools` | `PoolInfo{name,path,active}`. |
+| `CreatePool` | `createPool` | |
+
+`Create` is not on `app.Manager`; the workstation's `app.Service.CreateVM`
+composes `cloneVolume`, `resizeVolume`, `defineVM` and `startVM`.
+
+Path inputs (`base_path`, `path`, `disk_path`, `extra_disks[].path`) must be
+absolute and, after `filepath.Clean` and symlink resolution of the existing
+prefix, strictly inside the path of a libvirt storage pool; otherwise `400`.
+The cleaned path is what reaches libvirt. Names in bodies (`new_name`, volume
+`name`, the VM name in `.../vms/{name}/definition`) must be plain names. The
+check is point-in-time; it is defence in depth for a loopback, token-guarded
+API, not a sandbox.
+
 ## GET / pattern
 
 PR1 records the exact std-http pattern oapi-codegen emits for the root after

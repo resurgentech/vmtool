@@ -39,6 +39,9 @@ func (s *Server) Handler() http.Handler {
 		listen: s.Listen,
 		hosts:  r,
 	}
+	if s.Config != nil {
+		h.role = s.Config.Role
+	}
 	var hash string
 	if s.Config != nil {
 		hash = s.Config.TokenSHA256
@@ -65,6 +68,9 @@ func chain(h *handlers, auth func(http.Handler) http.Handler) http.Handler {
 	// every other operation goes to the strict adapter.
 	mux := tunnelMux{ServerInterface: api.NewStrictHandler(h, nil), h: h}
 	var next http.Handler = withMaxBytes(withRequest(api.HandlerFromMux(mux, http.NewServeMux())))
+	// A hypervisor refuses the workstation-only operations here, after auth
+	// and before the body is read or any handler runs.
+	next = gateWorkstationOnly(h.role, h.hosts.Local(), next)
 	if auth != nil {
 		next = auth(next)
 	}

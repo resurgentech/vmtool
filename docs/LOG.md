@@ -88,3 +88,10 @@ are appended, never edited in; a hook refuses rewrites.
   port 22, libvirt IP only, dial before hijack); `internal/remote` Dial/Pipe;
   `vmtool tunnel host/vm`; server ALPN pinned to http/1.1.
 - Commits: a41ac84
+
+## 2026-11-14 — T9 Guest SSH through the tunnel; `vmtool ssh-config`
+
+- `vmtool.Tunnel`; all guest ssh/cmd/grow/playbook/inventory use
+  `ProxyCommand=<vmtool> tunnel host/vm`, token in child env only (CLI token
+  or request bearer); `vmtool ssh-config`; TUI ssh via internal/app.
+- Commits: 78fb694
