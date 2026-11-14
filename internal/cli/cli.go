@@ -175,6 +175,7 @@ it checks the bearer token of every request instead.`,
 		poweroffCmd(e),
 		deleteCmd(e),
 		listCmd(e),
+		hostsCmd(e),
 		infoCmd(e),
 		sshCmd(e),
 		tunnelCmd(e),
@@ -513,36 +514,6 @@ Use --noclone to skip volume deletion (use when the VM was created with --noclon
 
 	cmd.Flags().BoolVar(&noclone, "noclone", false, "undefine only, do not delete the disk volume")
 	return cmd
-}
-
-func listCmd(e *env) *cobra.Command {
-	return &cobra.Command{
-		Use:     "list",
-		Short:   "List all VMs on this host, named host/vm",
-		Aliases: []string{"ls"},
-		RunE: withManager(e, func(m app.Manager, cmd *cobra.Command, args []string) error {
-			vms, err := e.service("").ListVMs(cmd.Context(), m)
-			if err != nil {
-				return err
-			}
-			local := e.resolver().Local()
-			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-			fmt.Fprintln(w, "NAME\tSTATE\tVCPUS\tMEMORY\tAUTOSTART\tIP")
-			for _, vm := range vms {
-				ip := vm.IP
-				if ip == "" {
-					ip = "-"
-				}
-				autostart := "off"
-				if vm.Autostart {
-					autostart = "on"
-				}
-				name := app.VMRef{Host: local, Name: vm.Name}.String()
-				fmt.Fprintf(w, "%s\t%s\t%d\t%d GiB\t%s\t%s\n", name, vm.State, vm.VCPUs, vm.Memory, autostart, ip)
-			}
-			return w.Flush()
-		}),
-	}
 }
 
 func infoCmd(e *env) *cobra.Command {

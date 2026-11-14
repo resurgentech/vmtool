@@ -165,7 +165,13 @@ type model struct {
 	host string
 	// hostNames are every vmtool host (app.Service.HostNames).
 	hostNames []string
-	vms       []vmtool.VMInfo
+	// listAll lists every host's VMs concurrently with a per-host timeout
+	// (app.ListAll over the resolver); nil falls back to the local manager
+	// alone.
+	listAll func(ctx context.Context) []app.HostVMs
+	// vms are the VM rows of every host, and an error row for a host that
+	// did not answer.
+	vms []vmRow
 	// machines (metal/alien) are listed after vms; cursor spans both.
 	machines   []app.MachineInfo
 	machineErr error
@@ -222,8 +228,40 @@ type model struct {
 	machineValues []string
 }
 
+// vmRow is one VM row: the VM and the host it lives on. A host that did not
+// answer is a row with Err set and no VM.
+type vmRow struct {
+	vmtool.VMInfo
+	Host string
+	Err  error
+}
+
+// fetchRows lists every host's VMs: through listAll when set, else the local
+// manager alone. It never returns nil, so a result always replaces the rows.
+func (m model) fetchRows() []vmRow {
+	var hv []app.HostVMs
+	switch {
+	case m.listAll != nil:
+		hv = m.listAll(context.Background())
+	case m.manager != nil:
+		vms, err := m.manager.List()
+		hv = []app.HostVMs{{Host: m.host, VMs: vms, Err: err}}
+	}
+	rows := []vmRow{}
+	for _, h := range hv {
+		if h.Err != nil {
+			rows = append(rows, vmRow{Host: h.Host, Err: h.Err})
+			continue
+		}
+		for _, vm := range h.VMs {
+			rows = append(rows, vmRow{VMInfo: vm, Host: h.Host})
+		}
+	}
+	return rows
+}
+
 type refreshMsg struct {
-	vms        []vmtool.VMInfo
+	vms        []vmRow
 	err        error
 	machines   []app.MachineInfo
 	machineErr error
@@ -234,7 +272,7 @@ type cmdDoneMsg struct {
 	title  string
 	status logStatus
 	output string
-	vms    []vmtool.VMInfo
+	vms    []vmRow
 	err    error
 	// machines, if non-nil, replaces the machine rows.
 	machines []app.MachineInfo
@@ -251,9 +289,12 @@ type bridgeCreatedMsg struct {
 	bridges []string
 }
 
-// refresh lists VMs and probes machines concurrently; a dead machine costs
-// a few seconds of probe timeout, not the VM list.
-func refresh(m app.Manager, svc *app.Service) tea.Cmd {
+// refreshCmd lists every host's VMs (the fan-out, 5 s per host) and probes
+// machines concurrently. It is a tea.Cmd, so the update loop never waits on
+// it; a dead host costs its timeout here, as an error row, not the other
+// hosts' rows.
+func (m model) refreshCmd() tea.Cmd {
+	svc := m.svc()
 	return func() tea.Msg {
 		var msg refreshMsg
 		done := make(chan struct{})
@@ -261,7 +302,7 @@ func refresh(m app.Manager, svc *app.Service) tea.Cmd {
 			msg.machines, msg.machineErr = svc.ListMachines(context.Background())
 			close(done)
 		}()
-		msg.vms, msg.err = m.List()
+		msg.vms = m.fetchRows()
 		<-done
 		return msg
 	}
@@ -271,11 +312,12 @@ func (m model) rowCount() int {
 	return len(m.vms) + len(m.machines)
 }
 
-func (m model) selectedVM() (vmtool.VMInfo, bool) {
-	if m.cursor < len(m.vms) {
+// selectedVM is the VM row under the cursor; an error row is not a VM.
+func (m model) selectedVM() (vmRow, bool) {
+	if m.cursor < len(m.vms) && m.vms[m.cursor].Err == nil {
 		return m.vms[m.cursor], true
 	}
-	return vmtool.VMInfo{}, false
+	return vmRow{}, false
 }
 
 func (m model) selectedMachine() (app.MachineInfo, bool) {
@@ -306,9 +348,14 @@ func (m model) svc() *app.Service {
 	return s.WithTunnel(m.tunnel)
 }
 
-// vmRef names vm on this TUI's host.
-func (m model) vmRef(vm vmtool.VMInfo) app.VMRef {
-	return app.VMRef{Host: m.host, Name: vm.Name}
+// vmRef names vm on the host its row came from (this TUI's host when the row
+// carries none).
+func (m model) vmRef(vm vmRow) app.VMRef {
+	host := vm.Host
+	if host == "" {
+		host = m.host
+	}
+	return app.VMRef{Host: host, Name: vm.Name}
 }
 
 // onHost runs fn on the Manager of host, resolved for this one action and
@@ -330,7 +377,6 @@ func (m model) onHost(host string, fn func(app.Manager) error) error {
 func (m model) runLifecycle(op string, ref app.VMRef, fn func(*app.Service, app.Manager) error) (tea.Model, tea.Cmd) {
 	name := ref.String()
 	idx := m.addLog(fmt.Sprintf("%s %s...", op, name))
-	mgr := m.manager
 	svc := m.svc()
 	return m, func() tea.Msg {
 		err := m.onHost(ref.Host, func(target app.Manager) error { return fn(svc, target) })
@@ -340,8 +386,7 @@ func (m model) runLifecycle(op string, ref app.VMRef, fn func(*app.Service, app.
 			title = fmt.Sprintf("%s %s: error: %v", op, name, err)
 			status = logStatusError
 		}
-		vms, listErr := mgr.List()
-		return cmdDoneMsg{logIdx: idx, title: title, status: status, vms: vms, err: listErr}
+		return cmdDoneMsg{logIdx: idx, title: title, status: status, vms: m.fetchRows()}
 	}
 }
 
@@ -356,7 +401,7 @@ func initialModel(mgr app.Manager, host, playbookDir, inventoryPath string) mode
 }
 
 func (m model) Init() tea.Cmd {
-	return refresh(m.manager, m.svc())
+	return m.refreshCmd()
 }
 
 // --- Update dispatch ---
@@ -381,7 +426,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			idx := m.addLog(fmt.Sprintf("ssh %s: %v", msg.name, msg.err))
 			m.log[idx].status = logStatusError
 		}
-		return m, refresh(m.manager, m.svc())
+		return m, m.refreshCmd()
 
 	case progressMsg:
 		if msg.logIdx >= 0 && msg.logIdx < len(m.log) && m.log[msg.logIdx].status == logStatusRunning {
@@ -489,7 +534,7 @@ func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.sshSelected()
 		}
 	case "r":
-		return m, refresh(m.manager, m.svc())
+		return m, m.refreshCmd()
 	case "c":
 		if m.focus == paneVMs {
 			return m.enterCreateMode()
@@ -872,7 +917,6 @@ func (m model) submitCreate() (tea.Model, tea.Cmd) {
 
 	logIdx := m.addLog(fmt.Sprintf("creating %s...", name))
 	m.mode = modeList
-	mgr := m.manager
 	svc := m.svc()
 	return m, func() tea.Msg {
 		var buf strings.Builder
@@ -908,8 +952,7 @@ func (m model) submitCreate() (tea.Model, tea.Cmd) {
 				buf.WriteString(ae.Output)
 			}
 		}
-		vms, listErr := mgr.List()
-		return cmdDoneMsg{logIdx: logIdx, title: title, status: status, output: buf.String(), vms: vms, err: listErr}
+		return cmdDoneMsg{logIdx: logIdx, title: title, status: status, output: buf.String(), vms: m.fetchRows()}
 	}
 }
 
@@ -1182,7 +1225,6 @@ func (m model) runPlaybook() (tea.Model, tea.Cmd) {
 	logIdx := m.addLog(fmt.Sprintf("running %s on %s...", pb, ref))
 	m.mode = modeList
 
-	mgr := m.manager
 	vmName := ref.String()
 	svc := m.svc()
 	return m, func() tea.Msg {
@@ -1202,8 +1244,7 @@ func (m model) runPlaybook() (tea.Model, tea.Cmd) {
 			status = logStatusError
 			title = fmt.Sprintf("%s on %s: error: %v", pb, vmName, err)
 		}
-		vms, listErr := mgr.List()
-		return cmdDoneMsg{logIdx: logIdx, title: title, status: status, output: out, vms: vms, err: listErr}
+		return cmdDoneMsg{logIdx: logIdx, title: title, status: status, output: out, vms: m.fetchRows()}
 	}
 }
 
@@ -1281,6 +1322,10 @@ func (m model) View() string {
 
 		lines := make([]string, 0, m.rowCount())
 		for _, vm := range m.vms {
+			if vm.Err != nil {
+				lines = append(lines, fmt.Sprintf("  %-28s ERROR: %s", vm.Host, strings.Join(strings.Fields(vm.Err.Error()), " ")))
+				continue
+			}
 			ip := vm.IP
 			if ip == "" {
 				ip = "-"
@@ -1532,8 +1577,9 @@ func flatImages(mgr app.Manager) []string {
 	return out
 }
 
-// Run launches the interactive TUI. Rows list the resolver's local host;
-// every action on a VM goes through the resolver for the VM's host (the
+// Run launches the interactive TUI. Rows list every host the resolver
+// serves, each queried concurrently with a 5 s timeout (a dead host is an
+// error row); every action on a VM goes through the resolver for the VM's host (the
 // local libvirt connection is reused; another host gets a remote client
 // carrying the resolver's token). Machine names may not take any host name.
 // tunnel is how guests are reached (the CLI's own executable and token).
@@ -1555,6 +1601,9 @@ func Run(r *hosts.Resolver, tunnel vmtool.Tunnel) error {
 			return mgr, func() {}, nil
 		}
 		return r.Resolve(h)
+	}
+	m.listAll = func(ctx context.Context) []app.HostVMs {
+		return app.ListAll(ctx, m.hostNames, m.resolve, app.ListTimeout)
 	}
 	m.tunnel = tunnel
 	m.send = &msgSender{}

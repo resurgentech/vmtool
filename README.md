@@ -107,7 +107,9 @@ just install        # build, cert, config.yml, systemd unit (vmtool server over 
 ./vmtool create jetfire/web ubuntu.qcow2 --extra-disk-size 50   # second empty disk as vdb
 ./vmtool add-disk jetfire/web 50                        # attach a new empty disk (vdb, vdc, …)
 ./vmtool reboot jetfire/web                             # ACPI reboot, stays defined
-./vmtool list
+./vmtool list                                           # every host (5 s each; a dead host is an ERROR row)
+./vmtool list jetfire                                   # one host
+./vmtool hosts                                          # reachability, API version, cert days left
 ./vmtool delete <host>/<name>
 ./vmtool delete jetfire/scratch --noclone               # undefine only, keep the disk
 ./vmtool machines migrate [--apply]                     # one-time: move old .machines/<vm>/ to .machines/<host>/<vm>/

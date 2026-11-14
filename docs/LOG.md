@@ -118,3 +118,11 @@ are appended, never edited in; a hook refuses rewrites.
   configured hosts with the CLI token or the request bearer; CLI/TUI/REST
   act on remote VMs; `--host` on networks/bridges/images/pool.
 - Commits: 34c17bc
+
+## 2026-11-14 — T12 Image manifests and upload
+
+- `uploadImage` / `getImageManifest`; daemon owns only manifest-listed
+  volumes (foreign → 409 before reading the body); `.part` + hash + link
+  commit; workstation hash cache; CreateVM uploads only on a miss, with
+  CLI/TUI progress.
+- Commits: c9fb43e

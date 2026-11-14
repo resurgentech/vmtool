@@ -77,7 +77,11 @@ paths:
   /v1/hosts:
     get:
       operationId: listHosts
-      summary: List the hosts this server knows
+      summary: List the hosts this server knows, with their status
+      description: >
+        Probes each configured host (GET /version over TLS, 5 s timeout, using
+        the caller's bearer) concurrently. An unreachable host is a row with
+        reachable false and its error, not a failed request.
       responses:
         '200':
           description: hosts, the local one first
@@ -1321,6 +1325,23 @@ components:
         name: { type: string }
         role: { type: string, enum: [workstation, hypervisor] }
         local: { type: boolean, description: "true for the host this server runs on" }
+        address:
+          type: string
+          description: "host:port of the daemon this server probed; \"local\" for the host this server runs on"
+        reachable:
+          type: boolean
+          description: "true when the host answered GET /version (the local host always does)"
+        api_version: { type: string, description: "the API version the host reported" }
+        cert_not_after:
+          type: string
+          format: date-time
+          description: "NotAfter of the leaf certificate the host presented (the local host: its tls_cert file)"
+        cert_days_left:
+          type: integer
+          description: "whole days until cert_not_after, rounded down; negative once expired"
+        error:
+          type: string
+          description: "why the host is unreachable, or a note such as an API version mismatch"
     PoolInfo:
       type: object
       required: [name, path, active]

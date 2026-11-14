@@ -9,12 +9,17 @@
 package hosts
 
 import (
+	"context"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jaredeh/vmtool/internal/app"
 	"github.com/jaredeh/vmtool/internal/config"
@@ -55,6 +60,7 @@ type Resolver struct {
 	configured []string // sorted names of the configured remote hosts
 	remote     RemoteConnector
 	token      string
+	localCert  string // the local daemon certificate file, for Status
 }
 
 // New builds the resolver for cfg: the local libvirt and, for every hosts:
@@ -78,7 +84,11 @@ func New(cfg *config.Config, opts ...remote.Option) *Resolver {
 	if role == "" {
 		role = config.RoleWorkstation
 	}
-	return NewWith(name, role, others, libvirtLocal).WithRemote(func(host, token string) (app.Manager, func(), error) {
+	r := NewWith(name, role, others, libvirtLocal)
+	if cfg != nil && cfg.TLSCert != "" {
+		r = r.WithLocalCert(cfg.Path(cfg.TLSCert))
+	}
+	return r.WithRemote(func(host, token string) (app.Manager, func(), error) {
 		m, err := remote.New(host, addrs[host], token, opts...)
 		if err != nil {
 			return nil, nil, err
@@ -177,19 +187,96 @@ func (r *Resolver) List() []Host {
 // other host wraps ErrUnknownHost. Neither failure touches libvirt or the
 // network.
 func (r *Resolver) Resolve(host string) (app.Manager, func(), error) {
+	if err := r.Check(host); err != nil {
+		return nil, nil, err
+	}
 	if host == r.name {
 		return r.local()
-	}
-	if !r.IsRemote(host) {
-		return nil, nil, unknownHost(fmt.Sprintf("host %q is not served by %s; known hosts: %s",
-			host, r.name, strings.Join(r.Names(), ", ")))
-	}
-	if r.remote == nil {
-		return nil, nil, unknownHost(fmt.Sprintf("host %q is configured but not served by this server (served: %s)",
-			host, strings.Join(r.Names(), ", ")))
 	}
 	if r.token == "" {
 		return nil, nil, fmt.Errorf("host %q: no token to authenticate to its daemon", host)
 	}
 	return r.remote(host, r.token)
+}
+
+// Check reports whether Resolve serves host, without building a Manager: an
+// error wrapping ErrUnknownHost for a host this resolver does not serve.
+func (r *Resolver) Check(host string) error {
+	if host == r.name {
+		return nil
+	}
+	if !r.IsRemote(host) {
+		return unknownHost(fmt.Sprintf("host %q is not served by %s; known hosts: %s",
+			host, r.name, strings.Join(r.Names(), ", ")))
+	}
+	if r.remote == nil {
+		return unknownHost(fmt.Sprintf("host %q is configured but not served by this server (served: %s)",
+			host, strings.Join(r.Names(), ", ")))
+	}
+	return nil
+}
+
+// WithLocalCert returns a copy of r whose local Status row reports the
+// NotAfter of the first certificate in the PEM file path.
+func (r *Resolver) WithLocalCert(path string) *Resolver {
+	c := *r
+	c.localCert = path
+	return &c
+}
+
+// Status is one app.HostStatus per host: the local row (always reachable,
+// this binary's API version, address "local", the certificate from
+// WithLocalCert when set) and then every configured host probed
+// concurrently under timeout with the resolver's token (see app.ProbeAll).
+// A resolver without a remote connector, or without a token, reports its
+// configured hosts as unreachable with the reason; nothing is stored or
+// logged.
+func (r *Resolver) Status(ctx context.Context, timeout time.Duration) []app.HostStatus {
+	out := []app.HostStatus{r.localStatus()}
+	probed := app.ProbeAll(ctx, r.configured, r.Resolve, timeout)
+	for i := range probed {
+		probed[i].Role = config.RoleHypervisor
+	}
+	return append(out, probed...)
+}
+
+func (r *Resolver) localStatus() app.HostStatus {
+	st := app.HostStatus{Host: r.name, Role: r.role, Local: true, Address: "local", Reachable: true}
+	v, err := remote.OurVersion()
+	if err != nil {
+		st.Err = err
+		return st
+	}
+	st.APIVersion = v
+	if r.localCert != "" {
+		st.CertNotAfter, err = certNotAfter(r.localCert)
+		if err != nil {
+			st.Err = err
+		}
+	}
+	return st
+}
+
+// certNotAfter is the NotAfter of the first certificate in the PEM file: the
+// leaf, in the chain files deploy writes.
+func certNotAfter(path string) (time.Time, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("read tls_cert: %w", err)
+	}
+	for {
+		var blk *pem.Block
+		blk, data = pem.Decode(data)
+		if blk == nil {
+			return time.Time{}, fmt.Errorf("tls_cert %s: no certificate found", path)
+		}
+		if blk.Type != "CERTIFICATE" {
+			continue
+		}
+		c, err := x509.ParseCertificate(blk.Bytes)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("tls_cert %s: %w", path, err)
+		}
+		return c.NotAfter, nil
+	}
 }

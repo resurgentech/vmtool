@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"time"
 
 	"github.com/jaredeh/vmtool/internal/api"
 	"github.com/jaredeh/vmtool/internal/app"
@@ -580,11 +581,37 @@ func (h *handlers) GetVersion(_ context.Context, _ api.GetVersionRequestObject) 
 	}, nil
 }
 
-func (h *handlers) ListHosts(_ context.Context, _ api.ListHostsRequestObject) (api.ListHostsResponseObject, error) {
-	list := h.hosts.List()
-	out := make([]api.HostInfo, len(list))
-	for i, x := range list {
-		out[i] = api.HostInfo{Name: x.Name, Role: api.HostInfoRole(x.Role), Local: x.Local}
+// ListHosts answers the local row and one probed row per configured host.
+// Probes run concurrently under app.ListTimeout with the bearer of this
+// request (never a stored token); an unreachable host is a row with its
+// error. A hypervisor has no configured hosts, so only its own row answers.
+func (h *handlers) ListHosts(ctx context.Context, _ api.ListHostsRequestObject) (api.ListHostsResponseObject, error) {
+	now := time.Now()
+	status := h.hosts.WithToken(requestToken(ctx)).Status(ctx, app.ListTimeout)
+	out := make([]api.HostInfo, len(status))
+	for i, s := range status {
+		hi := api.HostInfo{
+			Name: s.Host, Role: api.HostInfoRole(s.Role), Local: s.Local,
+			Reachable: &s.Reachable,
+		}
+		if s.Address != "" {
+			hi.Address = &s.Address
+		}
+		if s.APIVersion != "" {
+			hi.ApiVersion = &s.APIVersion
+		}
+		if !s.CertNotAfter.IsZero() {
+			na := s.CertNotAfter
+			hi.CertNotAfter = &na
+			if d, ok := s.CertDaysLeft(now); ok {
+				hi.CertDaysLeft = &d
+			}
+		}
+		if s.Err != nil {
+			msg := s.Err.Error()
+			hi.Error = &msg
+		}
+		out[i] = hi
 	}
 	return api.ListHosts200JSONResponse(out), nil
 }
