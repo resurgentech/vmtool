@@ -134,3 +134,49 @@ are appended, never edited in; a hook refuses rewrites.
   warning); `GET /v1/hosts` status via the caller's bearer; async TUI
   refresh across hosts.
 - Commits: 611e908
+
+## 2026-11-14 — F1 `/version` public; no API version comparison
+
+- `getVersion` is `security: []`, a reachability probe; `remote.Manager`
+  no longer checks versions; `VersionError` gone; Probe sends no token and
+  never flags a differing `api_version`.
+- Commits: 0d6375e
+
+## 2026-11-14 — F2 CLI cleanups
+
+- `vmtool machines migrate` removed (with `internal/app/migrate.go`);
+  `ssh-config` shell-quotes the ProxyCommand dir, ssh_config-quotes the
+  IdentityFile, writes `%` as `%%`, refuses control characters; config.yml
+  errors name the yaml line, never file text.
+- Commits: 53966de
+
+## 2026-11-14 — F3 Hypervisor pool `vmtool`
+
+- Empty pool = the host's default on every surface; libvirt Manager maps it
+  to `default`, a hypervisor's resolver to `vmtool`; image cache in the
+  `vmtool` pool; TUI create form offers `(host default)` first.
+- Commits: f8b3724
+
+## 2026-11-14 — F4 Delete stale `.part` files
+
+- In-process upload registry (second PUT of a running name 409); a stale
+  `.part` is unlinked (file or symlink only) before the `O_EXCL` create; a
+  hypervisor removes matching `.<name>.part` files in the `vmtool` pool at
+  start, after binding.
+- Commits: c942e69
+
+## 2026-11-14 — F5 `just prereqs <host>` prepares a hypervisor
+
+- `vmtool` system user, `/opt/vmtool`, dir pool `vmtool` at
+  `/var/lib/vmtool/images` (no `default` pool), Go tarball only when needed;
+  fixed the login-user libvirt task replacing the user's groups (`append`
+  was under `vars`).
+- Commits: 3ae2450
+
+## 2026-11-14 — F6 `just deploy` / `just cert` into `/opt/vmtool`
+
+- Prereq check before copying; build as the login user in
+  `~/.cache/vmtool-deploy`; token only on stdin of a no-tty, no-sudo ssh
+  call; one `ssh -t` / one sudo installs everything as `vmtool`; unit runs
+  as `vmtool`; `/version` probed without a token.
+- Commits: 75cec3c
