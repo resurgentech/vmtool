@@ -19,6 +19,13 @@ const fakePath = "kv/infra/labtwo/vmtool/token"
 func stubBin(t *testing.T, name, body string) string {
 	t.Helper()
 	dir := t.TempDir()
+	addStub(t, dir, name, body)
+	return dir
+}
+
+// addStub writes one more stub (same recording behaviour) into dir.
+func addStub(t *testing.T, dir, name, body string) {
+	t.Helper()
 	script := "#!/usr/bin/env bash\n" +
 		"d=\"$(dirname \"$0\")\"\n" +
 		"echo \"$*\" >> \"$d/" + name + ".argv\"\n" +
@@ -27,7 +34,6 @@ func stubBin(t *testing.T, name, body string) string {
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	return dir
 }
 
 func readOr(t *testing.T, p string) string {
@@ -252,7 +258,7 @@ func TestJustSummary(t *testing.T) {
 	for _, r := range strings.Fields(string(out)) {
 		have[r] = true
 	}
-	for _, want := range []string{"token", "token-fetch"} {
+	for _, want := range []string{"token", "token-fetch", "cert", "install"} {
 		if !have[want] {
 			t.Errorf("just --summary lacks %q: %s", want, out)
 		}

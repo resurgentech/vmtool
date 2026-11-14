@@ -1,0 +1,14 @@
+[Unit]
+Description=vmtool REST server
+After=network-online.target libvirtd.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@USER@
+WorkingDirectory=@DIR@
+ExecStart=@DIR@/vmtool server
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
