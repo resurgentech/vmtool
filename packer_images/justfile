@@ -31,6 +31,29 @@ generate template=default_template: (_check-template template)
     # vmtool uses qemu:///system; bare virsh is qemu:///session unless $USER is in libvirt.
     virsh -c qemu:///system pool-refresh default
 
+# Render user-data, packer init + validate (offline; no build, no sudo, output/ untouched)
+validate template=default_template: (_check-template template)
+    cd "{{ images / template / "http" }}" && PKR_VAR_distro="{{ template }}" PKR_VAR_hashedpassword="$(openssl passwd -6 "$PKR_VAR_password")" envsubst < user-data.tpl > user-data
+    cd "{{ images / template }}" && packer init .
+    cd "{{ images / template }}" && packer validate -var distro="{{ template }}" -var username="$PKR_VAR_username" -var password="$PKR_VAR_password" -var output_directory="$(mktemp -u -t packer-validate-XXXXXX)" .
+
+# Syntax-check ./run and validate every template in qemu_images/
+check:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    bash -n "{{ root / "run" }}" || { echo "check: bash -n run failed" >&2; exit 1; }
+    failed=()
+    for dir in "{{ images }}"/*/; do
+        t="$(basename "$dir")"
+        echo "== validate $t"
+        "{{ just_executable() }}" -f "{{ justfile() }}" validate "$t" || failed+=("$t")
+    done
+    if (( ${#failed[@]} )); then
+        echo "check: validate failed for: ${failed[*]}" >&2
+        exit 1
+    fi
+    echo "check: ok"
+
 # Boot a throwaway VM from the installed image (vm_upgrade.yml step not wired up yet)
 update template=default_template: (_check-template template)
     -"{{ vmtool }}" delete "{{ template }}-update" 2>/dev/null
