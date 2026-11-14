@@ -1,9 +1,12 @@
 package tui
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 
+	"github.com/jaredeh/vmtool/internal/app"
 	"github.com/jaredeh/vmtool/pkg/vmtool"
 )
 
@@ -17,6 +20,69 @@ func TestRowsShowHostSlashVM(t *testing.T) {
 	}
 	if ref := m.vmRef(m.vms[0]); ref.Host != "jetfire" || ref.Name != "web" {
 		t.Fatalf("vmRef = %+v", ref)
+	}
+}
+
+// tuiFake is the part of app.Manager the lifecycle path uses; anything else
+// panics (the embedded interface is nil).
+type tuiFake struct {
+	app.Manager
+	host    string
+	started []string
+	listed  int
+}
+
+func (f *tuiFake) Start(n string) error { f.started = append(f.started, n); return nil }
+func (f *tuiFake) Info(n string) (*vmtool.VMInfo, error) {
+	return &vmtool.VMInfo{Name: n, State: vmtool.StateRunning}, nil
+}
+func (f *tuiFake) List() ([]vmtool.VMInfo, error) {
+	f.listed++
+	return []vmtool.VMInfo{{Name: f.host + "-vm"}}, nil
+}
+
+// An action on a VM ref goes through the host resolver for the ref's host,
+// not a hard-wired local manager; the row list still comes from the local
+// host.
+func TestActionsGoThroughResolver(t *testing.T) {
+	local := &tuiFake{host: "jetfire"}
+	other := &tuiFake{host: "veritech01"}
+	var asked []string
+	released := 0
+	m := initialModel(local, "jetfire", "ansible/playbooks", "ansible/inventory.yml")
+	m.resolve = func(host string) (app.Manager, func(), error) {
+		asked = append(asked, host)
+		if host == "veritech01" {
+			return other, func() { released++ }, nil
+		}
+		return nil, nil, errors.New("unexpected host " + host)
+	}
+	ref := app.VMRef{Host: "veritech01", Name: "web"}
+	_, cmd := m.runLifecycle("start", ref, func(svc *app.Service, mgr app.Manager) error {
+		_, err := svc.StartVM(context.Background(), mgr, ref.Name)
+		return err
+	})
+	msg, ok := cmd().(cmdDoneMsg)
+	if !ok || msg.status != logStatusDone {
+		t.Fatalf("msg = %+v", msg)
+	}
+	if len(asked) != 1 || asked[0] != "veritech01" || released != 1 {
+		t.Fatalf("resolver asked %v, released %d", asked, released)
+	}
+	if len(other.started) != 1 || other.started[0] != "web" || len(local.started) != 0 {
+		t.Fatalf("started: veritech01 %v, local %v", other.started, local.started)
+	}
+	if local.listed != 1 || len(msg.vms) != 1 || msg.vms[0].Name != "jetfire-vm" {
+		t.Fatalf("rows came from %+v (local listed %d)", msg.vms, local.listed)
+	}
+
+	// A host the resolver refuses is an error line, not a panic.
+	_, cmd = m.runLifecycle("start", app.VMRef{Host: "nosuch", Name: "web"}, func(svc *app.Service, mgr app.Manager) error {
+		t.Error("ran without a manager")
+		return nil
+	})
+	if msg := cmd().(cmdDoneMsg); msg.status != logStatusError || !strings.Contains(msg.title, "unexpected host nosuch") {
+		t.Fatalf("msg = %+v", msg)
 	}
 }
 

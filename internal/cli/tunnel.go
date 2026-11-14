@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/jaredeh/vmtool/internal/app"
 	"github.com/jaredeh/vmtool/internal/config"
+	"github.com/jaredeh/vmtool/internal/hosts"
 	"github.com/jaredeh/vmtool/internal/remote"
 	"github.com/spf13/cobra"
 )
@@ -119,10 +119,5 @@ func openTunnel(ctx context.Context, e *env, arg string) (io.ReadWriteCloser, er
 	if !ok {
 		return nil, fmt.Errorf("unknown host %q; known hosts: %s", ref.Host, strings.Join(r.AllNames(), ", "))
 	}
-	port := h.Port
-	if port == 0 {
-		port = config.DefaultPort
-	}
-	base := "https://" + net.JoinHostPort(h.Address, strconv.Itoa(port))
-	return remote.Dial(setup, base, ref.Host, ref.Name, e.token, tunnelTLS)
+	return remote.Dial(setup, hosts.BaseURL(h), ref.Host, ref.Name, e.token, tunnelTLS)
 }

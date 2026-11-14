@@ -95,3 +95,18 @@ are appended, never edited in; a hook refuses rewrites.
   `ProxyCommand=<vmtool> tunnel host/vm`, token in child env only (CLI token
   or request bearer); `vmtool ssh-config`; TUI ssh via internal/app.
 - Commits: 78fb694
+
+## 2026-11-14 — T10 Daemon primitives and the hypervisor role
+
+- Eight `/v1/hosts/{host}` primitives (image path, volumes create/clone/
+  resize, define, raw undefine, wait-ip, raw resize-volume) with the
+  in-pool path rule; `x-vmtool-workstation-only` ops are 403 on a
+  hypervisor; Manager method map in spec/README.md.
+- Commits: ac9b2fb
+
+## 2026-11-14 — T14 `just deploy <host>` and `just prereqs <host>`
+
+- `scripts/deploy.sh` (Go >= go_min check first, tar copy, remote build,
+  cert, config write with token on stdin, unit, GET /version);
+  `prereqs <host>`; setup_host.yml opens the daemon port under ufw.
+- Commits: 0980f66

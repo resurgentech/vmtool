@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/jaredeh/vmtool/internal/app"
+	"github.com/jaredeh/vmtool/internal/hosts"
 	"github.com/jaredeh/vmtool/pkg/vmtool"
 )
 
@@ -118,7 +120,12 @@ type logEntry struct {
 // --- Model ---
 
 type model struct {
-	manager *vmtool.Manager
+	// manager is the local host's Manager: it lists the rows and fills the
+	// create form. Actions on a VM use resolve instead.
+	manager app.Manager
+	// resolve returns the Manager for a host and its release func; every VM
+	// action resolves the VM's host through it.
+	resolve func(host string) (app.Manager, func(), error)
 	// host is the local vmtool host; rows name VMs host/vm.
 	host string
 	// hostNames are every vmtool host (app.Service.HostNames).
@@ -208,7 +215,7 @@ type bridgeCreatedMsg struct {
 
 // refresh lists VMs and probes machines concurrently; a dead machine costs
 // a few seconds of probe timeout, not the VM list.
-func refresh(m *vmtool.Manager, svc *app.Service) tea.Cmd {
+func refresh(m app.Manager, svc *app.Service) tea.Cmd {
 	return func() tea.Msg {
 		var msg refreshMsg
 		done := make(chan struct{})
@@ -261,12 +268,29 @@ func (m model) vmRef(vm vmtool.VMInfo) app.VMRef {
 	return app.VMRef{Host: m.host, Name: vm.Name}
 }
 
-func (m model) runLifecycle(op, name string, fn func(*app.Service, *vmtool.Manager) error) (tea.Model, tea.Cmd) {
+// onHost runs fn on the Manager of host, resolved for this one action and
+// released after it: local libvirt or the host's remote client.
+func (m model) onHost(host string, fn func(app.Manager) error) error {
+	if m.resolve == nil {
+		return fmt.Errorf("host %q: no host resolver", host)
+	}
+	mgr, release, err := m.resolve(host)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return fn(mgr)
+}
+
+// runLifecycle runs fn on ref's host, then refreshes the rows from the local
+// host.
+func (m model) runLifecycle(op string, ref app.VMRef, fn func(*app.Service, app.Manager) error) (tea.Model, tea.Cmd) {
+	name := ref.String()
 	idx := m.addLog(fmt.Sprintf("%s %s...", op, name))
 	mgr := m.manager
 	svc := m.svc()
 	return m, func() tea.Msg {
-		err := fn(svc, mgr)
+		err := m.onHost(ref.Host, func(target app.Manager) error { return fn(svc, target) })
 		title := fmt.Sprintf("%s %s", op, name)
 		status := logStatusDone
 		if err != nil {
@@ -278,7 +302,7 @@ func (m model) runLifecycle(op, name string, fn func(*app.Service, *vmtool.Manag
 	}
 }
 
-func initialModel(mgr *vmtool.Manager, host, playbookDir, inventoryPath string) model {
+func initialModel(mgr app.Manager, host, playbookDir, inventoryPath string) model {
 	return model{
 		manager:       mgr,
 		host:          host,
@@ -437,7 +461,7 @@ func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if vm, ok := m.selectedVM(); ok && m.focus == paneVMs {
 			switch vm.State {
 			case vmtool.StateShutoff:
-				return m.runLifecycle("start", vm.Name, func(svc *app.Service, mgr *vmtool.Manager) error {
+				return m.runLifecycle("start", m.vmRef(vm), func(svc *app.Service, mgr app.Manager) error {
 					_, err := svc.StartVM(context.Background(), mgr, vm.Name)
 					return err
 				})
@@ -446,7 +470,7 @@ func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.confirmMsg = fmt.Sprintf("Shut down %q?", vmName)
 				m.confirmAction = func() (tea.Model, tea.Cmd) {
 					m.mode = modeList
-					return m.runLifecycle("stop", vmName, func(svc *app.Service, mgr *vmtool.Manager) error {
+					return m.runLifecycle("stop", m.vmRef(vm), func(svc *app.Service, mgr app.Manager) error {
 						_, err := svc.StopVM(context.Background(), mgr, vmName)
 						return err
 					})
@@ -461,7 +485,7 @@ func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if !newState {
 				label = "disable"
 			}
-			return m.runLifecycle("autostart", vm.Name, func(svc *app.Service, mgr *vmtool.Manager) error {
+			return m.runLifecycle("autostart", m.vmRef(vm), func(svc *app.Service, mgr app.Manager) error {
 				_, err := svc.SetAutostart(context.Background(), mgr, vm.Name, newState)
 				if err == nil {
 					_ = label
@@ -486,7 +510,7 @@ func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.confirmMsg = fmt.Sprintf("Delete %q? This will destroy the VM and remove its disk.", ref.String())
 			m.confirmAction = func() (tea.Model, tea.Cmd) {
 				m.mode = modeList
-				return m.runLifecycle("delete", ref.String(), func(svc *app.Service, mgr *vmtool.Manager) error {
+				return m.runLifecycle("delete", ref, func(svc *app.Service, mgr app.Manager) error {
 					return svc.DeleteVM(context.Background(), mgr, ref, false)
 				})
 			}
@@ -543,7 +567,7 @@ func (m model) updateConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // --- Create mode ---
 
 func (m model) enterCreateMode() (tea.Model, tea.Cmd) {
-	images, _ := m.manager.ListImages()
+	images := flatImages(m.manager)
 	playbooks, _ := vmtool.ListPlaybooks(m.playbookDir)
 
 	pbOptions := []string{"(none)"}
@@ -763,13 +787,12 @@ func (m model) submitCreate() (tea.Model, tea.Cmd) {
 	}
 
 	// The form takes a bare name (created on this host) or host/name for
-	// this host; the TUI only drives the local host.
+	// any host the resolver serves. The form's pickers list this host's
+	// images, networks and pools; on another host the image must already be
+	// in its pool (upload comes later).
 	ref := app.VMRef{Host: m.host, Name: name}
 	if strings.Contains(name, "/") {
 		r, err := app.ParseVMRef(name, m.host)
-		if err == nil && r.Host != m.host {
-			err = fmt.Errorf("%s: the TUI creates VMs on %s only", name, m.host)
-		}
 		if err != nil {
 			idx := m.addLog(fmt.Sprintf("create: %v", err))
 			m.log[idx].status = logStatusError
@@ -813,7 +836,12 @@ func (m model) submitCreate() (tea.Model, tea.Cmd) {
 				buf.WriteByte('\n')
 			}
 		}
-		info, err := svc.CreateVM(context.Background(), mgr, in)
+		var info *vmtool.VMInfo
+		err := m.onHost(in.Host, func(target app.Manager) error {
+			var err error
+			info, err = svc.CreateVM(context.Background(), target, in)
+			return err
+		})
 		title := fmt.Sprintf("%s: created", name)
 		status := logStatusDone
 		if info != nil && info.IP != "" {
@@ -1105,7 +1133,12 @@ func (m model) runPlaybook() (tea.Model, tea.Cmd) {
 	vmName := ref.String()
 	svc := m.svc()
 	return m, func() tea.Msg {
-		res, err := svc.RunPlaybook(context.Background(), mgr, ref, pb, vmtool.DefaultAuth(), nil)
+		var res *app.PlaybookResult
+		err := m.onHost(ref.Host, func(target app.Manager) error {
+			var err error
+			res, err = svc.RunPlaybook(context.Background(), target, ref, pb, vmtool.DefaultAuth(), nil)
+			return err
+		})
 		out := ""
 		if res != nil {
 			out = res.Output
@@ -1428,21 +1461,48 @@ func (m model) viewConfirm() string {
 	return b.String()
 }
 
-// Run launches the interactive TUI on the local host, named host. hostNames
-// are every vmtool host (local and configured), which machine names may not
-// take. tunnel is how guests are reached (the CLI's own executable and token).
-func Run(host string, hostNames []string, tunnel vmtool.Tunnel) error {
-	mgr, err := vmtool.NewManager()
+// flatImages is every image in mgr's pools, pools in name order.
+func flatImages(mgr app.Manager) []string {
+	byPool, err := mgr.ListImagesByPool()
+	if err != nil {
+		return nil
+	}
+	pools := make([]string, 0, len(byPool))
+	for p := range byPool {
+		pools = append(pools, p)
+	}
+	sort.Strings(pools)
+	var out []string
+	for _, p := range pools {
+		out = append(out, byPool[p]...)
+	}
+	return out
+}
+
+// Run launches the interactive TUI. Rows list the resolver's local host;
+// every action on a VM goes through the resolver for the VM's host (the
+// local libvirt connection is reused; another host gets a remote client
+// carrying the resolver's token). Machine names may not take any host name.
+// tunnel is how guests are reached (the CLI's own executable and token).
+func Run(r *hosts.Resolver, tunnel vmtool.Tunnel) error {
+	host := r.Local()
+	mgr, release, err := r.Resolve(host)
 	if err != nil {
 		return err
 	}
-	defer mgr.Close()
+	defer release()
 
 	playbookDir := filepath.Join("ansible", "playbooks")
 	inventoryPath := filepath.Join("ansible", "inventory.yml")
 
 	m := initialModel(mgr, host, playbookDir, inventoryPath)
-	m.hostNames = append([]string(nil), hostNames...)
+	m.hostNames = r.AllNames()
+	m.resolve = func(h string) (app.Manager, func(), error) {
+		if h == host {
+			return mgr, func() {}, nil
+		}
+		return r.Resolve(h)
+	}
 	m.tunnel = tunnel
 	p := tea.NewProgram(m)
 	_, err = p.Run()

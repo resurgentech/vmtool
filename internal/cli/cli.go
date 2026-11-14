@@ -183,6 +183,7 @@ it checks the bearer token of every request instead.`,
 		autostartCmd(e),
 		interactiveCmd(e),
 		networksCmd(e),
+		bridgesCmd(e),
 		playbookCmd(e),
 		imagesCmd(e),
 		poolCmd(e),
@@ -207,20 +208,44 @@ func (e remoteExitError) Error() string {
 	return fmt.Sprintf("exit status %d", e.code)
 }
 
-// resolver maps host names to Managers for the config the gate loaded.
-func (e *env) resolver() *hosts.Resolver { return hosts.New(e.cfg) }
+// newResolver builds the resolver for the config the gate loaded: the local
+// libvirt and a remote client per hosts: entry. Tests replace it so no test
+// opens libvirt or reaches a host.
+var newResolver = func(e *env) *hosts.Resolver { return hosts.New(e.cfg) }
+
+// resolver maps host names to Managers; remote hosts are reached with the
+// token the gate verified.
+func (e *env) resolver() *hosts.Resolver { return newResolver(e).WithToken(e.token) }
 
 // withManager runs fn on the local host's Manager.
 func withManager(e *env, fn func(m app.Manager, cmd *cobra.Command, args []string) error) func(*cobra.Command, []string) error {
+	return withHost(e, nil, fn)
+}
+
+// withHost runs fn on the Manager of *host (the --host flag), or of the local
+// host when host is nil or empty. An unknown host fails before any Manager
+// opens.
+func withHost(e *env, host *string, fn func(m app.Manager, cmd *cobra.Command, args []string) error) func(*cobra.Command, []string) error {
 	return func(cmd *cobra.Command, args []string) error {
 		r := e.resolver()
-		m, release, err := r.Resolve(r.Local())
+		name := r.Local()
+		if host != nil && *host != "" {
+			name = *host
+		}
+		m, release, err := r.Resolve(name)
 		if err != nil {
 			return err
 		}
 		defer release()
 		return fn(m, cmd, args)
 	}
+}
+
+// hostFlag adds --host to cmd and returns where it lands.
+func hostFlag(cmd *cobra.Command) *string {
+	var host string
+	cmd.Flags().StringVar(&host, "host", "", "vmtool host to act on (default: this host)")
+	return &host
 }
 
 // withVM parses args[0] as host/vm and runs fn on that host's Manager. A bare
@@ -628,31 +653,51 @@ func interactiveCmd(e *env) *cobra.Command {
 		Short:   "Launch interactive TUI",
 		Aliases: []string{"interactive"},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			r := e.resolver()
 			t, err := e.tunnel()
 			if err != nil {
 				return err
 			}
-			return tui.Run(r.Local(), r.AllNames(), t)
+			return tui.Run(e.resolver(), t)
 		},
 	}
 }
 
 func networksCmd(e *env) *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "networks",
 		Short: "List available libvirt networks",
-		RunE: withManager(e, func(m app.Manager, cmd *cobra.Command, args []string) error {
-			nets, err := e.service("").ListNetworks(cmd.Context(), m)
-			if err != nil {
-				return err
-			}
-			for _, n := range nets {
-				fmt.Println(n)
-			}
-			return nil
-		}),
 	}
+	host := hostFlag(cmd)
+	cmd.RunE = withHost(e, host, func(m app.Manager, cmd *cobra.Command, args []string) error {
+		nets, err := e.service("").ListNetworks(cmd.Context(), m)
+		if err != nil {
+			return err
+		}
+		for _, n := range nets {
+			fmt.Println(n)
+		}
+		return nil
+	})
+	return cmd
+}
+
+func bridgesCmd(e *env) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "bridges",
+		Short: "List host bridges usable with --net-type=bridge",
+	}
+	host := hostFlag(cmd)
+	cmd.RunE = withHost(e, host, func(m app.Manager, cmd *cobra.Command, args []string) error {
+		brs, err := e.service("").ListBridges(cmd.Context(), m)
+		if err != nil {
+			return err
+		}
+		for _, b := range brs {
+			fmt.Println(b)
+		}
+		return nil
+	})
+	return cmd
 }
 
 func parseExtraVars(pairs []string) (map[string]string, error) {
@@ -715,39 +760,41 @@ func imagesCmd(e *env) *cobra.Command {
 }
 
 func imagesListCmd(e *env) *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List available disk images grouped by pool",
-		RunE: withManager(e, func(m app.Manager, cmd *cobra.Command, args []string) error {
-			byPool, err := e.service("").ListImages(cmd.Context(), m)
-			if err != nil {
-				return err
-			}
-			pools := make([]string, 0, len(byPool))
-			for p := range byPool {
-				pools = append(pools, p)
-			}
-			sort.Strings(pools)
-			for _, p := range pools {
-				fmt.Printf("%s:\n", p)
-				imgs := byPool[p]
-				sort.Strings(imgs)
-				for _, img := range imgs {
-					fmt.Printf("  %s\n", img)
-				}
-			}
-			return nil
-		}),
 	}
+	host := hostFlag(cmd)
+	cmd.RunE = withHost(e, host, func(m app.Manager, cmd *cobra.Command, args []string) error {
+		byPool, err := e.service("").ListImages(cmd.Context(), m)
+		if err != nil {
+			return err
+		}
+		pools := make([]string, 0, len(byPool))
+		for p := range byPool {
+			pools = append(pools, p)
+		}
+		sort.Strings(pools)
+		for _, p := range pools {
+			fmt.Printf("%s:\n", p)
+			imgs := byPool[p]
+			sort.Strings(imgs)
+			for _, img := range imgs {
+				fmt.Printf("  %s\n", img)
+			}
+		}
+		return nil
+	})
+	return cmd
 }
 
 func imagesDeleteCmd(e *env) *cobra.Command {
-	var pool string
+	var pool, host string
 	cmd := &cobra.Command{
 		Use:   "delete <image>",
 		Short: "Delete a disk image from a storage pool",
 		Args:  cobra.ExactArgs(1),
-		RunE: withManager(e, func(m app.Manager, cmd *cobra.Command, args []string) error {
+		RunE: withHost(e, &host, func(m app.Manager, cmd *cobra.Command, args []string) error {
 			if err := e.service("").DeleteImage(cmd.Context(), m, args[0], pool); err != nil {
 				return err
 			}
@@ -756,6 +803,7 @@ func imagesDeleteCmd(e *env) *cobra.Command {
 		}),
 	}
 	cmd.Flags().StringVar(&pool, "pool", "default", "storage pool containing the image")
+	cmd.Flags().StringVar(&host, "host", "", "vmtool host to act on (default: this host)")
 	return cmd
 }
 
@@ -769,42 +817,46 @@ func poolCmd(e *env) *cobra.Command {
 }
 
 func poolListCmd(e *env) *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:     "list",
 		Short:   "List storage pools",
 		Aliases: []string{"ls"},
-		RunE: withManager(e, func(m app.Manager, cmd *cobra.Command, args []string) error {
-			pools, err := e.service("").ListPools(cmd.Context(), m)
-			if err != nil {
-				return err
-			}
-			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-			fmt.Fprintln(w, "NAME\tPATH\tACTIVE")
-			for _, p := range pools {
-				active := "no"
-				if p.Active {
-					active = "yes"
-				}
-				fmt.Fprintf(w, "%s\t%s\t%s\n", p.Name, p.Path, active)
-			}
-			return w.Flush()
-		}),
 	}
+	host := hostFlag(cmd)
+	cmd.RunE = withHost(e, host, func(m app.Manager, cmd *cobra.Command, args []string) error {
+		pools, err := e.service("").ListPools(cmd.Context(), m)
+		if err != nil {
+			return err
+		}
+		w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+		fmt.Fprintln(w, "NAME\tPATH\tACTIVE")
+		for _, p := range pools {
+			active := "no"
+			if p.Active {
+				active = "yes"
+			}
+			fmt.Fprintf(w, "%s\t%s\t%s\n", p.Name, p.Path, active)
+		}
+		return w.Flush()
+	})
+	return cmd
 }
 
 func poolCreateCmd(e *env) *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "create <name> <path>",
 		Short: "Create a new directory-type storage pool",
 		Args:  cobra.ExactArgs(2),
-		RunE: withManager(e, func(m app.Manager, cmd *cobra.Command, args []string) error {
-			if err := e.service("").CreatePool(cmd.Context(), m, args[0], args[1]); err != nil {
-				return err
-			}
-			fmt.Printf("Pool %q created at %s\n", args[0], args[1])
-			return nil
-		}),
 	}
+	host := hostFlag(cmd)
+	cmd.RunE = withHost(e, host, func(m app.Manager, cmd *cobra.Command, args []string) error {
+		if err := e.service("").CreatePool(cmd.Context(), m, args[0], args[1]); err != nil {
+			return err
+		}
+		fmt.Printf("Pool %q created at %s\n", args[0], args[1])
+		return nil
+	})
+	return cmd
 }
 
 func migrateDiskCmd(e *env) *cobra.Command {

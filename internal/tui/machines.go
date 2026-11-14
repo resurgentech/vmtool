@@ -7,7 +7,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/jaredeh/vmtool/internal/app"
-	"github.com/jaredeh/vmtool/pkg/vmtool"
 )
 
 // runMachineOp runs fn in the background, logs the result, and re-probes
@@ -75,7 +74,7 @@ func (m model) confirmReboot() (tea.Model, tea.Cmd) {
 	m.confirmMsg = fmt.Sprintf("Reboot %q?", name)
 	m.confirmAction = func() (tea.Model, tea.Cmd) {
 		m.mode = modeList
-		return m.runLifecycle("reboot", name, func(svc *app.Service, mgr *vmtool.Manager) error {
+		return m.runLifecycle("reboot", m.vmRef(vm), func(svc *app.Service, mgr app.Manager) error {
 			_, err := svc.RebootVM(context.Background(), mgr, name)
 			return err
 		})

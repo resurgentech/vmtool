@@ -7,6 +7,7 @@ import (
 
 	"github.com/jaredeh/vmtool/internal/app"
 	"github.com/jaredeh/vmtool/internal/config"
+	"github.com/jaredeh/vmtool/internal/remote"
 )
 
 func failing(t *testing.T) Connector {
@@ -56,13 +57,89 @@ func TestListAndNames(t *testing.T) {
 		got[1] != (Host{"alpha", config.RoleHypervisor, false}) || got[2].Name != "zeta" {
 		t.Fatalf("List() = %+v", got)
 	}
-	if n := r.Names(); len(n) != 1 || n[0] != "ws" {
+	if n := r.Names(); len(n) != 3 || n[0] != "ws" {
 		t.Fatalf("Names() = %v", n)
 	}
-	// A configured remote host is known to List but not yet served.
+	if !r.IsRemote("alpha") || r.IsRemote("ws") || r.IsRemote("nope") {
+		t.Fatalf("IsRemote wrong")
+	}
+}
+
+// A configured host resolves to a remote client carrying the caller's token;
+// the token comes only from WithToken, and without one nothing is built.
+func TestResolveRemote(t *testing.T) {
+	type call struct{ host, token string }
+	var calls []call
+	released := 0
+	r := NewWith("ws", config.RoleWorkstation, []string{"alpha"}, failing(t)).
+		WithRemote(func(host, token string) (app.Manager, func(), error) {
+			calls = append(calls, call{host, token})
+			return nil, func() { released++ }, nil
+		})
+
+	if _, _, err := r.Resolve("alpha"); err == nil || !strings.Contains(err.Error(), "no token") {
+		t.Fatalf("Resolve without a token = %v", err)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("remote built without a token: %v", calls)
+	}
+
+	tr := r.WithToken("tok-A")
+	_, done, err := tr.Resolve("alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done()
+	if len(calls) != 1 || calls[0] != (call{"alpha", "tok-A"}) || released != 1 {
+		t.Fatalf("calls %v released %d", calls, released)
+	}
+	// WithToken copies: the original resolver is unchanged.
+	if _, _, err := r.Resolve("alpha"); err == nil {
+		t.Fatal("original resolver gained a token")
+	}
+	// Unknown hosts are still unknown, without building anything.
+	if _, _, err := tr.Resolve("nope"); !errors.Is(err, ErrUnknownHost) {
+		t.Fatalf("Resolve(nope) = %v", err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("remote built for an unknown host: %v", calls)
+	}
+	if got := strings.Join(tr.Names(), ","); got != "ws,alpha" {
+		t.Fatalf("Names() = %s", got)
+	}
+}
+
+// Without a remote connector (NewWith alone) a configured host is listed but
+// not served.
+func TestConfiguredWithoutConnector(t *testing.T) {
+	r := NewWith("ws", config.RoleWorkstation, []string{"alpha"}, failing(t)).WithToken("tok")
 	_, _, err := r.Resolve("alpha")
 	if !errors.Is(err, ErrUnknownHost) || !strings.Contains(err.Error(), "not served") {
 		t.Fatalf("Resolve(alpha) = %v", err)
+	}
+}
+
+// New points each configured host's client at https://<address>:<port>,
+// port defaulting to 9473, and makes no network call to do so.
+func TestNewBuildsRemoteClients(t *testing.T) {
+	cfg := &config.Config{Name: "ws", Role: config.RoleWorkstation, Hosts: map[string]config.Host{
+		"alpha": {Address: "alpha.labtwo"},
+		"beta":  {Address: "10.0.0.9", Port: 9999},
+	}}
+	r := New(cfg).WithToken("tok-B")
+	for host, want := range map[string]string{"alpha": "https://alpha.labtwo:9473", "beta": "https://10.0.0.9:9999"} {
+		m, done, err := r.Resolve(host)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rm, ok := m.(*remote.Manager)
+		if !ok {
+			t.Fatalf("%s: Manager is %T", host, m)
+		}
+		if rm.Name() != host || rm.BaseURL() != want {
+			t.Errorf("%s: client for %s at %s, want %s", host, rm.Name(), rm.BaseURL(), want)
+		}
+		done()
 	}
 }
 

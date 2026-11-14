@@ -29,12 +29,14 @@ var vmCommands = map[string][]string{
 }
 
 // Every VM command takes host/vm. A bare name is refused with a suggestion,
-// and a host this vmtool does not serve is "unknown host"; neither reaches
-// libvirt (the real RunE runs, and both fail before a Manager is opened).
+// and a host this vmtool does not serve is "unknown host"; neither reaches a
+// Manager (the real RunE runs against fake hosts, and both fail before a
+// Manager is opened). Configured hosts: TestVMCommandsReachRemoteHost.
 func TestVMCommandsTakeHostSlashVM(t *testing.T) {
 	t.Setenv(config.TokenEnv, gateToken)
 	dir := writeWorkdir(t, "name: jetfire\n"+goodConfig(), "")
 	for name, rest := range vmCommands {
+		f := installFakeHosts(t)
 		keep := map[string]bool{"vmtool " + name: true}
 
 		r := runGate(t, dir, keep, append([]string{name, "web"}, rest...)...)
@@ -42,11 +44,12 @@ func TestVMCommandsTakeHostSlashVM(t *testing.T) {
 			t.Errorf("%s web: %v", name, r.err)
 		}
 
-		for _, host := range []string{"veritech01", "nosuch"} {
-			r = runGate(t, dir, keep, append([]string{name, host + "/web"}, rest...)...)
-			if !errors.Is(r.err, hosts.ErrUnknownHost) {
-				t.Errorf("%s %s/web: %v, want unknown host", name, host, r.err)
-			}
+		r = runGate(t, dir, keep, append([]string{name, "nosuch/web"}, rest...)...)
+		if !errors.Is(r.err, hosts.ErrUnknownHost) {
+			t.Errorf("%s nosuch/web: %v, want unknown host", name, r.err)
+		}
+		if ops, tokens := f.seen(); len(ops) != 0 || len(tokens) != 0 {
+			t.Errorf("%s: reached a Manager: %v %v", name, ops, tokens)
 		}
 	}
 }

@@ -70,6 +70,16 @@ func (h *handlers) openTunnel(w http.ResponseWriter, r *http.Request, host, name
 		_ = api.OpenVMTunnel400JSONResponse{Error: fmt.Sprintf("invalid VM name %q", name)}.VisitOpenVMTunnelResponse(w)
 		return
 	}
+	// A configured remote host's guests are reachable only from that host:
+	// guests on different hosts share NAT subnets, so this server must not
+	// look up a remote VM's address and dial it from here. The client
+	// tunnels through the remote daemon itself.
+	if h.hosts.IsRemote(host) {
+		_ = api.OpenVMTunnel404JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: fmt.Sprintf(
+			"tunnels to %s are served by that host's daemon, not by %s; use `vmtool tunnel %s/%s`",
+			host, h.hosts.Local(), host, name)}}.VisitOpenVMTunnelResponse(w)
+		return
+	}
 
 	ip, err := h.lookupVMIP(r.Context(), host, name)
 	if err != nil {
@@ -114,7 +124,7 @@ func (h *handlers) lookupVMIP(ctx context.Context, host, name string) (string, e
 	if h.vmIP != nil {
 		return h.vmIP(ctx, host, name)
 	}
-	v, err := h.withManager(host, func(m app.Manager) (any, error) {
+	v, err := h.withManager(ctx, host, func(m app.Manager) (any, error) {
 		return h.svc.GetVM(ctx, m, name)
 	})
 	if err != nil {

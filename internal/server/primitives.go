@@ -125,8 +125,8 @@ func badName(what, s string) error {
 
 func xmlSafe(s string) bool { return !strings.ContainsAny(s, "<>&'\"\x00\n\r") }
 
-func (h *handlers) GetImagePath(_ context.Context, req api.GetImagePathRequestObject) (api.GetImagePathResponseObject, error) {
-	v, err := h.withManager(req.Host, func(m app.Manager) (any, error) { return m.ImagePath(req.Name) })
+func (h *handlers) GetImagePath(ctx context.Context, req api.GetImagePathRequestObject) (api.GetImagePathResponseObject, error) {
+	v, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) { return m.ImagePath(req.Name) })
 	if err != nil {
 		if primKind(err) == app.KindNotFound {
 			return api.GetImagePath404JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
@@ -136,7 +136,7 @@ func (h *handlers) GetImagePath(_ context.Context, req api.GetImagePathRequestOb
 	return api.GetImagePath200JSONResponse{Path: v.(string)}, nil
 }
 
-func (h *handlers) CreateVolume(_ context.Context, req api.CreateVolumeRequestObject) (api.CreateVolumeResponseObject, error) {
+func (h *handlers) CreateVolume(ctx context.Context, req api.CreateVolumeRequestObject) (api.CreateVolumeResponseObject, error) {
 	b := req.Body
 	var bad error
 	switch {
@@ -152,7 +152,7 @@ func (h *handlers) CreateVolume(_ context.Context, req api.CreateVolumeRequestOb
 	if bad != nil {
 		return api.CreateVolume400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: bad.Error()}}, nil
 	}
-	v, err := h.withManager(req.Host, func(m app.Manager) (any, error) {
+	v, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
 		return m.CreateVolume(derefStr(b.Pool), b.Name, uint(b.SizeGb))
 	})
 	if err != nil {
@@ -166,7 +166,7 @@ func (h *handlers) CreateVolume(_ context.Context, req api.CreateVolumeRequestOb
 	return api.CreateVolume201JSONResponse{Path: v.(string)}, nil
 }
 
-func (h *handlers) CloneVolume(_ context.Context, req api.CloneVolumeRequestObject) (api.CloneVolumeResponseObject, error) {
+func (h *handlers) CloneVolume(ctx context.Context, req api.CloneVolumeRequestObject) (api.CloneVolumeResponseObject, error) {
 	b := req.Body
 	var bad error
 	switch {
@@ -182,7 +182,7 @@ func (h *handlers) CloneVolume(_ context.Context, req api.CloneVolumeRequestObje
 	if bad != nil {
 		return api.CloneVolume400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: bad.Error()}}, nil
 	}
-	v, err := h.withManager(req.Host, func(m app.Manager) (any, error) {
+	v, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
 		base, err := poolPath(m, b.BasePath)
 		if err != nil {
 			return nil, err
@@ -202,7 +202,7 @@ func (h *handlers) CloneVolume(_ context.Context, req api.CloneVolumeRequestObje
 	return api.CloneVolume201JSONResponse{Path: v.(string)}, nil
 }
 
-func (h *handlers) ResizeVolume(_ context.Context, req api.ResizeVolumeRequestObject) (api.ResizeVolumeResponseObject, error) {
+func (h *handlers) ResizeVolume(ctx context.Context, req api.ResizeVolumeRequestObject) (api.ResizeVolumeResponseObject, error) {
 	b := req.Body
 	var bad error
 	switch {
@@ -216,7 +216,7 @@ func (h *handlers) ResizeVolume(_ context.Context, req api.ResizeVolumeRequestOb
 	if bad != nil {
 		return api.ResizeVolume400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: bad.Error()}}, nil
 	}
-	_, err := h.withManager(req.Host, func(m app.Manager) (any, error) {
+	_, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
 		p, err := poolPath(m, b.Path)
 		if err != nil {
 			return nil, err
@@ -305,12 +305,12 @@ func derefInt0(p *int) int {
 	return *p
 }
 
-func (h *handlers) DefineVM(_ context.Context, req api.DefineVMRequestObject) (api.DefineVMResponseObject, error) {
+func (h *handlers) DefineVM(ctx context.Context, req api.DefineVMRequestObject) (api.DefineVMResponseObject, error) {
 	cfg, bad := vmConfigFromDefine(req.Name, req.Body)
 	if bad != nil {
 		return api.DefineVM400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: bad.Error()}}, nil
 	}
-	_, err := h.withManager(req.Host, func(m app.Manager) (any, error) {
+	_, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
 		var err error
 		if cfg.DiskPath, err = poolPath(m, cfg.DiskPath); err != nil {
 			return nil, fmt.Errorf("disk_path: %w", err)
@@ -335,9 +335,9 @@ func (h *handlers) DefineVM(_ context.Context, req api.DefineVMRequestObject) (a
 	return api.DefineVM204Response{}, nil
 }
 
-func (h *handlers) DeleteVMDefinition(_ context.Context, req api.DeleteVMDefinitionRequestObject) (api.DeleteVMDefinitionResponseObject, error) {
+func (h *handlers) DeleteVMDefinition(ctx context.Context, req api.DeleteVMDefinitionRequestObject) (api.DeleteVMDefinitionResponseObject, error) {
 	noclone := derefBool(req.Params.Noclone)
-	_, err := h.withManager(req.Host, func(m app.Manager) (any, error) {
+	_, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
 		return nil, m.Delete(req.Name, noclone)
 	})
 	if err != nil {
@@ -349,7 +349,7 @@ func (h *handlers) DeleteVMDefinition(_ context.Context, req api.DeleteVMDefinit
 	return api.DeleteVMDefinition204Response{}, nil
 }
 
-func (h *handlers) WaitVMIP(_ context.Context, req api.WaitVMIPRequestObject) (api.WaitVMIPResponseObject, error) {
+func (h *handlers) WaitVMIP(ctx context.Context, req api.WaitVMIPRequestObject) (api.WaitVMIPResponseObject, error) {
 	secs := defaultWaitIP
 	if req.Body != nil && req.Body.TimeoutSeconds != nil {
 		secs = *req.Body.TimeoutSeconds
@@ -358,7 +358,7 @@ func (h *handlers) WaitVMIP(_ context.Context, req api.WaitVMIPRequestObject) (a
 		return api.WaitVMIP400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{
 			Error: fmt.Sprintf("timeout_seconds must be between 1 and %d", maxWaitIP)}}, nil
 	}
-	v, err := h.withManager(req.Host, func(m app.Manager) (any, error) {
+	v, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
 		return m.WaitForIP(req.Name, time.Duration(secs)*time.Second)
 	})
 	if err != nil {
@@ -370,11 +370,11 @@ func (h *handlers) WaitVMIP(_ context.Context, req api.WaitVMIPRequestObject) (a
 	return api.WaitVMIP200JSONResponse{Ip: v.(string)}, nil
 }
 
-func (h *handlers) ResizeVMVolume(_ context.Context, req api.ResizeVMVolumeRequestObject) (api.ResizeVMVolumeResponseObject, error) {
+func (h *handlers) ResizeVMVolume(ctx context.Context, req api.ResizeVMVolumeRequestObject) (api.ResizeVMVolumeResponseObject, error) {
 	if req.Body == nil || req.Body.SizeGb < 1 {
 		return api.ResizeVMVolume400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: "size_gb must be > 0"}}, nil
 	}
-	_, err := h.withManager(req.Host, func(m app.Manager) (any, error) {
+	_, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
 		return nil, m.ResizeDisk(req.Name, uint(req.Body.SizeGb))
 	})
 	if err != nil {
