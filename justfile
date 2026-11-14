@@ -5,9 +5,19 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 
 root := justfile_directory()
 bin := "vmtool"
+bao_token_path := "kv/infra/labtwo/vmtool/token"
+domain := "labtwo"
 
 default:
     @just --list
+
+# Generate a new API token into .env (and OpenBao if VAULT_ADDR/VAULT_TOKEN are set)
+token:
+    VMTOOL_ROOT="{{ root }}" BAO_TOKEN_PATH="{{ bao_token_path }}" "{{ root }}/scripts/token.sh" generate
+
+# Fetch the API token from OpenBao into .env
+token-fetch:
+    VMTOOL_ROOT="{{ root }}" BAO_TOKEN_PATH="{{ bao_token_path }}" "{{ root }}/scripts/token.sh" fetch
 
 # Install host prerequisites (packages, libvirt, default network + pool)
 prereqs *ARGS:
