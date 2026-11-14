@@ -276,22 +276,10 @@ type DeleteImageParams struct {
 	Pool *string `form:"pool,omitempty" json:"pool,omitempty"`
 }
 
-// OpenMachineConsoleParams defines parameters for OpenMachineConsole.
-type OpenMachineConsoleParams struct {
-	Cols *int `form:"cols,omitempty" json:"cols,omitempty"`
-	Rows *int `form:"rows,omitempty" json:"rows,omitempty"`
-}
-
 // DeleteVMParams defines parameters for DeleteVM.
 type DeleteVMParams struct {
 	// Noclone if true, undefine only and keep the disk
 	Noclone *bool `form:"noclone,omitempty" json:"noclone,omitempty"`
-}
-
-// OpenVMConsoleParams defines parameters for OpenVMConsole.
-type OpenVMConsoleParams struct {
-	Cols *int `form:"cols,omitempty" json:"cols,omitempty"`
-	Rows *int `form:"rows,omitempty" json:"rows,omitempty"`
 }
 
 // AddMachineJSONRequestBody defines body for AddMachine for application/json ContentType.
@@ -431,9 +419,6 @@ type ClientInterface interface {
 
 	RunMachineCommand(ctx context.Context, name MachineName, body RunMachineCommandJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// OpenMachineConsole request
-	OpenMachineConsole(ctx context.Context, name MachineName, params *OpenMachineConsoleParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// RunMachinePlaybookWithBody request with any body
 	RunMachinePlaybookWithBody(ctx context.Context, name MachineName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -490,9 +475,6 @@ type ClientInterface interface {
 	RunVMCommandWithBody(ctx context.Context, name VMName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	RunVMCommand(ctx context.Context, name VMName, body RunVMCommandJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// OpenVMConsole request
-	OpenVMConsole(ctx context.Context, name VMName, params *OpenVMConsoleParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// MigrateDiskWithBody request with any body
 	MigrateDiskWithBody(ctx context.Context, name VMName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -647,18 +629,6 @@ func (c *Client) RunMachineCommandWithBody(ctx context.Context, name MachineName
 
 func (c *Client) RunMachineCommand(ctx context.Context, name MachineName, body RunMachineCommandJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRunMachineCommandRequest(c.Server, name, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) OpenMachineConsole(ctx context.Context, name MachineName, params *OpenMachineConsoleParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewOpenMachineConsoleRequest(c.Server, name, params)
 	if err != nil {
 		return nil, err
 	}
@@ -911,18 +881,6 @@ func (c *Client) RunVMCommandWithBody(ctx context.Context, name VMName, contentT
 
 func (c *Client) RunVMCommand(ctx context.Context, name VMName, body RunVMCommandJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRunVMCommandRequest(c.Server, name, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) OpenVMConsole(ctx context.Context, name VMName, params *OpenVMConsoleParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewOpenVMConsoleRequest(c.Server, name, params)
 	if err != nil {
 		return nil, err
 	}
@@ -1380,78 +1338,6 @@ func NewRunMachineCommandRequestWithBody(server string, name MachineName, conten
 	}
 
 	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewOpenMachineConsoleRequest generates requests for OpenMachineConsole
-func NewOpenMachineConsoleRequest(server string, name MachineName, params *OpenMachineConsoleParams) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "name", runtime.ParamLocationPath, name)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/metal/%s/console", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		queryValues := queryURL.Query()
-
-		if params.Cols != nil {
-
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "cols", runtime.ParamLocationQuery, *params.Cols); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		if params.Rows != nil {
-
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "rows", runtime.ParamLocationQuery, *params.Rows); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		queryURL.RawQuery = queryValues.Encode()
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
 
 	return req, nil
 }
@@ -2010,78 +1896,6 @@ func NewRunVMCommandRequestWithBody(server string, name VMName, contentType stri
 	return req, nil
 }
 
-// NewOpenVMConsoleRequest generates requests for OpenVMConsole
-func NewOpenVMConsoleRequest(server string, name VMName, params *OpenVMConsoleParams) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "name", runtime.ParamLocationPath, name)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/vms/%s/console", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		queryValues := queryURL.Query()
-
-		if params.Cols != nil {
-
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "cols", runtime.ParamLocationQuery, *params.Cols); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		if params.Rows != nil {
-
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "rows", runtime.ParamLocationQuery, *params.Rows); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		queryURL.RawQuery = queryValues.Encode()
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
 // NewMigrateDiskRequest calls the generic MigrateDisk builder with application/json body
 func NewMigrateDiskRequest(server string, name VMName, body MigrateDiskJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -2467,9 +2281,6 @@ type ClientWithResponsesInterface interface {
 
 	RunMachineCommandWithResponse(ctx context.Context, name MachineName, body RunMachineCommandJSONRequestBody, reqEditors ...RequestEditorFn) (*RunMachineCommandResponse, error)
 
-	// OpenMachineConsoleWithResponse request
-	OpenMachineConsoleWithResponse(ctx context.Context, name MachineName, params *OpenMachineConsoleParams, reqEditors ...RequestEditorFn) (*OpenMachineConsoleResponse, error)
-
 	// RunMachinePlaybookWithBodyWithResponse request with any body
 	RunMachinePlaybookWithBodyWithResponse(ctx context.Context, name MachineName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RunMachinePlaybookResponse, error)
 
@@ -2526,9 +2337,6 @@ type ClientWithResponsesInterface interface {
 	RunVMCommandWithBodyWithResponse(ctx context.Context, name VMName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RunVMCommandResponse, error)
 
 	RunVMCommandWithResponse(ctx context.Context, name VMName, body RunVMCommandJSONRequestBody, reqEditors ...RequestEditorFn) (*RunVMCommandResponse, error)
-
-	// OpenVMConsoleWithResponse request
-	OpenVMConsoleWithResponse(ctx context.Context, name VMName, params *OpenVMConsoleParams, reqEditors ...RequestEditorFn) (*OpenVMConsoleResponse, error)
 
 	// MigrateDiskWithBodyWithResponse request with any body
 	MigrateDiskWithBodyWithResponse(ctx context.Context, name VMName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MigrateDiskResponse, error)
@@ -2767,32 +2575,6 @@ func (r RunMachineCommandResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r RunMachineCommandResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type OpenMachineConsoleResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON400      *Error
-	JSON403      *Error
-	JSON404      *Error
-	JSON500      *Error
-	JSON502      *Error
-}
-
-// Status returns HTTPResponse.Status
-func (r OpenMachineConsoleResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r OpenMachineConsoleResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -3159,33 +2941,6 @@ func (r RunVMCommandResponse) StatusCode() int {
 	return 0
 }
 
-type OpenVMConsoleResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON400      *Error
-	JSON403      *Error
-	JSON404      *Error
-	JSON409      *Error
-	JSON500      *Error
-	JSON502      *Error
-}
-
-// Status returns HTTPResponse.Status
-func (r OpenVMConsoleResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r OpenVMConsoleResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
 type MigrateDiskResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -3479,15 +3234,6 @@ func (c *ClientWithResponses) RunMachineCommandWithResponse(ctx context.Context,
 	return ParseRunMachineCommandResponse(rsp)
 }
 
-// OpenMachineConsoleWithResponse request returning *OpenMachineConsoleResponse
-func (c *ClientWithResponses) OpenMachineConsoleWithResponse(ctx context.Context, name MachineName, params *OpenMachineConsoleParams, reqEditors ...RequestEditorFn) (*OpenMachineConsoleResponse, error) {
-	rsp, err := c.OpenMachineConsole(ctx, name, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseOpenMachineConsoleResponse(rsp)
-}
-
 // RunMachinePlaybookWithBodyWithResponse request with arbitrary body returning *RunMachinePlaybookResponse
 func (c *ClientWithResponses) RunMachinePlaybookWithBodyWithResponse(ctx context.Context, name MachineName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RunMachinePlaybookResponse, error) {
 	rsp, err := c.RunMachinePlaybookWithBody(ctx, name, contentType, body, reqEditors...)
@@ -3669,15 +3415,6 @@ func (c *ClientWithResponses) RunVMCommandWithResponse(ctx context.Context, name
 		return nil, err
 	}
 	return ParseRunVMCommandResponse(rsp)
-}
-
-// OpenVMConsoleWithResponse request returning *OpenVMConsoleResponse
-func (c *ClientWithResponses) OpenVMConsoleWithResponse(ctx context.Context, name VMName, params *OpenVMConsoleParams, reqEditors ...RequestEditorFn) (*OpenVMConsoleResponse, error) {
-	rsp, err := c.OpenVMConsole(ctx, name, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseOpenVMConsoleResponse(rsp)
 }
 
 // MigrateDiskWithBodyWithResponse request with arbitrary body returning *MigrateDiskResponse
@@ -4078,60 +3815,6 @@ func ParseRunMachineCommandResponse(rsp *http.Response) (*RunMachineCommandRespo
 			return nil, err
 		}
 		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON502 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseOpenMachineConsoleResponse parses an HTTP response from a OpenMachineConsoleWithResponse call
-func ParseOpenMachineConsoleResponse(rsp *http.Response) (*OpenMachineConsoleResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &OpenMachineConsoleResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest Error
@@ -4759,67 +4442,6 @@ func ParseRunVMCommandResponse(rsp *http.Response) (*RunVMCommandResponse, error
 	return response, nil
 }
 
-// ParseOpenVMConsoleResponse parses an HTTP response from a OpenVMConsoleWithResponse call
-func ParseOpenVMConsoleResponse(rsp *http.Response) (*OpenVMConsoleResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &OpenVMConsoleResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON409 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON502 = &dest
-
-	}
-
-	return response, nil
-}
-
 // ParseMigrateDiskResponse parses an HTTP response from a MigrateDiskWithResponse call
 func ParseMigrateDiskResponse(rsp *http.Response) (*MigrateDiskResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -5197,9 +4819,6 @@ type ServerInterface interface {
 	// Run a command over SSH
 	// (POST /metal/{name}/cmd)
 	RunMachineCommand(w http.ResponseWriter, r *http.Request, name MachineName)
-	// Interactive SSH (WebSocket upgrade)
-	// (GET /metal/{name}/console)
-	OpenMachineConsole(w http.ResponseWriter, r *http.Request, name MachineName, params OpenMachineConsoleParams)
 	// Run an Ansible playbook against the machine
 	// (POST /metal/{name}/playbook)
 	RunMachinePlaybook(w http.ResponseWriter, r *http.Request, name MachineName)
@@ -5245,9 +4864,6 @@ type ServerInterface interface {
 	// Run a command over SSH
 	// (POST /vms/{name}/cmd)
 	RunVMCommand(w http.ResponseWriter, r *http.Request, name VMName)
-	// Interactive SSH (WebSocket upgrade)
-	// (GET /vms/{name}/console)
-	OpenVMConsole(w http.ResponseWriter, r *http.Request, name VMName, params OpenVMConsoleParams)
 	// Move the VM disk to another pool
 	// (POST /vms/{name}/migrate-disk)
 	MigrateDisk(w http.ResponseWriter, r *http.Request, name VMName)
@@ -5455,50 +5071,6 @@ func (siw *ServerInterfaceWrapper) RunMachineCommand(w http.ResponseWriter, r *h
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RunMachineCommand(w, r, name)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// OpenMachineConsole operation middleware
-func (siw *ServerInterfaceWrapper) OpenMachineConsole(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "name" -------------
-	var name MachineName
-
-	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
-		return
-	}
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params OpenMachineConsoleParams
-
-	// ------------- Optional query parameter "cols" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "cols", r.URL.Query(), &params.Cols)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cols", Err: err})
-		return
-	}
-
-	// ------------- Optional query parameter "rows" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "rows", r.URL.Query(), &params.Rows)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "rows", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.OpenMachineConsole(w, r, name, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -5797,50 +5369,6 @@ func (siw *ServerInterfaceWrapper) RunVMCommand(w http.ResponseWriter, r *http.R
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RunVMCommand(w, r, name)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// OpenVMConsole operation middleware
-func (siw *ServerInterfaceWrapper) OpenVMConsole(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "name" -------------
-	var name VMName
-
-	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
-		return
-	}
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params OpenVMConsoleParams
-
-	// ------------- Optional query parameter "cols" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "cols", r.URL.Query(), &params.Cols)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cols", Err: err})
-		return
-	}
-
-	// ------------- Optional query parameter "rows" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "rows", r.URL.Query(), &params.Rows)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "rows", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.OpenVMConsole(w, r, name, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -6179,7 +5707,6 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("DELETE "+options.BaseURL+"/metal/{name}", wrapper.RemoveMachine)
 	m.HandleFunc("GET "+options.BaseURL+"/metal/{name}", wrapper.GetMachine)
 	m.HandleFunc("POST "+options.BaseURL+"/metal/{name}/cmd", wrapper.RunMachineCommand)
-	m.HandleFunc("GET "+options.BaseURL+"/metal/{name}/console", wrapper.OpenMachineConsole)
 	m.HandleFunc("POST "+options.BaseURL+"/metal/{name}/playbook", wrapper.RunMachinePlaybook)
 	m.HandleFunc("POST "+options.BaseURL+"/metal/{name}/reboot", wrapper.RebootMachine)
 	m.HandleFunc("GET "+options.BaseURL+"/networks", wrapper.ListNetworks)
@@ -6195,7 +5722,6 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("POST "+options.BaseURL+"/vms/{name}/add-disk", wrapper.AddDisk)
 	m.HandleFunc("PUT "+options.BaseURL+"/vms/{name}/autostart", wrapper.SetAutostart)
 	m.HandleFunc("POST "+options.BaseURL+"/vms/{name}/cmd", wrapper.RunVMCommand)
-	m.HandleFunc("GET "+options.BaseURL+"/vms/{name}/console", wrapper.OpenVMConsole)
 	m.HandleFunc("POST "+options.BaseURL+"/vms/{name}/migrate-disk", wrapper.MigrateDisk)
 	m.HandleFunc("POST "+options.BaseURL+"/vms/{name}/playbook", wrapper.RunPlaybook)
 	m.HandleFunc("POST "+options.BaseURL+"/vms/{name}/poweroff", wrapper.PoweroffVM)
@@ -6516,68 +6042,6 @@ func (response RunMachineCommand500JSONResponse) VisitRunMachineCommandResponse(
 type RunMachineCommand502JSONResponse Error
 
 func (response RunMachineCommand502JSONResponse) VisitRunMachineCommandResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(502)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type OpenMachineConsoleRequestObject struct {
-	Name   MachineName `json:"name"`
-	Params OpenMachineConsoleParams
-}
-
-type OpenMachineConsoleResponseObject interface {
-	VisitOpenMachineConsoleResponse(w http.ResponseWriter) error
-}
-
-type OpenMachineConsole101Response struct {
-}
-
-func (response OpenMachineConsole101Response) VisitOpenMachineConsoleResponse(w http.ResponseWriter) error {
-	w.WriteHeader(101)
-	return nil
-}
-
-type OpenMachineConsole400JSONResponse struct{ ErrorJSONResponse }
-
-func (response OpenMachineConsole400JSONResponse) VisitOpenMachineConsoleResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(400)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type OpenMachineConsole403JSONResponse Error
-
-func (response OpenMachineConsole403JSONResponse) VisitOpenMachineConsoleResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(403)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type OpenMachineConsole404JSONResponse Error
-
-func (response OpenMachineConsole404JSONResponse) VisitOpenMachineConsoleResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(404)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type OpenMachineConsole500JSONResponse Error
-
-func (response OpenMachineConsole500JSONResponse) VisitOpenMachineConsoleResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(500)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type OpenMachineConsole502JSONResponse Error
-
-func (response OpenMachineConsole502JSONResponse) VisitOpenMachineConsoleResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(502)
 
@@ -7126,77 +6590,6 @@ func (response RunVMCommand502JSONResponse) VisitRunVMCommandResponse(w http.Res
 	return json.NewEncoder(w).Encode(response)
 }
 
-type OpenVMConsoleRequestObject struct {
-	Name   VMName `json:"name"`
-	Params OpenVMConsoleParams
-}
-
-type OpenVMConsoleResponseObject interface {
-	VisitOpenVMConsoleResponse(w http.ResponseWriter) error
-}
-
-type OpenVMConsole101Response struct {
-}
-
-func (response OpenVMConsole101Response) VisitOpenVMConsoleResponse(w http.ResponseWriter) error {
-	w.WriteHeader(101)
-	return nil
-}
-
-type OpenVMConsole400JSONResponse struct{ ErrorJSONResponse }
-
-func (response OpenVMConsole400JSONResponse) VisitOpenVMConsoleResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(400)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type OpenVMConsole403JSONResponse Error
-
-func (response OpenVMConsole403JSONResponse) VisitOpenVMConsoleResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(403)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type OpenVMConsole404JSONResponse Error
-
-func (response OpenVMConsole404JSONResponse) VisitOpenVMConsoleResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(404)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type OpenVMConsole409JSONResponse Error
-
-func (response OpenVMConsole409JSONResponse) VisitOpenVMConsoleResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(409)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type OpenVMConsole500JSONResponse Error
-
-func (response OpenVMConsole500JSONResponse) VisitOpenVMConsoleResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(500)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type OpenVMConsole502JSONResponse Error
-
-func (response OpenVMConsole502JSONResponse) VisitOpenVMConsoleResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(502)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
 type MigrateDiskRequestObject struct {
 	Name VMName `json:"name"`
 	Body *MigrateDiskJSONRequestBody
@@ -7545,9 +6938,6 @@ type StrictServerInterface interface {
 	// Run a command over SSH
 	// (POST /metal/{name}/cmd)
 	RunMachineCommand(ctx context.Context, request RunMachineCommandRequestObject) (RunMachineCommandResponseObject, error)
-	// Interactive SSH (WebSocket upgrade)
-	// (GET /metal/{name}/console)
-	OpenMachineConsole(ctx context.Context, request OpenMachineConsoleRequestObject) (OpenMachineConsoleResponseObject, error)
 	// Run an Ansible playbook against the machine
 	// (POST /metal/{name}/playbook)
 	RunMachinePlaybook(ctx context.Context, request RunMachinePlaybookRequestObject) (RunMachinePlaybookResponseObject, error)
@@ -7593,9 +6983,6 @@ type StrictServerInterface interface {
 	// Run a command over SSH
 	// (POST /vms/{name}/cmd)
 	RunVMCommand(ctx context.Context, request RunVMCommandRequestObject) (RunVMCommandResponseObject, error)
-	// Interactive SSH (WebSocket upgrade)
-	// (GET /vms/{name}/console)
-	OpenVMConsole(ctx context.Context, request OpenVMConsoleRequestObject) (OpenVMConsoleResponseObject, error)
 	// Move the VM disk to another pool
 	// (POST /vms/{name}/migrate-disk)
 	MigrateDisk(ctx context.Context, request MigrateDiskRequestObject) (MigrateDiskResponseObject, error)
@@ -7883,33 +7270,6 @@ func (sh *strictHandler) RunMachineCommand(w http.ResponseWriter, r *http.Reques
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(RunMachineCommandResponseObject); ok {
 		if err := validResponse.VisitRunMachineCommandResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// OpenMachineConsole operation middleware
-func (sh *strictHandler) OpenMachineConsole(w http.ResponseWriter, r *http.Request, name MachineName, params OpenMachineConsoleParams) {
-	var request OpenMachineConsoleRequestObject
-
-	request.Name = name
-	request.Params = params
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.OpenMachineConsole(ctx, request.(OpenMachineConsoleRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "OpenMachineConsole")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(OpenMachineConsoleResponseObject); ok {
-		if err := validResponse.VisitOpenMachineConsoleResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -8334,33 +7694,6 @@ func (sh *strictHandler) RunVMCommand(w http.ResponseWriter, r *http.Request, na
 	}
 }
 
-// OpenVMConsole operation middleware
-func (sh *strictHandler) OpenVMConsole(w http.ResponseWriter, r *http.Request, name VMName, params OpenVMConsoleParams) {
-	var request OpenVMConsoleRequestObject
-
-	request.Name = name
-	request.Params = params
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.OpenVMConsole(ctx, request.(OpenVMConsoleRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "OpenVMConsole")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(OpenVMConsoleResponseObject); ok {
-		if err := validResponse.VisitOpenVMConsoleResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
 // MigrateDisk operation middleware
 func (sh *strictHandler) MigrateDisk(w http.ResponseWriter, r *http.Request, name VMName) {
 	var request MigrateDiskRequestObject
@@ -8593,92 +7926,84 @@ func (sh *strictHandler) StopVM(w http.ResponseWriter, r *http.Request, name VMN
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"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",
+	"H4sIAAAAAAAC/+x8fW8bt5b3VzmY5wKPvTseKa6LizoIFmnipl5UrhGnXtzNzTrUzJHE6xlySnLkqIWB",
+	"/TT7wfaTLA7JedNQthy/NLvpP4mk4ZCHh4e/8+7fo1QWpRQojI4Of49KpliBBpX9NmHpggs8YQXSVy6i",
+	"w6hkZhHFkbC/uf/iSOGvFVeYRYdGVRhHOl1gwegdsyppnDaKi3l0fR1H55OHnO+aButSCo2W5COlpKIP",
+	"qRQGhaGPrCxznjLDpRj9Q0tBv7Uz/kXhLDqM/t+o5cTIPdUjN5tdJUOdKl7SJNFhhP5BTZpd+2WWveb6",
+	"8i3+WqG2K5dKlqgMd7SVUub0f3+qMyMVmyPQU5hJBWaBIPAKljKvCoSdDGesyg34/3cTOHdPiFnANbD8",
+	"iq00/L4srvdOkl9TebUPOyf0ZL+ZcMaVNoCfjGKQcX0Z068Cvonhv//zv3aTv4soXudtHGn+Gw4JTlnJ",
+	"Um5WwAW8+T6Ko4ILXlRFdPismYMLg3N0HGoP872b8UMzTE7/gamhpRre6SoPsY6kZEDJQmoD9AjkbI1t",
+	"oe0YpuZohtPM6bhgyZXhEjJc8tTzdmeZTWNYZqnjUmjOZXGbDJ1PjsVMDjixLKK4Fn5P2Aa++Fu4UaxS",
+	"WRRca+4E20tJdDhjucZ1uWU5RwFS5KsE3lYC2neTVZHDFGdSIWg0VXkxlYZ+PLRcJVY7nrywvNmNoXB0",
+	"7fEsBiYyODv70Q6DS1xpL18Kp1KaBH7RaEXRrq8hzaXADGZKFsBgWRiSfV6wOSZwMB7boQUalvcEcypl",
+	"jkwQW2id4UEen4JU8PrkDDyODI7rkousx6XILhPFEQqS4PfNd0tp9CEwh/Dw1V/bb8LyiLjxUmg+zRG4",
+	"WKIwUq0aFiYwqbQBIQ2kMs95hnDFzQIY5HxKUgjnE7fvkhmDimb/j/cv9/6d7f023vvuQ/sxudj78E9/",
+	"Ge5zTdQ8MyzPgjJWGakNU2ajiKFg0xyzDgA3Z7G2Vj0ytM6rIrtRiJk7G26w0AGst0Bz7B62SMOUYqsB",
+	"GfV0G8kIwwx+4uYilRl2lm+gLI60yVCpIGnaZLIyYY3X40+zQvNOM2+QWIXM4KmU+UbW1fI4oKkGza2k",
+	"ww6+jYIw156EgPPJRgaQPrsI66q+fhrHgUO1OvGC5rgNydf0e/Pukil927tHNPKcBl7HkUW6sISzdGlY",
+	"eVHILLCbn0W+gkpjBlcErgLNBc1Amj7jClOTwGtvLEwVz+YIO+cTDVJY5agJmixAnxy/gpQJ0IiALF2A",
+	"NAtUuwkssWSgUWQaFoyrkgtYcgZMkOWASrAc9BU36SKBUvElM7S2zJlBDVaLaofp7aQJlExrs1Cymi9g",
+	"zpeoLTF2NOCnNK80XyLtqlbiJ8evHPzVkOz2EsURkUeS4pamT+3cQagusJBqFRALfpvdEm+WamK7lpVK",
+	"Ayd0guZKqktvPghmduP6KNxP7stuTIqqOYsdd3qbzLD6nIfLCWbgRaM26J+K5SA8ETutxehpeOHWdN8S",
+	"LzTwArzYkaQwKBcrzVOWDw9CMBPF7XG418M6UloVH1DRM7AmPZBdYI/bXgayJcucpfRBG2QZCQNNwcUc",
+	"OMk115dwpThJWolKc23ASCfX9ixq8+GUceX06eujn47eHcG/eFpe0Lqge+94E5trq40zzNFgtsnmKHO2",
+	"mkp5OdzU90z5861EhgqY0/2j+g1tj5tZUzWBlzNDY0BXaYpaz6oc6oGdq8G1N54wS0JCUTsTgwdaLy7o",
+	"XgzJ1Cg0N3yJz0HgEhXkch7F4RkqjWFFt0zLys59B6vfI7yDvRDEN17bmjqufx5QIStTVgEL0HOe7Nop",
+	"JxPTDXR4yVo+a4MlzBgnU+UhrXpHcXCLjQIgjzTLOFHM8tPehgeE9HdX25RW7eyR2oGdj3t7na+XuHqx",
+	"ZHmFHwnNnUnq3UONRnvvhmf13Tmf1HKboyZk5hoKVgLLFbJsBakUhnHRvti7HO3uvI9iebL5GPu7KZWc",
+	"oj2ESiFkaBjP3UFVQpEGIUsydDrbGP/15s/OfiSNI292BrrzWAcAXrQw6P2cxDkv8AIYsc3N//91g74p",
+	"EwQipFN3mLDKDxarEtWSa6liYIRnVbabwPeSrH2FRNyoPlPnA2rnm/VQd3uPZPBABlDg9O3Ru3d/uzh5",
+	"OTlyynqEJh1JvacwR6bRHcGNB6ANMwFs/4FmY8I6gu5wLQ5bvDVSYQapwgyF4SzXiYc3C/Bu26DQVIpu",
+	"7XTln3q56jOkS1tfVJopA2wKY5KVAS9S9cZC13fC54oZ3Cq+c/PCdlRoiVMPThvn/0xrs6u3biGtHnkz",
+	"eRt8py3A+ubl/bjg4lLmYXBhKWm0kGcaP6RjEtcLhah7i+R93Cgb27gn9wifdSkIH8+M56hX2mBxMVfy",
+	"SoQ5Ro8uNp/k/aJdAxJCO/ETDM+5DlKECedl2J/azgEY38kBaOCvAaRKkKEaxZFeVEbOZlZqyFGL4ihV",
+	"TC/sJzIOZ1z4z5eiz4KbTKzxtiaWI62eotm/5U/c4eGQ8zQh95zv8+rHd+9OQVdqRua5nMFHr1o1qiWq",
+	"jwmclZju2QDzIZDjmusYtMlyPoUzO+ZYGLSvx4DFFLMMM9Alpi5uyMCgNpCSejNWL85RIKGtjxBaq4SE",
+	"J4GJVc72LRpe62YNOyOrJnc36lWFc64NkhbiApL6xdHfq/H4m5TYZz/hqFb3qyKPrVtQK/hMFmQKJfDq",
+	"p+OWCXrx0dLz7pdj+Gg+An7ClH6FXKYsz1cdl5yLjFTds/2/JuNknDw7/O7gr9/QGsAqcgxSH+iw86lK",
+	"1Ihr96RXIl0oKWSl7fOCrWiMC5UysYKCi8qgfu4ZqaGoo4zkWzPQC6kM2MM0vEBZGW/LcZNjG8B8eXps",
+	"PW3lAsrROHmWjC2KlyhYyaPD6JtknHzjgdHK6Yj+CYbW7ck75ISfSxQvT49B4QwVihRh5+yKzeeo4Jfj",
+	"XTALZiCXLNMw8mslK1bkCbxbYBNsJrOUOQtfGJqZOPrm6F3/HbIEez9S2sdtlzDFpoKOM8IBNK9lqqO1",
+	"LNL+eLyWQzL4yYwWpsj7yaNAOmotu9Ps0GWLqqJgatV74HM0XFve06iRc7F1h619sn/i2nzvx9xK+s3p",
+	"r83R1rUA62BrnbiGtTO+HY83aYeGwiaj1mUF7aYbmNCOCdZdvJkHxwV7ABZs8sa2ZU0QS9ecCgquzFyO",
+	"z7onRvrAxwOxj+KXbkYNcyWr0lnRtGCXm6Pfab1rd1FzdGqsz9fX9nfL2SjuJYTfP1AK2E/za4VWNfl5",
+	"LKnd99ocTf1paNN/GBz9wRCEfFyHmHwwPtiayfc4EsdDYJ1jcafgfLlNaDmptVlHWbmI0nb6KoEjG3gV",
+	"NqRlXbAMJEV6yCVLpUgrpVCYfFVnnJxSSKUQmJpaL8SgJVhLgqbJCbunlaHdUGDOrwep1EYDM1DQzWUw",
+	"wyvQmEqR6RDSkpTW+3swzLrJEu2GJLZAs5rB97+KxQYbxUXtQqGLs1a3PyelrvsZWIonZOupWu+lW3cD",
+	"s106slrxC0SyqnIp5n1939WkzjxgaYqlseLBNJQsvUQ1cv85ESmZ1ldSZTY8pKtM1sYJOfq/TCthqj1i",
+	"DzPW2vr5DHY04jACOioVlhcdWd1N4N9cOHdbW8wmlPuMUWiDxhq6JE+lsURe4sobVm9xz5vonYhEkw2x",
+	"Y71tptnMpW8V6qpADcxHCUGKqWQq42JOKervgPuKg7oGo5O8jWEh80xTlKgT8LAxYN672/4SZnxmLSKv",
+	"BKWy5Djj2C9TH5qPVA8ZLxXkLL3UwwNL4NvxPs1Dh2xkbzraW/C2tmUHHtpRm+9lttrimuInVpS5VSwu",
+	"UBc9G1t792C/jre0Wfdah1Tps+g63rIqZ1gTcX19va6BrgcY8+zByoJ60DKEEi8qtcYZ30HjHIy/eyT9",
+	"RKP3Pw/Vfnb7Aeahra7jqMWoo9qC9kWfO2+xkMubrz3sFEzwGfrL2blEuwmcSLPwQcN0wcTc3s3+JTEa",
+	"89lz+9vU+T/KXSZjI+Sk21b0VGFI9h2BXfG/zcBQ9o2nNDB+kOTV0onURxCHreQ3aDbuZPxUF6JD5BPx",
+	"52whr6wdVMvEjrWGNIHgbnQ9sGtDK7RDRt1CyOsP69I+SotsvXjyrnNuNA1IvzS+LtOkes8nr1x5SwL7",
+	"4zHgEoUzB5riEqcnxN5vqNbwXzGhS6mMh/6h8FfCE+bXuA/+N0U976PKuwl7LPqwNdB3Coa2QviHE+i2",
+	"RiggznTdDYLyA+6O8QdfHsZTMSADf2CNzzBE9lE3m/AoAt+1hTcFuRJoUu6azkHmy4259yYPGkyA1vjQ",
+	"1O25wRfWIDTSqQz67DOkbQ5mmCM1CyySdTvdWnwzW7SzczAe7z4HbkChL2VoVJZVcGbl1FSdDquErchw",
+	"NZO2EKexfJzt2K5lqyqC2qy50HU48T43uj39aFlcVOVcscya59tbb+tprie+2WtprMD1rmsIZlxwG7l/",
+	"mhv+xLuTCqRKF6iNE5a6GiIAC6IpZi2biPScJN50r1AAK1w69tGQIl1gVuWo4aPLKqUm92njj1b3u2gE",
+	"yMrYy9N6rzbNrIEXBWacGazjIS7m0SSRrb+svDKFUl6h2pOzGbHOZlE8LFladdiS7OSw/6/bX/dRPpZP",
+	"rTW7pn98PdvNoeCTetAfFg8Xndq/Bwgj1fGEZveWF92ExkZ+vEHjky3/evbzyX05cmtwm0DAaiJjfGKP",
+	"DFW79Joj6YiCTKZVgcLADg3a7e+M8jdb7IySjnfbWT3xHbI3w53duqO/vZz85HfUmCA3Cu5pM+oPk9wG",
+	"1inJ+kDi22ye0q0Do8wzSMr8FubYEU8RLm4qTLbhl6Xq3izSnc6vXnS4z4e2AP/OltuWzs6gx+CJ42mD",
+	"FoMAz11y/DOMsc8+I0eVjc8qTG0LT/fEnAgvi5sF+HzyNOJ7PtlWeImie4suy3M4n/SEdqMbl8CEreCK",
+	"cQNVST7Vs/2xdt1gAo5PrUnmmsWcsSlLl4xtICSBV7dmNvbHz6BA5rwwX6pBhltV2vmp3HnVpkt8I+QO",
+	"lSHFzTqxN/12XWk2ZpglcFSUZkVk2iD/kuU8s4u5DgxJydarBtfgiul2lQR+cMWtGpit+e6Qhp+4TZ8p",
+	"hG/H4+d1MS6ZmkQrJS7kXlMwFEw5dBIJTG8Mzobs0rqj5j6eoO9hiSqbitg/GB+4ztO26Ohwv4nvX+E0",
+	"6vYx+E4CVzDZSe/6yqf97SNEa71BTwxcTbXbw8HV3Qz0x8sXBKFQZN7zoRLoBgC3LiqwErfmCvbZxuv2",
+	"kFr0XSTEpfOwdDeIWrXiYA1B3XYSLCPwDbGDBsYvtIbgzEiHXQ0rHNM3B/r9hX4kH3OzrJ9PnpItdWTf",
+	"rXq3wML5pBPCbyV3xLJsr+4A/MwZNylCd3UIn6mNGq02cS36y7aLPxs079trZssr9utW/TrNJfCTAaot",
+	"3HVFBsYwiuNQXJHpdkTdz04VKGuN7An8REUd/1x3UqEwtXJpNafPmD/vDrKXkc9oKa6Bil1BzmaursC1",
+	"LWm0e1XsCqa5TC99wPW5f0VIAyVTxtZbUeZOkSFQMNP0XQ3y0K/ddf9sReUqr78d3yW93GvzfNr4ZP8P",
+	"IQRumz1Qf+jZl5R9CGuMkMi3Ykti0bQirSuUUa/m+/PvZRWAyzM0Tdv7I7lVg7b6J5ak2wH7C5SbI/v3",
+	"AwgXMq7tx1YI1sXjs9KutwL2Wx8d9lk+16RvC9pRKVeU0+RZHycB2+R3/8y9/rG51y+yGuemTG3nchSu",
+	"Ye3hzJq+mHb64R4JPgMdd38C6O3iMZFLrKMJ1lQwEup21F7Y6v4J/Vuh9OFz+SG4fOC8dq/C9M+09tOC",
+	"5//aJHjAerUJY2oGfHj0PfVTfxUe/w9Spdim3wd8/twqg1vh6+Ur261Gs9sCAp+Rde6ud5S1YSsNPkzr",
+	"AmQLWeW2XB9hytLL2pGuPWznJy+YoBJt+4tHLftHTgwXqXFtj9rIEnbIyc7klSAc992lzu+vxQt2ZsSg",
+	"DDISY7na3VyJ8FWIS1NMUPM9cDWVbZd+LNuobcZ+JNNo2G/+xNpm0G4eOHTv6ztWZ8+hbS0HjTbe5G4C",
+	"/d7g7hdqVL0hGrtGFV3Atp2dNuOlLSRqlesjf3gpqwr8Sq60tmEjcE31oRv9AGGiIJfPaN6vI7DuEzuk",
+	"dspNTJblo/BYll8Fi98oliL9va9aqTuK3B9ScLysVB4dRiNKUfzPANbUJs+cWQAA",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

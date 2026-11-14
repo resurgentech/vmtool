@@ -5,9 +5,7 @@ go 1.24.0
 require (
 	github.com/charmbracelet/bubbletea v1.3.4
 	github.com/charmbracelet/lipgloss v1.1.0
-	github.com/creack/pty v1.1.24
 	github.com/getkin/kin-openapi v0.133.0
-	github.com/gorilla/websocket v1.5.3
 	github.com/oapi-codegen/oapi-codegen/v2 v2.5.1
 	github.com/oapi-codegen/runtime v1.4.2
 	github.com/spf13/cobra v1.8.1

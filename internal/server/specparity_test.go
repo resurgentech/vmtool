@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"path"
 	"sort"
 	"strings"
@@ -66,6 +67,37 @@ func TestSpecParity(t *testing.T) {
 	sort.Strings(extra)
 	if len(missing) > 0 || len(extra) > 0 {
 		t.Fatalf("parity mismatch\nmissing from mux: %v\nextra on mux: %v\nmux=%v\nspec=%v", missing, extra, keys(rec.routes), keys(specOps))
+	}
+}
+
+func TestNoConsoleInSpec(t *testing.T) {
+	doc, err := openapi3.NewLoader().LoadFromData(spec.OpenAPIYAML)
+	if err != nil {
+		t.Fatalf("load spec: %v", err)
+	}
+	for p, item := range doc.Paths.Map() {
+		if strings.Contains(strings.ToLower(p), "console") {
+			t.Errorf("spec path %s mentions console", p)
+		}
+		for m, op := range item.Operations() {
+			if strings.Contains(strings.ToLower(op.OperationID), "console") {
+				t.Errorf("%s %s operationId %s mentions console", m, p, op.OperationID)
+			}
+		}
+	}
+	if strings.Contains(strings.ToLower(doc.Info.Description), "console") {
+		t.Errorf("info.description mentions console")
+	}
+}
+
+func TestConsoleRoutesGone(t *testing.T) {
+	h := handlerFor(&handlers{})
+	for _, p := range []string{"/vms/x/console", "/metal/x/console"} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, p, nil))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("GET %s = %d, want 404", p, rec.Code)
+		}
 	}
 }
 

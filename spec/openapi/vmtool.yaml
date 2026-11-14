@@ -4,13 +4,11 @@ info:
   version: 0.1.0
   description: >
     HTTP surface of `vmtool server`. Spec-first: models, stdlib ServerInterface,
-    embedded spec, and a test client are generated from this file. Interactive
-    SSH over the network is GET /vms/{name}/console (WebSocket upgrade; framing
-    in that operation's description). Metal and alien machines (/metal) are
-    SSH/Ansible targets registered in .machines/<name>/machine.yml, not
-    libvirt domains. CLI `vmtool ssh` and TUI `t` still exec
-    ssh locally. Default bind is 127.0.0.1:9473, no auth. createVM and
-    runPlaybook are synchronous and may run for many minutes; clients must not
+    embedded spec, and a test client are generated from this file. Metal and
+    alien machines (/metal) are SSH/Ansible targets registered in
+    .machines/<name>/machine.yml, not libvirt domains. CLI `vmtool ssh` and
+    TUI `t` exec ssh locally. Default bind is 127.0.0.1:9473, no auth.
+    createVM and runPlaybook are synchronous and may run for many minutes; clients must not
     use a short HTTP timeout.
 servers:
   - url: /
@@ -235,36 +233,6 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/CmdResult' }
         '400': { $ref: '#/components/responses/Error' }
-        '404': { $ref: '#/components/responses/Error' }
-        '409': { $ref: '#/components/responses/Error' }
-        '500': { $ref: '#/components/responses/Error' }
-        '502': { $ref: '#/components/responses/Error' }
-  /vms/{name}/console:
-    parameters:
-      - $ref: '#/components/parameters/VMName'
-    get:
-      operationId: openVMConsole
-      summary: Interactive SSH (WebSocket upgrade)
-      description: >
-        WebSocket upgrade. The handshake is HTTP; after 101 the connection is a
-        terminal, not request/response. Binary frames are raw PTY bytes to/from
-        `ssh -tt` using .machines credentials (same as `vmtool ssh`). Text
-        frames are JSON control: `{"type":"resize","cols":N,"rows":N}`. Closing
-        the socket kills ssh. Optional `cols` and `rows` set the initial PTY
-        size (default 80x24). Default bind is loopback with no auth; a browser
-        Origin that is not the request host or loopback is rejected (403).
-        Local `vmtool ssh` / TUI `t` do not use this socket.
-      parameters:
-        - name: cols
-          in: query
-          schema: { type: integer, minimum: 1 }
-        - name: rows
-          in: query
-          schema: { type: integer, minimum: 1 }
-      responses:
-        '101': { description: switching protocols to WebSocket }
-        '400': { $ref: '#/components/responses/Error' }
-        '403': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
@@ -574,29 +542,6 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/CmdResult' }
         '400': { $ref: '#/components/responses/Error' }
-        '404': { $ref: '#/components/responses/Error' }
-        '500': { $ref: '#/components/responses/Error' }
-        '502': { $ref: '#/components/responses/Error' }
-  /metal/{name}/console:
-    parameters:
-      - $ref: '#/components/parameters/MachineName'
-    get:
-      operationId: openMachineConsole
-      summary: Interactive SSH (WebSocket upgrade)
-      description: >
-        Same framing, query parameters, and origin rules as openVMConsole,
-        against the machine's registered host.
-      parameters:
-        - name: cols
-          in: query
-          schema: { type: integer, minimum: 1 }
-        - name: rows
-          in: query
-          schema: { type: integer, minimum: 1 }
-      responses:
-        '101': { description: switching protocols to WebSocket }
-        '400': { $ref: '#/components/responses/Error' }
-        '403': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
         '502': { $ref: '#/components/responses/Error' }

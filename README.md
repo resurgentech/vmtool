@@ -93,7 +93,6 @@ scripts/verify-generate.sh             # fail if generated code is stale
 ./vmtool delete <name>
 ./vmtool delete scratch --noclone                       # undefine only, keep the disk
 ./vmtool server                                         # REST on 127.0.0.1:9473; GET / is Swagger UI
-# Interactive SSH from a client: GET ws://127.0.0.1:9473/vms/<name>/console
 ```
 
 ## Metal and alien machines

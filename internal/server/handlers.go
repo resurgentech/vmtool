@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"os/exec"
 
 	"github.com/jaredeh/vmtool/internal/api"
 	"github.com/jaredeh/vmtool/internal/app"
@@ -12,8 +11,6 @@ import (
 type handlers struct {
 	svc    *app.Service
 	listen string
-	// consoleCmd, if set, replaces libvirt lookup + SSHCmd (tests).
-	consoleCmd func(name string) (*exec.Cmd, error)
 }
 
 func (h *handlers) withManager(fn func(m *vmtool.Manager) (any, error)) (any, error) {

@@ -11,9 +11,7 @@ a handler.
 | `openapi/vmtool.yaml` | Every HTTP endpoint `vmtool server` registers. oapi-codegen generates models, a stdlib `ServerInterface`, a strict wrapper, an embedded spec, and a test client (`internal/api`). |
 
 Interactive SSH from CLI (`vmtool ssh`) and TUI (`t`) execs `ssh` locally and
-is not an HTTP operation. The browser/remote handshake is `GET /vms/{name}/console`
-(101 Switching Protocols); frame the PTY bytes and resize JSON in that
-operation's description, not as JSON schemas.
+is not an HTTP operation.
 
 ## Codegen workflow
 
@@ -28,13 +26,6 @@ Run generate after editing the YAML and commit `internal/api/api.gen.go`.
 
 **Every HTTP endpoint appears in `openapi/vmtool.yaml`.** Paths are literal and
 `servers[0].url` is `/`, so the spec never lies about a real request path.
-
-That includes the WebSocket upgrade handshake (`GET /vms/{name}/console`, 101
-plus the usual error statuses). The framing after 101 is described in prose on
-the operation. "It's not JSON" is not a reason to exclude it. The generated
-strict handler cannot hijack a connection; the server implements this one
-operation on `ServerInterface` (`OpenVMConsole(w, r, name, params)`) and the
-rest on `StrictServerInterface`.
 
 An exclusion requires a compelling technical reason and a row in the register
 below. Enforced by `internal/server/specparity_test.go` once REST is on the

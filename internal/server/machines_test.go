@@ -73,10 +73,3 @@ func TestMachineRoutes(t *testing.T) {
 		t.Fatalf("delete: %d, still registered=%v", dres.StatusCode, vmtool.IsMachine("nuc1"))
 	}
 }
-
-func TestOpenMachineConsoleNotFound(t *testing.T) {
-	t.Chdir(t.TempDir())
-	ts := httptest.NewServer(handlerFor(&handlers{svc: &app.Service{}}))
-	t.Cleanup(ts.Close)
-	assertWSHTTP(t, ts, "/metal/nuc1/console", http.StatusNotFound)
-}

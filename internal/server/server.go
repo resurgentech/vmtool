@@ -20,24 +20,7 @@ type Server struct {
 	PlaybookDir string
 }
 
-// muxHandler serves JSON routes via the generated strict wrapper and overrides
-// OpenVMConsole and OpenMachineConsole so the WebSocket upgrade can hijack the
-// connection.
-type muxHandler struct {
-	api.ServerInterface
-	h *handlers
-}
-
-func (m muxHandler) OpenVMConsole(w http.ResponseWriter, r *http.Request, name api.VMName, params api.OpenVMConsoleParams) {
-	m.h.serveConsole(w, r, consoleVM, string(name), params.Cols, params.Rows)
-}
-
-func (m muxHandler) OpenMachineConsole(w http.ResponseWriter, r *http.Request, name api.MachineName, params api.OpenMachineConsoleParams) {
-	m.h.serveConsole(w, r, consoleMachine, string(name), params.Cols, params.Rows)
-}
-
-// Handler returns the generated mux wrapped around StrictServerInterface,
-// with the console upgrades implemented on ServerInterface.
+// Handler returns the generated mux wrapped around StrictServerInterface.
 func (s *Server) Handler() http.Handler {
 	if s.PlaybookDir == "" {
 		s.PlaybookDir = "ansible/playbooks"
@@ -53,7 +36,7 @@ func handlerFor(h *handlers) http.Handler {
 		h.svc = &app.Service{PlaybookDir: "ansible/playbooks"}
 	}
 	strict := api.NewStrictHandler(h, nil)
-	mux := api.HandlerFromMux(muxHandler{ServerInterface: strict, h: h}, http.NewServeMux())
+	mux := api.HandlerFromMux(strict, http.NewServeMux())
 	return withMaxBytes(slogRequests(withRequest(mux)))
 }
 
@@ -113,7 +96,7 @@ func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 func (w *statusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	h, ok := w.ResponseWriter.(http.Hijacker)
 	if !ok {
-		return nil, nil, fmt.Errorf("websocket hijack not supported")
+		return nil, nil, fmt.Errorf("connection hijack not supported")
 	}
 	w.code = http.StatusSwitchingProtocols
 	return h.Hijack()
