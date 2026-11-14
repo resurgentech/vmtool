@@ -126,3 +126,11 @@ are appended, never edited in; a hook refuses rewrites.
   commit; workstation hash cache; CreateVM uploads only on a miss, with
   CLI/TUI progress.
 - Commits: c9fb43e
+
+## 2026-11-14 — T13 Combined listing and `vmtool hosts`
+
+- `app.ListAll` fan-out (5 s per host, dead host = error row); `vmtool list
+  [host]`; `vmtool hosts` (reachable, API version, cert days, <30-day
+  warning); `GET /v1/hosts` status via the caller's bearer; async TUI
+  refresh across hosts.
+- Commits: 611e908
