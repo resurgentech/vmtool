@@ -76,6 +76,24 @@ go generate ./internal/api/...          # after editing spec/openapi/vmtool.yaml
 scripts/verify-generate.sh             # fail if generated code is stale
 ```
 
+## First run
+
+Every `vmtool` command (except `help`, `completion` and `config write`) needs
+`config.yml` in the working directory and a `VMTOOL_TOKEN` whose SHA-256
+matches its `token_sha256`. The token comes from the environment, else from
+`.env` in the working directory; a real `VMTOOL_TOKEN` in the environment
+wins over `.env`. Without them every command stops with one line naming the
+fix.
+
+```bash
+just token          # new token into .env (and OpenBao if VAULT_ADDR/VAULT_TOKEN are set)
+# or: just token-fetch   # the existing token from OpenBao into .env
+just install        # build, cert, config.yml, systemd unit (vmtool server over HTTPS)
+```
+
+`vmtool server` serves HTTPS only and needs `tls_cert`, `tls_key` and
+`token_sha256` in `config.yml`; `just install` sets all three.
+
 ## Usage
 
 ```bash
@@ -92,7 +110,7 @@ scripts/verify-generate.sh             # fail if generated code is stale
 ./vmtool list
 ./vmtool delete <name>
 ./vmtool delete scratch --noclone                       # undefine only, keep the disk
-./vmtool server                                         # REST on 127.0.0.1:9473; GET / is Swagger UI
+./vmtool server                                         # HTTPS REST on 127.0.0.1:9473; GET / is Swagger UI
 ```
 
 ## Metal and alien machines

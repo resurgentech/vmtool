@@ -20,9 +20,112 @@ import (
 )
 
 func Execute() error {
+	dir, err := cwdDir()
+	if err != nil {
+		return err
+	}
+	err = newRootCmd(&env{dir: dir}).Execute()
+	if err == nil {
+		return nil
+	}
+	var remote remoteExitError
+	if errors.As(err, &remote) {
+		os.Exit(remote.code)
+	}
+	return err
+}
+
+// env is what the root command shares with its subcommands.
+type env struct {
+	// dir is the working directory: config.yml, .env and .machines/.
+	dir string
+	// cfg and token are set by the gate before any RunE. token is the
+	// verified VMTOOL_TOKEN; never print or log it.
+	cfg   *config.Config
+	token string
+}
+
+// gateError is the gate's refusal. Error is one line naming the fix; Unwrap
+// gives the config error (ErrNotFound, ErrNoToken, ErrTokenMismatch, ...).
+type gateError struct {
+	msg string
+	err error
+}
+
+func (g *gateError) Error() string { return g.msg }
+func (g *gateError) Unwrap() error { return g.err }
+
+// gate loads config.yml and the token and checks one against the other. It
+// fills e.cfg and e.token, or returns a *gateError.
+func (e *env) gate() error {
+	tok, err := config.Token(e.dir)
+	switch {
+	case errors.Is(err, config.ErrNoToken):
+		return &gateError{err: err, msg: fmt.Sprintf("vmtool: no %s in the environment or %s; run 'just token' (new) or 'just token-fetch' (from OpenBao)",
+			config.TokenEnv, filepath.Join(e.dir, config.EnvFileName))}
+	case err != nil:
+		return &gateError{err: err, msg: "vmtool: " + err.Error()}
+	}
+	cfg, err := config.Load(e.dir)
+	switch {
+	case errors.Is(err, config.ErrNotFound):
+		return &gateError{err: err, msg: fmt.Sprintf("vmtool: no %s in %s; run 'just install' (or 'just deploy <host>' on a hypervisor)",
+			config.FileName, e.dir)}
+	case err != nil:
+		return &gateError{err: err, msg: "vmtool: " + err.Error()}
+	}
+	if !config.Check(tok, cfg.TokenSHA256) {
+		return &gateError{err: config.ErrTokenMismatch, msg: fmt.Sprintf("vmtool: %s does not match token_sha256 in %s; run 'just token-fetch', or 'just install' after 'just token'",
+			config.TokenEnv, config.FileName)}
+	}
+	e.cfg, e.token = cfg, tok
+	return nil
+}
+
+// exemptFromGate reports whether cmd runs without a valid token: cobra's
+// help, completion and shell-completion request commands, and `config write`
+// (the bootstrap that creates config.yml; it still needs a token present).
+func exemptFromGate(cmd *cobra.Command) bool {
+	if !cmd.HasParent() {
+		return false
+	}
+	top := cmd
+	for top.Parent().HasParent() {
+		top = top.Parent()
+	}
+	switch top.Name() {
+	case "help", "completion", cobra.ShellCompRequestCmd, cobra.ShellCompNoDescRequestCmd:
+		return true
+	case "config":
+		return cmd.Parent() == top && cmd.Name() == "write"
+	}
+	return false
+}
+
+func newRootCmd(e *env) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "vmtool",
 		Short: "Manage KVM/QEMU virtual machines",
+		Long: `Manage KVM/QEMU virtual machines.
+
+Every command except help, completion and 'config write' needs config.yml in
+the working directory and VMTOOL_TOKEN (environment, else .env) matching its
+token_sha256.`,
+		// The token gate. No subcommand defines its own PersistentPreRun(E)
+		// (cobra would run only the nearest one); TestGateEveryCommand checks
+		// every command in the tree is refused without a valid token.
+		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+			if exemptFromGate(cmd) {
+				return nil
+			}
+			if err := e.gate(); err != nil {
+				// One line, printed once by main; no usage block.
+				cmd.SilenceUsage = true
+				cmd.SilenceErrors = true
+				return err
+			}
+			return nil
+		},
 	}
 
 	root.AddCommand(
@@ -47,19 +150,10 @@ func Execute() error {
 		resizeDiskCmd(),
 		addDiskCmd(),
 		metalCmd(),
-		serverCmd(cwdDir),
-		configCmd(cwdDir),
+		serverCmd(e),
+		configCmd(func() (string, error) { return e.dir, nil }),
 	)
-
-	err := root.Execute()
-	if err == nil {
-		return nil
-	}
-	var remote remoteExitError
-	if errors.As(err, &remote) {
-		os.Exit(remote.code)
-	}
-	return err
+	return root
 }
 
 // remoteExitError is a remote command's exit status. Execute exits with
@@ -724,46 +818,28 @@ guest sees a raw block device; it is not partitioned or formatted.
 	return cmd
 }
 
-// serverFromConfig builds the server from dir/config.yml. No config.yml is
-// allowed (transitional, loopback plain HTTP only); an invalid one is an
-// error. listen overrides config.yml listen only when the flag was set.
-func serverFromConfig(dir, listen string, listenSet bool) (*server.Server, error) {
-	s := &server.Server{}
+// serverFrom builds the server from the config.yml the gate loaded. listen
+// overrides config.yml listen only when the flag was set.
+func serverFrom(cfg *config.Config, listen string, listenSet bool) *server.Server {
+	s := &server.Server{Config: cfg}
 	if listenSet {
 		s.Listen = listen
 	}
-	c, err := config.Load(dir)
-	switch {
-	case errors.Is(err, config.ErrNotFound):
-	case err != nil:
-		return nil, err
-	default:
-		s.Config = c
-	}
-	return s, nil
+	return s
 }
 
-func serverCmd(dirFn func() (string, error)) *cobra.Command {
+func serverCmd(e *env) *cobra.Command {
 	var listen string
 	cmd := &cobra.Command{
 		Use:   "server",
 		Short: "Start the REST API server",
-		Long: `Start the vmtool REST API, reading config.yml from the working directory.
-Every route except GET /, /openapi.yaml and /openapi.json needs
-"Authorization: Bearer <token>" (checked against token_sha256). HTTPS is
-served when config.yml sets tls_cert and tls_key. The server refuses to bind
-off loopback unless TLS and token_sha256 are configured. Listen address:
---listen if given, else config.yml listen, else 127.0.0.1:9473.`,
+		Long: `Start the vmtool REST API over HTTPS, reading config.yml from the working
+directory. config.yml must set tls_cert, tls_key and token_sha256. Every route
+except GET /, /openapi.yaml and /openapi.json needs
+"Authorization: Bearer <token>" (checked against token_sha256). Listen
+address: --listen if given, else config.yml listen, else 127.0.0.1:9473.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			dir, err := dirFn()
-			if err != nil {
-				return err
-			}
-			s, err := serverFromConfig(dir, listen, cmd.Flags().Changed("listen"))
-			if err != nil {
-				return err
-			}
-			return s.ListenAndServe()
+			return serverFrom(e.cfg, listen, cmd.Flags().Changed("listen")).ListenAndServe()
 		},
 	}
 	cmd.Flags().StringVar(&listen, "listen", config.DefaultListen, "address to listen on (overrides config.yml listen)")

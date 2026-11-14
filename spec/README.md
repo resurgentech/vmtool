@@ -52,11 +52,9 @@ carries exactly one `Authorization: Bearer <token>` whose SHA-256 matches
 the body is read or any handler runs. Neither the header nor the token is
 logged. `TestAuthEveryOperation` walks every operation in the spec.
 
-`vmtool server` serves HTTPS when `config.yml` sets `tls_cert` and `tls_key`
-(TLS 1.2+), refuses to start if `config.yml` lacks `token_sha256` or sets only
-one of the TLS paths, and refuses to bind off loopback unless TLS and the hash
-are configured. Transitional (until T5): with no `config.yml` it serves plain
-HTTP on loopback only, with no authentication, and logs a warning.
+`vmtool server` serves HTTPS only (TLS 1.2+), on loopback too: it refuses to
+start unless `config.yml` sets `token_sha256`, `tls_cert` and `tls_key`. There
+is no plain-HTTP or unauthenticated mode.
 
 ## URL versioning
 

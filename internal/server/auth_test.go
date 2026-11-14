@@ -325,15 +325,13 @@ func TestHTTPServerRules(t *testing.T) {
 		wantTLS bool
 		addr    string
 	}{
-		{name: "no config loopback", s: &Server{Listen: "127.0.0.1:9473"}, addr: "127.0.0.1:9473"},
-		{name: "no config default", s: &Server{}, addr: "127.0.0.1:9473"},
-		{name: "no config localhost", s: &Server{Listen: "localhost:9473"}, addr: "localhost:9473"},
-		{name: "no config ::1", s: &Server{Listen: "[::1]:9473"}, addr: "[::1]:9473"},
-		{name: "no config 0.0.0.0", s: &Server{Listen: "0.0.0.0:9473"}, wantErr: "loopback"},
-		{name: "no config empty host", s: &Server{Listen: ":9473"}, wantErr: "loopback"},
-		{name: "no config ::", s: &Server{Listen: "[::]:9473"}, wantErr: "loopback"},
-		{name: "no config lan ip", s: &Server{Listen: "10.0.0.5:9473"}, wantErr: "loopback"},
-		{name: "hash only loopback", s: &Server{Config: &config.Config{Dir: dir, Listen: "127.0.0.1:9473", TokenSHA256: hash}}, addr: "127.0.0.1:9473"},
+		{name: "no config loopback", s: &Server{Listen: "127.0.0.1:9473"}, wantErr: "config.yml"},
+		{name: "no config default", s: &Server{}, wantErr: "config.yml"},
+		{name: "no config ::1", s: &Server{Listen: "[::1]:9473"}, wantErr: "config.yml"},
+		{name: "no config 0.0.0.0", s: &Server{Listen: "0.0.0.0:9473"}, wantErr: "config.yml"},
+		{name: "empty config", s: &Server{Config: &config.Config{Dir: dir}}, wantErr: "token_sha256"},
+		{name: "hash only loopback", s: &Server{Config: &config.Config{Dir: dir, Listen: "127.0.0.1:9473", TokenSHA256: hash}}, wantErr: "tls"},
+		{name: "hash only localhost", s: &Server{Config: &config.Config{Dir: dir, Listen: "localhost:9473", TokenSHA256: hash}}, wantErr: "tls"},
 		{name: "hash only off loopback", s: &Server{Config: &config.Config{Dir: dir, Listen: "0.0.0.0:9473", TokenSHA256: hash}}, wantErr: "tls"},
 		{name: "tls no hash loopback", s: &Server{Config: &config.Config{Dir: dir, Listen: "127.0.0.1:9473", TLSCert: "tls/test.crt", TLSKey: "tls/test.key"}}, wantErr: "token_sha256"},
 		{name: "tls no hash off loopback", s: &Server{Config: &config.Config{Dir: dir, Listen: "0.0.0.0:9473", TLSCert: "tls/test.crt", TLSKey: "tls/test.key"}}, wantErr: "token_sha256"},
@@ -344,7 +342,7 @@ func TestHTTPServerRules(t *testing.T) {
 		{name: "tls loopback", s: &Server{Config: tlsCfg("127.0.0.1:9473")}, wantTLS: true, addr: "127.0.0.1:9473"},
 		{name: "flag overrides config", s: &Server{Listen: "127.0.0.1:1234", Config: tlsCfg("0.0.0.0:9473")}, wantTLS: true, addr: "127.0.0.1:1234"},
 		{name: "flag off loopback refused", s: &Server{Listen: "0.0.0.0:1234", Config: &config.Config{Dir: dir, Listen: "127.0.0.1:9473", TokenSHA256: hash}}, wantErr: "tls"},
-		{name: "config empty listen", s: &Server{Config: &config.Config{Dir: dir, TokenSHA256: hash}}, addr: "127.0.0.1:9473"},
+		{name: "config empty listen", s: &Server{Config: tlsCfg("")}, wantTLS: true, addr: "127.0.0.1:9473"},
 	} {
 		srv, err := tc.s.httpServer()
 		if tc.wantErr != "" {
@@ -373,28 +371,37 @@ func TestHTTPServerRules(t *testing.T) {
 	}
 }
 
-func TestPlainHTTPWarns(t *testing.T) {
-	buf := captureSlog(t)
-	if _, err := (&Server{Listen: "127.0.0.1:9473"}).httpServer(); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(buf.String(), "level=WARN") {
-		t.Fatalf("no warning for plain HTTP without config.yml:\n%s", buf.String())
+// With no Config, the handler authenticates nothing (there is no unauthenticated mode).
+func TestAuthNilConfigRejects(t *testing.T) {
+	h := (&Server{}).Handler()
+	r := httptest.NewRequest(http.MethodGet, "/metal", nil)
+	r.Header.Set("Authorization", "Bearer "+testToken)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, r)
+	check401(t, rec, "nil config", testToken)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/openapi.yaml", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("public route with nil config: %d", rec.Code)
 	}
 }
 
-func TestListenAndServeRefusesOffLoopback(t *testing.T) {
-	done := make(chan error, 1)
-	// 192.0.2.1 (TEST-NET-1) is never local, so nothing can bind even if the
-	// check were missing; the error text tells the two failures apart.
-	go func() { done <- (&Server{Listen: "192.0.2.1:9473"}).ListenAndServe() }()
-	select {
-	case err := <-done:
-		if err == nil || !strings.Contains(err.Error(), "loopback") {
-			t.Fatalf("err %v, want loopback refusal", err)
+func TestListenAndServeRefusesWithoutTLS(t *testing.T) {
+	dir := t.TempDir()
+	for _, s := range []*Server{
+		{Listen: "127.0.0.1:0"},
+		{Listen: "127.0.0.1:0", Config: &config.Config{Dir: dir, TokenSHA256: config.Hash(testToken)}},
+	} {
+		done := make(chan error, 1)
+		go func() { done <- s.ListenAndServe() }()
+		select {
+		case err := <-done:
+			if err == nil || !strings.Contains(strings.ToLower(err.Error()), "tls") {
+				t.Fatalf("config %+v: err %v, want a TLS refusal", s.Config, err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("ListenAndServe served without TLS")
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("ListenAndServe did not return")
 	}
 }
 
@@ -460,17 +467,5 @@ func TestServeTLS(t *testing.T) {
 	if res, err := old.Get(base + "/openapi.yaml"); err == nil {
 		res.Body.Close()
 		t.Error("TLS 1.1 handshake succeeded")
-	}
-}
-
-func TestIsLoopback(t *testing.T) {
-	for addr, want := range map[string]bool{
-		"127.0.0.1:9473": true, "localhost:9473": true, "[::1]:9473": true,
-		"0.0.0.0:9473": false, "[::]:9473": false, ":9473": false, "": false,
-		"10.0.0.5:9473": false, "example.com:9473": false,
-	} {
-		if got := isLoopback(addr); got != want {
-			t.Errorf("isLoopback(%q) = %v, want %v", addr, got, want)
-		}
 	}
 }

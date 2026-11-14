@@ -37,3 +37,18 @@ are appended, never edited in; a hook refuses rewrites.
   constant-time Check, Verify, atomic 0600 Write); `vmtool config write` and
   `vmtool config host`; `config.example.yml`; `.gitignore` entries.
 - Commits: 68d05a6
+
+## 2026-11-14 — T3 HTTPS, bearer auth and the bind rule for `vmtool server`
+
+- Spec: `bearerAuth` global, `security: []` on the three docs routes, 401
+  everywhere else. Server: spec-derived public set, constant-time token
+  check before body/handlers, TLS from config.yml, no off-loopback bind
+  without TLS + hash. AGENTS.md rule 5 rewritten.
+- Commits: f935909
+
+## 2026-11-14 — T4 `just cert` and `just install`
+
+- `scripts/cert.sh` (CA key only via process substitution; remote copy over
+  scp), `scripts/install.sh`, `deploy/vmtool.service.in`; tests with a real
+  throwaway CA and stub bao/scp/ssh/sudo/systemctl.
+- Commits: 9f7b5ab

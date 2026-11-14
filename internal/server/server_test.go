@@ -10,8 +10,7 @@ import (
 )
 
 func TestDocsRoot(t *testing.T) {
-	s := &Server{Listen: "127.0.0.1:9473"}
-	ts := httptest.NewServer(s.Handler())
+	ts := httptest.NewServer(authedServer().Handler())
 	t.Cleanup(ts.Close)
 
 	res, err := http.Get(ts.URL + "/")
@@ -56,7 +55,9 @@ func TestDocsRoot(t *testing.T) {
 		t.Fatalf("yaml prefix: %q", string(yb[:40]))
 	}
 
-	res, err = http.Get(ts.URL + "/nope")
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/nope", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	res, err = http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
