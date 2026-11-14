@@ -37,6 +37,27 @@ generated mux (see `docs/design/spec-first.md` PR 3).
 |---|---|
 | *(empty)* | No routes are outside the spec. If oapi-codegen v2.4.1 emits a catch-all `GET /` that maps `/nope` to docs, move `getDocs` / `getOpenAPISpec` off the generated mux and record them here. |
 
+## Security
+
+Global `security: [bearerAuth]` (`components.securitySchemes.bearerAuth`,
+HTTP bearer). Only `getDocs`, `getOpenAPISpec` and `getOpenAPIJSON` set
+`security: []`; every other operation lists `401` (`components.responses.Unauthorized`).
+
+The server derives the exempt routes from the embedded spec at startup
+(`internal/server/auth.go`), not from a hand-written list: an operation is
+public only if its effective `security` is empty. Every other request,
+including unknown paths, gets `401` with `WWW-Authenticate: Bearer` unless it
+carries exactly one `Authorization: Bearer <token>` whose SHA-256 matches
+`token_sha256` in `config.yml` (constant-time compare). The check runs before
+the body is read or any handler runs. Neither the header nor the token is
+logged. `TestAuthEveryOperation` walks every operation in the spec.
+
+`vmtool server` serves HTTPS when `config.yml` sets `tls_cert` and `tls_key`
+(TLS 1.2+), refuses to start if `config.yml` lacks `token_sha256` or sets only
+one of the TLS paths, and refuses to bind off loopback unless TLS and the hash
+are configured. Transitional (until T5): with no `config.yml` it serves plain
+HTTP on loopback only, with no authentication, and logs a warning.
+
 ## URL versioning
 
 Paths are **unversioned** (`/vms`, `/pools`, …). vmtool is a local single-binary

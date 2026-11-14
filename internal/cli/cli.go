@@ -12,6 +12,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/jaredeh/vmtool/internal/app"
+	"github.com/jaredeh/vmtool/internal/config"
 	"github.com/jaredeh/vmtool/internal/server"
 	"github.com/jaredeh/vmtool/internal/tui"
 	"github.com/jaredeh/vmtool/pkg/vmtool"
@@ -46,7 +47,7 @@ func Execute() error {
 		resizeDiskCmd(),
 		addDiskCmd(),
 		metalCmd(),
-		serverCmd(),
+		serverCmd(cwdDir),
 		configCmd(cwdDir),
 	)
 
@@ -723,19 +724,48 @@ guest sees a raw block device; it is not partitioned or formatted.
 	return cmd
 }
 
-func serverCmd() *cobra.Command {
+// serverFromConfig builds the server from dir/config.yml. No config.yml is
+// allowed (transitional, loopback plain HTTP only); an invalid one is an
+// error. listen overrides config.yml listen only when the flag was set.
+func serverFromConfig(dir, listen string, listenSet bool) (*server.Server, error) {
+	s := &server.Server{}
+	if listenSet {
+		s.Listen = listen
+	}
+	c, err := config.Load(dir)
+	switch {
+	case errors.Is(err, config.ErrNotFound):
+	case err != nil:
+		return nil, err
+	default:
+		s.Config = c
+	}
+	return s, nil
+}
+
+func serverCmd(dirFn func() (string, error)) *cobra.Command {
 	var listen string
 	cmd := &cobra.Command{
 		Use:   "server",
 		Short: "Start the REST API server",
-		Long: `Start an HTTP server that exposes vmtool operations.
-GET / is Swagger UI; GET /openapi.yaml is the spec. Default listen is 127.0.0.1:9473.`,
+		Long: `Start the vmtool REST API, reading config.yml from the working directory.
+Every route except GET /, /openapi.yaml and /openapi.json needs
+"Authorization: Bearer <token>" (checked against token_sha256). HTTPS is
+served when config.yml sets tls_cert and tls_key. The server refuses to bind
+off loopback unless TLS and token_sha256 are configured. Listen address:
+--listen if given, else config.yml listen, else 127.0.0.1:9473.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			s := &server.Server{Listen: listen}
-			fmt.Printf("vmtool API listening on http://%s/\n", listen)
+			dir, err := dirFn()
+			if err != nil {
+				return err
+			}
+			s, err := serverFromConfig(dir, listen, cmd.Flags().Changed("listen"))
+			if err != nil {
+				return err
+			}
 			return s.ListenAndServe()
 		},
 	}
-	cmd.Flags().StringVar(&listen, "listen", "127.0.0.1:9473", "address to listen on")
+	cmd.Flags().StringVar(&listen, "listen", config.DefaultListen, "address to listen on (overrides config.yml listen)")
 	return cmd
 }

@@ -30,3 +30,10 @@ are appended, never edited in; a hook refuses rewrites.
 - `scripts/token.sh` (generate | fetch), `.env` written atomically 0600, token
   to OpenBao on stdin only; `scripts/scripts_test.go` with stub `bao`.
 - Commits: 4f07993
+
+## 2026-11-14 — T1 config.yml and token loading
+
+- `internal/config` (Load/defaults/validation, Token from env or .env,
+  constant-time Check, Verify, atomic 0600 Write); `vmtool config write` and
+  `vmtool config host`; `config.example.yml`; `.gitignore` entries.
+- Commits: 68d05a6

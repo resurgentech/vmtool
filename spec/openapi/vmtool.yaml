@@ -7,16 +7,24 @@ info:
     embedded spec, and a test client are generated from this file. Metal and
     alien machines (/metal) are SSH/Ansible targets registered in
     .machines/<name>/machine.yml, not libvirt domains. CLI `vmtool ssh` and
-    TUI `t` exec ssh locally. Default bind is 127.0.0.1:9473, no auth.
+    TUI `t` exec ssh locally. Default bind is 127.0.0.1:9473. Every operation
+    except the docs routes (/, /openapi.yaml, /openapi.json) requires
+    `Authorization: Bearer <token>`; the server checks the token's SHA-256
+    against token_sha256 in config.yml and answers 401 otherwise. The server
+    serves HTTPS when config.yml names tls_cert and tls_key, and refuses to
+    bind off loopback unless TLS and token_sha256 are configured.
     createVM and runPlaybook are synchronous and may run for many minutes; clients must not
     use a short HTTP timeout.
 servers:
   - url: /
+security:
+  - bearerAuth: []
 paths:
   /:
     get:
       operationId: getDocs
       summary: Swagger UI for this API
+      security: []
       description: >
         Interactive OpenAPI reference (Swagger UI) that loads /openapi.yaml.
         The machine-readable contract is GET /openapi.yaml or GET /openapi.json.
@@ -30,6 +38,7 @@ paths:
     get:
       operationId: getOpenAPISpec
       summary: OpenAPI document (YAML)
+      security: []
       responses:
         '200':
           description: the committed spec
@@ -40,6 +49,7 @@ paths:
     get:
       operationId: getOpenAPIJSON
       summary: OpenAPI document (JSON)
+      security: []
       responses:
         '200':
           description: the committed spec as JSON
@@ -58,6 +68,7 @@ paths:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/VMInfo' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '500': { $ref: '#/components/responses/Error' }
     post:
       operationId: createVM
@@ -88,6 +99,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/VMInfo' }
         '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
@@ -103,6 +115,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/VMInfo' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
     delete:
@@ -116,6 +129,7 @@ paths:
           schema: { type: boolean, default: false }
       responses:
         '204': { description: deleted }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
   /vms/{name}/start:
@@ -130,6 +144,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/VMInfo' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
   /vms/{name}/stop:
@@ -144,6 +159,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/VMInfo' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
   /vms/{name}/resume:
@@ -158,6 +174,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/VMInfo' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
   /vms/{name}/poweroff:
@@ -172,6 +189,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/VMInfo' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
   /vms/{name}/reboot:
@@ -190,6 +208,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/VMInfo' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
   /vms/{name}/autostart:
@@ -210,6 +229,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/VMInfo' }
         '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
   /vms/{name}/cmd:
@@ -233,6 +253,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/CmdResult' }
         '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
@@ -258,6 +279,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/PlaybookResult' }
         '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
         '500':
@@ -283,6 +305,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/VMInfo' }
         '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
   /vms/{name}/resize-disk:
@@ -303,6 +326,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ResizeDiskResult' }
         '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
   /vms/{name}/add-disk:
@@ -331,6 +355,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/AddDiskResult' }
         '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
   /networks:
@@ -343,6 +368,7 @@ paths:
           content:
             application/json:
               schema: { type: array, items: { type: string } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '500': { $ref: '#/components/responses/Error' }
   /bridges:
     get:
@@ -354,6 +380,7 @@ paths:
           content:
             application/json:
               schema: { type: array, items: { type: string } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '500': { $ref: '#/components/responses/Error' }
   /images:
     get:
@@ -369,6 +396,7 @@ paths:
                 additionalProperties:
                   type: array
                   items: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '500': { $ref: '#/components/responses/Error' }
   /images/{name}:
     delete:
@@ -385,6 +413,7 @@ paths:
           schema: { type: string, default: default }
       responses:
         '204': { description: deleted }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
   /pools:
@@ -399,6 +428,7 @@ paths:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/PoolInfo' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '500': { $ref: '#/components/responses/Error' }
     post:
       operationId: createPool
@@ -415,6 +445,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/CreatePoolResult' }
         '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '500': { $ref: '#/components/responses/Error' }
   /playbooks:
     get:
@@ -426,6 +457,7 @@ paths:
           content:
             application/json:
               schema: { type: array, items: { type: string } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '500': { $ref: '#/components/responses/Error' }
 
   /metal:
@@ -444,6 +476,7 @@ paths:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/MachineInfo' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '500': { $ref: '#/components/responses/Error' }
     post:
       operationId: addMachine
@@ -475,6 +508,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/MachineInfo' }
         '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '409': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
         '502': { $ref: '#/components/responses/Error' }
@@ -490,6 +524,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/MachineInfo' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
     delete:
@@ -500,6 +535,7 @@ paths:
         changed on the machine itself; the bot user and its key stay there.
       responses:
         '204': { description: removed }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
   /metal/{name}/reboot:
@@ -518,6 +554,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/MachineInfo' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
         '502': { $ref: '#/components/responses/Error' }
@@ -542,6 +579,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/CmdResult' }
         '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
         '502': { $ref: '#/components/responses/Error' }
@@ -571,6 +609,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/PlaybookResult' }
         '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500':
           description: ansible or orchestration failed
@@ -579,6 +618,13 @@ paths:
               schema: { $ref: '#/components/schemas/PlaybookResult' }
 
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: >
+        The shared VMTOOL_TOKEN. The server stores only its SHA-256
+        (token_sha256 in config.yml) and compares in constant time.
   parameters:
     VMName:
       name: name
@@ -593,6 +639,16 @@ components:
   responses:
     Error:
       description: error
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: >
+        Missing or invalid bearer token. Sent with `WWW-Authenticate: Bearer`.
+        The body never echoes the presented token.
+      headers:
+        WWW-Authenticate:
+          schema: { type: string }
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }

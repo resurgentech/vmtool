@@ -8,7 +8,7 @@
 2. **One workflow layer.** CLI, TUI, and REST call `internal/app`. Do not reimplement create / playbook / resize / lifecycle in a surface. `pkg/vmtool` stays primitives (libvirt, ansible, SSH, inventory).
 3. **Secrets.** Never commit `.machines/`, guest passwords, or SSH private keys. Do not log `ssh_pass` or request bodies.
 4. **Generated artifacts.** `internal/api/api.gen.go` is produced by oapi-codegen. Regenerate; do not patch.
-5. **Loopback REST.** Default bind is `127.0.0.1:9473` with no auth. Binding off-loopback is unsupported.
+5. **Loopback REST.** Default bind is `127.0.0.1:9473`. Every request needs the bearer token. The server refuses to bind off loopback unless TLS and `token_sha256` are configured in `config.yml`.
 
 ## Spec-first change procedure
 

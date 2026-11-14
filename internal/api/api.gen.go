@@ -25,6 +25,10 @@ import (
 	strictnethttp "github.com/oapi-codegen/runtime/strictmiddleware/nethttp"
 )
 
+const (
+	BearerAuthScopes = "bearerAuth.Scopes"
+)
+
 // Defines values for AddMachineRequestKind.
 const (
 	AddMachineRequestKindAlien AddMachineRequestKind = "alien"
@@ -270,6 +274,9 @@ type MachineName = string
 
 // VMName defines model for VMName.
 type VMName = string
+
+// Unauthorized defines model for Unauthorized.
+type Unauthorized = Error
 
 // DeleteImageParams defines parameters for DeleteImage.
 type DeleteImageParams struct {
@@ -2394,6 +2401,7 @@ type ListBridgesResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *[]string
+	JSON401      *Unauthorized
 	JSON500      *Error
 }
 
@@ -2417,6 +2425,7 @@ type ListImagesResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *map[string][]string
+	JSON401      *Unauthorized
 	JSON500      *Error
 }
 
@@ -2439,6 +2448,7 @@ func (r ListImagesResponse) StatusCode() int {
 type DeleteImageResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	JSON401      *Unauthorized
 	JSON404      *Error
 	JSON500      *Error
 }
@@ -2463,6 +2473,7 @@ type ListMachinesResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *[]MachineInfo
+	JSON401      *Unauthorized
 	JSON500      *Error
 }
 
@@ -2487,6 +2498,7 @@ type AddMachineResponse struct {
 	HTTPResponse *http.Response
 	JSON201      *MachineInfo
 	JSON400      *Error
+	JSON401      *Unauthorized
 	JSON409      *Error
 	JSON500      *Error
 	JSON502      *Error
@@ -2511,6 +2523,7 @@ func (r AddMachineResponse) StatusCode() int {
 type RemoveMachineResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	JSON401      *Unauthorized
 	JSON404      *Error
 	JSON500      *Error
 }
@@ -2535,6 +2548,7 @@ type GetMachineResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *MachineInfo
+	JSON401      *Unauthorized
 	JSON404      *Error
 	JSON500      *Error
 }
@@ -2560,6 +2574,7 @@ type RunMachineCommandResponse struct {
 	HTTPResponse *http.Response
 	JSON200      *CmdResult
 	JSON400      *Error
+	JSON401      *Unauthorized
 	JSON404      *Error
 	JSON500      *Error
 	JSON502      *Error
@@ -2586,6 +2601,7 @@ type RunMachinePlaybookResponse struct {
 	HTTPResponse *http.Response
 	JSON200      *PlaybookResult
 	JSON400      *Error
+	JSON401      *Unauthorized
 	JSON404      *Error
 	JSON500      *PlaybookResult
 }
@@ -2610,6 +2626,7 @@ type RebootMachineResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *MachineInfo
+	JSON401      *Unauthorized
 	JSON404      *Error
 	JSON500      *Error
 	JSON502      *Error
@@ -2635,6 +2652,7 @@ type ListNetworksResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *[]string
+	JSON401      *Unauthorized
 	JSON500      *Error
 }
 
@@ -2702,6 +2720,7 @@ type ListPlaybooksResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *[]string
+	JSON401      *Unauthorized
 	JSON500      *Error
 }
 
@@ -2725,6 +2744,7 @@ type ListPoolsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *[]PoolInfo
+	JSON401      *Unauthorized
 	JSON500      *Error
 }
 
@@ -2749,6 +2769,7 @@ type CreatePoolResponse struct {
 	HTTPResponse *http.Response
 	JSON201      *CreatePoolResult
 	JSON400      *Error
+	JSON401      *Unauthorized
 	JSON500      *Error
 }
 
@@ -2772,6 +2793,7 @@ type ListVMsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *[]VMInfo
+	JSON401      *Unauthorized
 	JSON500      *Error
 }
 
@@ -2796,6 +2818,7 @@ type CreateVMResponse struct {
 	HTTPResponse *http.Response
 	JSON201      *VMInfo
 	JSON400      *Error
+	JSON401      *Unauthorized
 	JSON404      *Error
 	JSON409      *Error
 	JSON500      *Error
@@ -2820,6 +2843,7 @@ func (r CreateVMResponse) StatusCode() int {
 type DeleteVMResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	JSON401      *Unauthorized
 	JSON404      *Error
 	JSON500      *Error
 }
@@ -2844,6 +2868,7 @@ type GetVMResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *VMInfo
+	JSON401      *Unauthorized
 	JSON404      *Error
 	JSON500      *Error
 }
@@ -2869,6 +2894,7 @@ type AddDiskResponse struct {
 	HTTPResponse *http.Response
 	JSON200      *AddDiskResult
 	JSON400      *Error
+	JSON401      *Unauthorized
 	JSON404      *Error
 	JSON500      *Error
 }
@@ -2894,6 +2920,7 @@ type SetAutostartResponse struct {
 	HTTPResponse *http.Response
 	JSON200      *VMInfo
 	JSON400      *Error
+	JSON401      *Unauthorized
 	JSON404      *Error
 	JSON500      *Error
 }
@@ -2919,6 +2946,7 @@ type RunVMCommandResponse struct {
 	HTTPResponse *http.Response
 	JSON200      *CmdResult
 	JSON400      *Error
+	JSON401      *Unauthorized
 	JSON404      *Error
 	JSON409      *Error
 	JSON500      *Error
@@ -2946,6 +2974,7 @@ type MigrateDiskResponse struct {
 	HTTPResponse *http.Response
 	JSON200      *VMInfo
 	JSON400      *Error
+	JSON401      *Unauthorized
 	JSON404      *Error
 	JSON500      *Error
 }
@@ -2971,6 +3000,7 @@ type RunPlaybookResponse struct {
 	HTTPResponse *http.Response
 	JSON200      *PlaybookResult
 	JSON400      *Error
+	JSON401      *Unauthorized
 	JSON404      *Error
 	JSON409      *Error
 	JSON500      *PlaybookResult
@@ -2996,6 +3026,7 @@ type PoweroffVMResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *VMInfo
+	JSON401      *Unauthorized
 	JSON404      *Error
 	JSON500      *Error
 }
@@ -3020,6 +3051,7 @@ type RebootVMResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *VMInfo
+	JSON401      *Unauthorized
 	JSON404      *Error
 	JSON500      *Error
 }
@@ -3045,6 +3077,7 @@ type ResizeDiskResponse struct {
 	HTTPResponse *http.Response
 	JSON200      *ResizeDiskResult
 	JSON400      *Error
+	JSON401      *Unauthorized
 	JSON404      *Error
 	JSON500      *Error
 }
@@ -3069,6 +3102,7 @@ type ResumeVMResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *VMInfo
+	JSON401      *Unauthorized
 	JSON404      *Error
 	JSON500      *Error
 }
@@ -3093,6 +3127,7 @@ type StartVMResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *VMInfo
+	JSON401      *Unauthorized
 	JSON404      *Error
 	JSON500      *Error
 }
@@ -3117,6 +3152,7 @@ type StopVMResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *VMInfo
+	JSON401      *Unauthorized
 	JSON404      *Error
 	JSON500      *Error
 }
@@ -3550,6 +3586,13 @@ func ParseListBridgesResponse(rsp *http.Response) (*ListBridgesResponse, error) 
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -3583,6 +3626,13 @@ func ParseListImagesResponse(rsp *http.Response) (*ListImagesResponse, error) {
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -3609,6 +3659,13 @@ func ParseDeleteImageResponse(rsp *http.Response) (*DeleteImageResponse, error) 
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -3648,6 +3705,13 @@ func ParseListMachinesResponse(rsp *http.Response) (*ListMachinesResponse, error
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest Error
@@ -3689,6 +3753,13 @@ func ParseAddMachineResponse(rsp *http.Response) (*AddMachineResponse, error) {
 		}
 		response.JSON400 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -3729,6 +3800,13 @@ func ParseRemoveMachineResponse(rsp *http.Response) (*RemoveMachineResponse, err
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -3768,6 +3846,13 @@ func ParseGetMachineResponse(rsp *http.Response) (*GetMachineResponse, error) {
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest Error
@@ -3815,6 +3900,13 @@ func ParseRunMachineCommandResponse(rsp *http.Response) (*RunMachineCommandRespo
 			return nil, err
 		}
 		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest Error
@@ -3870,6 +3962,13 @@ func ParseRunMachinePlaybookResponse(rsp *http.Response) (*RunMachinePlaybookRes
 		}
 		response.JSON400 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -3909,6 +4008,13 @@ func ParseRebootMachineResponse(rsp *http.Response) (*RebootMachineResponse, err
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest Error
@@ -3956,6 +4062,13 @@ func ParseListNetworksResponse(rsp *http.Response) (*ListNetworksResponse, error
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest Error
@@ -4042,6 +4155,13 @@ func ParseListPlaybooksResponse(rsp *http.Response) (*ListPlaybooksResponse, err
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -4074,6 +4194,13 @@ func ParseListPoolsResponse(rsp *http.Response) (*ListPoolsResponse, error) {
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest Error
@@ -4115,6 +4242,13 @@ func ParseCreatePoolResponse(rsp *http.Response) (*CreatePoolResponse, error) {
 		}
 		response.JSON400 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -4147,6 +4281,13 @@ func ParseListVMsResponse(rsp *http.Response) (*ListVMsResponse, error) {
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest Error
@@ -4188,6 +4329,13 @@ func ParseCreateVMResponse(rsp *http.Response) (*CreateVMResponse, error) {
 		}
 		response.JSON400 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -4228,6 +4376,13 @@ func ParseDeleteVMResponse(rsp *http.Response) (*DeleteVMResponse, error) {
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -4267,6 +4422,13 @@ func ParseGetVMResponse(rsp *http.Response) (*GetVMResponse, error) {
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest Error
@@ -4315,6 +4477,13 @@ func ParseAddDiskResponse(rsp *http.Response) (*AddDiskResponse, error) {
 		}
 		response.JSON400 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -4362,6 +4531,13 @@ func ParseSetAutostartResponse(rsp *http.Response) (*SetAutostartResponse, error
 		}
 		response.JSON400 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -4408,6 +4584,13 @@ func ParseRunVMCommandResponse(rsp *http.Response) (*RunVMCommandResponse, error
 			return nil, err
 		}
 		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest Error
@@ -4470,6 +4653,13 @@ func ParseMigrateDiskResponse(rsp *http.Response) (*MigrateDiskResponse, error) 
 		}
 		response.JSON400 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -4516,6 +4706,13 @@ func ParseRunPlaybookResponse(rsp *http.Response) (*RunPlaybookResponse, error) 
 			return nil, err
 		}
 		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest Error
@@ -4564,6 +4761,13 @@ func ParsePoweroffVMResponse(rsp *http.Response) (*PoweroffVMResponse, error) {
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -4603,6 +4807,13 @@ func ParseRebootVMResponse(rsp *http.Response) (*RebootVMResponse, error) {
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest Error
@@ -4651,6 +4862,13 @@ func ParseResizeDiskResponse(rsp *http.Response) (*ResizeDiskResponse, error) {
 		}
 		response.JSON400 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -4690,6 +4908,13 @@ func ParseResumeVMResponse(rsp *http.Response) (*ResumeVMResponse, error) {
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest Error
@@ -4731,6 +4956,13 @@ func ParseStartVMResponse(rsp *http.Response) (*StartVMResponse, error) {
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -4770,6 +5002,13 @@ func ParseStopVMResponse(rsp *http.Response) (*StopVMResponse, error) {
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest Error
@@ -4916,6 +5155,12 @@ func (siw *ServerInterfaceWrapper) GetDocs(w http.ResponseWriter, r *http.Reques
 // ListBridges operation middleware
 func (siw *ServerInterfaceWrapper) ListBridges(w http.ResponseWriter, r *http.Request) {
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ListBridges(w, r)
 	}))
@@ -4929,6 +5174,12 @@ func (siw *ServerInterfaceWrapper) ListBridges(w http.ResponseWriter, r *http.Re
 
 // ListImages operation middleware
 func (siw *ServerInterfaceWrapper) ListImages(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ListImages(w, r)
@@ -4955,6 +5206,12 @@ func (siw *ServerInterfaceWrapper) DeleteImage(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	// Parameter object where we will unmarshal all parameters from the context
 	var params DeleteImageParams
 
@@ -4980,6 +5237,12 @@ func (siw *ServerInterfaceWrapper) DeleteImage(w http.ResponseWriter, r *http.Re
 // ListMachines operation middleware
 func (siw *ServerInterfaceWrapper) ListMachines(w http.ResponseWriter, r *http.Request) {
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ListMachines(w, r)
 	}))
@@ -4993,6 +5256,12 @@ func (siw *ServerInterfaceWrapper) ListMachines(w http.ResponseWriter, r *http.R
 
 // AddMachine operation middleware
 func (siw *ServerInterfaceWrapper) AddMachine(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.AddMachine(w, r)
@@ -5019,6 +5288,12 @@ func (siw *ServerInterfaceWrapper) RemoveMachine(w http.ResponseWriter, r *http.
 		return
 	}
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RemoveMachine(w, r, name)
 	}))
@@ -5043,6 +5318,12 @@ func (siw *ServerInterfaceWrapper) GetMachine(w http.ResponseWriter, r *http.Req
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
 		return
 	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetMachine(w, r, name)
@@ -5069,6 +5350,12 @@ func (siw *ServerInterfaceWrapper) RunMachineCommand(w http.ResponseWriter, r *h
 		return
 	}
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RunMachineCommand(w, r, name)
 	}))
@@ -5093,6 +5380,12 @@ func (siw *ServerInterfaceWrapper) RunMachinePlaybook(w http.ResponseWriter, r *
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
 		return
 	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RunMachinePlaybook(w, r, name)
@@ -5119,6 +5412,12 @@ func (siw *ServerInterfaceWrapper) RebootMachine(w http.ResponseWriter, r *http.
 		return
 	}
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RebootMachine(w, r, name)
 	}))
@@ -5132,6 +5431,12 @@ func (siw *ServerInterfaceWrapper) RebootMachine(w http.ResponseWriter, r *http.
 
 // ListNetworks operation middleware
 func (siw *ServerInterfaceWrapper) ListNetworks(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ListNetworks(w, r)
@@ -5175,6 +5480,12 @@ func (siw *ServerInterfaceWrapper) GetOpenAPISpec(w http.ResponseWriter, r *http
 // ListPlaybooks operation middleware
 func (siw *ServerInterfaceWrapper) ListPlaybooks(w http.ResponseWriter, r *http.Request) {
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ListPlaybooks(w, r)
 	}))
@@ -5188,6 +5499,12 @@ func (siw *ServerInterfaceWrapper) ListPlaybooks(w http.ResponseWriter, r *http.
 
 // ListPools operation middleware
 func (siw *ServerInterfaceWrapper) ListPools(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ListPools(w, r)
@@ -5203,6 +5520,12 @@ func (siw *ServerInterfaceWrapper) ListPools(w http.ResponseWriter, r *http.Requ
 // CreatePool operation middleware
 func (siw *ServerInterfaceWrapper) CreatePool(w http.ResponseWriter, r *http.Request) {
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.CreatePool(w, r)
 	}))
@@ -5217,6 +5540,12 @@ func (siw *ServerInterfaceWrapper) CreatePool(w http.ResponseWriter, r *http.Req
 // ListVMs operation middleware
 func (siw *ServerInterfaceWrapper) ListVMs(w http.ResponseWriter, r *http.Request) {
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ListVMs(w, r)
 	}))
@@ -5230,6 +5559,12 @@ func (siw *ServerInterfaceWrapper) ListVMs(w http.ResponseWriter, r *http.Reques
 
 // CreateVM operation middleware
 func (siw *ServerInterfaceWrapper) CreateVM(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.CreateVM(w, r)
@@ -5255,6 +5590,12 @@ func (siw *ServerInterfaceWrapper) DeleteVM(w http.ResponseWriter, r *http.Reque
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
 		return
 	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
 
 	// Parameter object where we will unmarshal all parameters from the context
 	var params DeleteVMParams
@@ -5292,6 +5633,12 @@ func (siw *ServerInterfaceWrapper) GetVM(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetVM(w, r, name)
 	}))
@@ -5316,6 +5663,12 @@ func (siw *ServerInterfaceWrapper) AddDisk(w http.ResponseWriter, r *http.Reques
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
 		return
 	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.AddDisk(w, r, name)
@@ -5342,6 +5695,12 @@ func (siw *ServerInterfaceWrapper) SetAutostart(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.SetAutostart(w, r, name)
 	}))
@@ -5366,6 +5725,12 @@ func (siw *ServerInterfaceWrapper) RunVMCommand(w http.ResponseWriter, r *http.R
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
 		return
 	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RunVMCommand(w, r, name)
@@ -5392,6 +5757,12 @@ func (siw *ServerInterfaceWrapper) MigrateDisk(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.MigrateDisk(w, r, name)
 	}))
@@ -5416,6 +5787,12 @@ func (siw *ServerInterfaceWrapper) RunPlaybook(w http.ResponseWriter, r *http.Re
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
 		return
 	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RunPlaybook(w, r, name)
@@ -5442,6 +5819,12 @@ func (siw *ServerInterfaceWrapper) PoweroffVM(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PoweroffVM(w, r, name)
 	}))
@@ -5466,6 +5849,12 @@ func (siw *ServerInterfaceWrapper) RebootVM(w http.ResponseWriter, r *http.Reque
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
 		return
 	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RebootVM(w, r, name)
@@ -5492,6 +5881,12 @@ func (siw *ServerInterfaceWrapper) ResizeDisk(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ResizeDisk(w, r, name)
 	}))
@@ -5516,6 +5911,12 @@ func (siw *ServerInterfaceWrapper) ResumeVM(w http.ResponseWriter, r *http.Reque
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
 		return
 	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ResumeVM(w, r, name)
@@ -5542,6 +5943,12 @@ func (siw *ServerInterfaceWrapper) StartVM(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.StartVM(w, r, name)
 	}))
@@ -5566,6 +5973,12 @@ func (siw *ServerInterfaceWrapper) StopVM(w http.ResponseWriter, r *http.Request
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
 		return
 	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.StopVM(w, r, name)
@@ -5736,6 +6149,15 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 
 type ErrorJSONResponse Error
 
+type UnauthorizedResponseHeaders struct {
+	WWWAuthenticate string
+}
+type UnauthorizedJSONResponse struct {
+	Body Error
+
+	Headers UnauthorizedResponseHeaders
+}
+
 type GetDocsRequestObject struct {
 }
 
@@ -5778,6 +6200,16 @@ func (response ListBridges200JSONResponse) VisitListBridgesResponse(w http.Respo
 	return json.NewEncoder(w).Encode(response)
 }
 
+type ListBridges401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response ListBridges401JSONResponse) VisitListBridgesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
 type ListBridges500JSONResponse struct{ ErrorJSONResponse }
 
 func (response ListBridges500JSONResponse) VisitListBridgesResponse(w http.ResponseWriter) error {
@@ -5801,6 +6233,16 @@ func (response ListImages200JSONResponse) VisitListImagesResponse(w http.Respons
 	w.WriteHeader(200)
 
 	return json.NewEncoder(w).Encode(response)
+}
+
+type ListImages401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response ListImages401JSONResponse) VisitListImagesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type ListImages500JSONResponse struct{ ErrorJSONResponse }
@@ -5827,6 +6269,16 @@ type DeleteImage204Response struct {
 func (response DeleteImage204Response) VisitDeleteImageResponse(w http.ResponseWriter) error {
 	w.WriteHeader(204)
 	return nil
+}
+
+type DeleteImage401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response DeleteImage401JSONResponse) VisitDeleteImageResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type DeleteImage404JSONResponse struct{ ErrorJSONResponse }
@@ -5863,6 +6315,16 @@ func (response ListMachines200JSONResponse) VisitListMachinesResponse(w http.Res
 	return json.NewEncoder(w).Encode(response)
 }
 
+type ListMachines401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response ListMachines401JSONResponse) VisitListMachinesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
 type ListMachines500JSONResponse struct{ ErrorJSONResponse }
 
 func (response ListMachines500JSONResponse) VisitListMachinesResponse(w http.ResponseWriter) error {
@@ -5896,6 +6358,16 @@ func (response AddMachine400JSONResponse) VisitAddMachineResponse(w http.Respons
 	w.WriteHeader(400)
 
 	return json.NewEncoder(w).Encode(response)
+}
+
+type AddMachine401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response AddMachine401JSONResponse) VisitAddMachineResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type AddMachine409JSONResponse Error
@@ -5941,6 +6413,16 @@ func (response RemoveMachine204Response) VisitRemoveMachineResponse(w http.Respo
 	return nil
 }
 
+type RemoveMachine401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response RemoveMachine401JSONResponse) VisitRemoveMachineResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
 type RemoveMachine404JSONResponse struct{ ErrorJSONResponse }
 
 func (response RemoveMachine404JSONResponse) VisitRemoveMachineResponse(w http.ResponseWriter) error {
@@ -5974,6 +6456,16 @@ func (response GetMachine200JSONResponse) VisitGetMachineResponse(w http.Respons
 	w.WriteHeader(200)
 
 	return json.NewEncoder(w).Encode(response)
+}
+
+type GetMachine401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response GetMachine401JSONResponse) VisitGetMachineResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type GetMachine404JSONResponse struct{ ErrorJSONResponse }
@@ -6019,6 +6511,16 @@ func (response RunMachineCommand400JSONResponse) VisitRunMachineCommandResponse(
 	w.WriteHeader(400)
 
 	return json.NewEncoder(w).Encode(response)
+}
+
+type RunMachineCommand401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response RunMachineCommand401JSONResponse) VisitRunMachineCommandResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type RunMachineCommand404JSONResponse Error
@@ -6075,6 +6577,16 @@ func (response RunMachinePlaybook400JSONResponse) VisitRunMachinePlaybookRespons
 	return json.NewEncoder(w).Encode(response)
 }
 
+type RunMachinePlaybook401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response RunMachinePlaybook401JSONResponse) VisitRunMachinePlaybookResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
 type RunMachinePlaybook404JSONResponse Error
 
 func (response RunMachinePlaybook404JSONResponse) VisitRunMachinePlaybookResponse(w http.ResponseWriter) error {
@@ -6108,6 +6620,16 @@ func (response RebootMachine200JSONResponse) VisitRebootMachineResponse(w http.R
 	w.WriteHeader(200)
 
 	return json.NewEncoder(w).Encode(response)
+}
+
+type RebootMachine401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response RebootMachine401JSONResponse) VisitRebootMachineResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type RebootMachine404JSONResponse struct{ ErrorJSONResponse }
@@ -6151,6 +6673,16 @@ func (response ListNetworks200JSONResponse) VisitListNetworksResponse(w http.Res
 	w.WriteHeader(200)
 
 	return json.NewEncoder(w).Encode(response)
+}
+
+type ListNetworks401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response ListNetworks401JSONResponse) VisitListNetworksResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type ListNetworks500JSONResponse struct{ ErrorJSONResponse }
@@ -6220,6 +6752,16 @@ func (response ListPlaybooks200JSONResponse) VisitListPlaybooksResponse(w http.R
 	return json.NewEncoder(w).Encode(response)
 }
 
+type ListPlaybooks401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response ListPlaybooks401JSONResponse) VisitListPlaybooksResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
 type ListPlaybooks500JSONResponse struct{ ErrorJSONResponse }
 
 func (response ListPlaybooks500JSONResponse) VisitListPlaybooksResponse(w http.ResponseWriter) error {
@@ -6243,6 +6785,16 @@ func (response ListPools200JSONResponse) VisitListPoolsResponse(w http.ResponseW
 	w.WriteHeader(200)
 
 	return json.NewEncoder(w).Encode(response)
+}
+
+type ListPools401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response ListPools401JSONResponse) VisitListPoolsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type ListPools500JSONResponse struct{ ErrorJSONResponse }
@@ -6280,6 +6832,16 @@ func (response CreatePool400JSONResponse) VisitCreatePoolResponse(w http.Respons
 	return json.NewEncoder(w).Encode(response)
 }
 
+type CreatePool401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response CreatePool401JSONResponse) VisitCreatePoolResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
 type CreatePool500JSONResponse Error
 
 func (response CreatePool500JSONResponse) VisitCreatePoolResponse(w http.ResponseWriter) error {
@@ -6303,6 +6865,16 @@ func (response ListVMs200JSONResponse) VisitListVMsResponse(w http.ResponseWrite
 	w.WriteHeader(200)
 
 	return json.NewEncoder(w).Encode(response)
+}
+
+type ListVMs401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response ListVMs401JSONResponse) VisitListVMsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type ListVMs500JSONResponse struct{ ErrorJSONResponse }
@@ -6338,6 +6910,16 @@ func (response CreateVM400JSONResponse) VisitCreateVMResponse(w http.ResponseWri
 	w.WriteHeader(400)
 
 	return json.NewEncoder(w).Encode(response)
+}
+
+type CreateVM401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response CreateVM401JSONResponse) VisitCreateVMResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type CreateVM404JSONResponse Error
@@ -6384,6 +6966,16 @@ func (response DeleteVM204Response) VisitDeleteVMResponse(w http.ResponseWriter)
 	return nil
 }
 
+type DeleteVM401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response DeleteVM401JSONResponse) VisitDeleteVMResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
 type DeleteVM404JSONResponse struct{ ErrorJSONResponse }
 
 func (response DeleteVM404JSONResponse) VisitDeleteVMResponse(w http.ResponseWriter) error {
@@ -6417,6 +7009,16 @@ func (response GetVM200JSONResponse) VisitGetVMResponse(w http.ResponseWriter) e
 	w.WriteHeader(200)
 
 	return json.NewEncoder(w).Encode(response)
+}
+
+type GetVM401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response GetVM401JSONResponse) VisitGetVMResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type GetVM404JSONResponse struct{ ErrorJSONResponse }
@@ -6464,6 +7066,16 @@ func (response AddDisk400JSONResponse) VisitAddDiskResponse(w http.ResponseWrite
 	return json.NewEncoder(w).Encode(response)
 }
 
+type AddDisk401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response AddDisk401JSONResponse) VisitAddDiskResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
 type AddDisk404JSONResponse Error
 
 func (response AddDisk404JSONResponse) VisitAddDiskResponse(w http.ResponseWriter) error {
@@ -6509,6 +7121,16 @@ func (response SetAutostart400JSONResponse) VisitSetAutostartResponse(w http.Res
 	return json.NewEncoder(w).Encode(response)
 }
 
+type SetAutostart401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response SetAutostart401JSONResponse) VisitSetAutostartResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
 type SetAutostart404JSONResponse Error
 
 func (response SetAutostart404JSONResponse) VisitSetAutostartResponse(w http.ResponseWriter) error {
@@ -6552,6 +7174,16 @@ func (response RunVMCommand400JSONResponse) VisitRunVMCommandResponse(w http.Res
 	w.WriteHeader(400)
 
 	return json.NewEncoder(w).Encode(response)
+}
+
+type RunVMCommand401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response RunVMCommand401JSONResponse) VisitRunVMCommandResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type RunVMCommand404JSONResponse Error
@@ -6617,6 +7249,16 @@ func (response MigrateDisk400JSONResponse) VisitMigrateDiskResponse(w http.Respo
 	return json.NewEncoder(w).Encode(response)
 }
 
+type MigrateDisk401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response MigrateDisk401JSONResponse) VisitMigrateDiskResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
 type MigrateDisk404JSONResponse Error
 
 func (response MigrateDisk404JSONResponse) VisitMigrateDiskResponse(w http.ResponseWriter) error {
@@ -6660,6 +7302,16 @@ func (response RunPlaybook400JSONResponse) VisitRunPlaybookResponse(w http.Respo
 	w.WriteHeader(400)
 
 	return json.NewEncoder(w).Encode(response)
+}
+
+type RunPlaybook401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response RunPlaybook401JSONResponse) VisitRunPlaybookResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type RunPlaybook404JSONResponse Error
@@ -6706,6 +7358,16 @@ func (response PoweroffVM200JSONResponse) VisitPoweroffVMResponse(w http.Respons
 	return json.NewEncoder(w).Encode(response)
 }
 
+type PoweroffVM401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PoweroffVM401JSONResponse) VisitPoweroffVMResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
 type PoweroffVM404JSONResponse struct{ ErrorJSONResponse }
 
 func (response PoweroffVM404JSONResponse) VisitPoweroffVMResponse(w http.ResponseWriter) error {
@@ -6739,6 +7401,16 @@ func (response RebootVM200JSONResponse) VisitRebootVMResponse(w http.ResponseWri
 	w.WriteHeader(200)
 
 	return json.NewEncoder(w).Encode(response)
+}
+
+type RebootVM401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response RebootVM401JSONResponse) VisitRebootVMResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type RebootVM404JSONResponse struct{ ErrorJSONResponse }
@@ -6786,6 +7458,16 @@ func (response ResizeDisk400JSONResponse) VisitResizeDiskResponse(w http.Respons
 	return json.NewEncoder(w).Encode(response)
 }
 
+type ResizeDisk401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response ResizeDisk401JSONResponse) VisitResizeDiskResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
 type ResizeDisk404JSONResponse Error
 
 func (response ResizeDisk404JSONResponse) VisitResizeDiskResponse(w http.ResponseWriter) error {
@@ -6819,6 +7501,16 @@ func (response ResumeVM200JSONResponse) VisitResumeVMResponse(w http.ResponseWri
 	w.WriteHeader(200)
 
 	return json.NewEncoder(w).Encode(response)
+}
+
+type ResumeVM401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response ResumeVM401JSONResponse) VisitResumeVMResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type ResumeVM404JSONResponse struct{ ErrorJSONResponse }
@@ -6856,6 +7548,16 @@ func (response StartVM200JSONResponse) VisitStartVMResponse(w http.ResponseWrite
 	return json.NewEncoder(w).Encode(response)
 }
 
+type StartVM401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response StartVM401JSONResponse) VisitStartVMResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
 type StartVM404JSONResponse struct{ ErrorJSONResponse }
 
 func (response StartVM404JSONResponse) VisitStartVMResponse(w http.ResponseWriter) error {
@@ -6889,6 +7591,16 @@ func (response StopVM200JSONResponse) VisitStopVMResponse(w http.ResponseWriter)
 	w.WriteHeader(200)
 
 	return json.NewEncoder(w).Encode(response)
+}
+
+type StopVM401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response StopVM401JSONResponse) VisitStopVMResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response.Body)
 }
 
 type StopVM404JSONResponse struct{ ErrorJSONResponse }
@@ -7926,84 +8638,91 @@ func (sh *strictHandler) StopVM(w http.ResponseWriter, r *http.Request, name VMN
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"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",
+	"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",
+	"SJh219k4+hQqDQ6CARXC/m8AzsWOdD1jAAA=",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file
