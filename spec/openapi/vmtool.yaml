@@ -300,6 +300,72 @@ paths:
         '409': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
         '502': { $ref: '#/components/responses/Error' }
+  /v1/hosts/{host}/vms/{name}/tunnel:
+    parameters:
+      - $ref: '#/components/parameters/HostName'
+      - $ref: '#/components/parameters/VMName'
+    get:
+      operationId: openVMTunnel
+      summary: Upgrade the connection to a raw byte stream to the guest's SSH port
+      description: >
+        Plain HTTP/1.1 connection upgrade (RFC 9110 section 7.8), not
+        WebSocket. The request must be HTTP/1.1 and carry
+        `Connection: Upgrade` and `Upgrade: vmtool-tunnel` (these headers
+        are required but not declared as parameters, so a missing one is
+        this operation's JSON 400, not a generated one), no request body,
+        and the bearer token like every non-docs route. The server resolves
+        the VM through libvirt (404 for an unknown host or VM, 409 when it
+        has no IP address) and dials TCP port 22 at the IP libvirt reports,
+        with a 5 s timeout (502 on failure). It never connects to any other
+        address or port; there is no port parameter. Every refusal is an
+        ordinary JSON response sent before the upgrade. On success the
+        server answers exactly
+        `HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: vmtool-tunnel\r\n\r\n`
+        and from then on the TCP/TLS connection carries the guest's port 22
+        bytes verbatim in both directions, with no framing. Bytes the client
+        sends right after the request headers are delivered to the guest.
+        When either side closes, the server closes both connections.
+        HTTP/2 cannot upgrade a connection; an HTTP/2 request gets 426.
+      responses:
+        '101':
+          description: >
+            Switching Protocols. No body: after the response headers the
+            connection is a raw byte stream to the guest's TCP port 22.
+          headers:
+            Connection:
+              schema: { type: string, enum: [Upgrade] }
+            Upgrade:
+              schema: { type: string, enum: [vmtool-tunnel] }
+        '400':
+          description: >
+            Missing `Connection: Upgrade` or `Upgrade: vmtool-tunnel`, a
+            request body, or an invalid VM name.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409':
+          description: The VM has no IP address.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '426':
+          description: >
+            Not HTTP/1.1 (for example HTTP/2, which cannot upgrade a
+            connection). Retry over HTTP/1.1.
+          headers:
+            Upgrade:
+              schema: { type: string, enum: [vmtool-tunnel] }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+        '502':
+          description: Connecting to the guest's port 22 failed or timed out.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
   /v1/hosts/{host}/vms/{name}/playbook:
     parameters:
       - $ref: '#/components/parameters/HostName'

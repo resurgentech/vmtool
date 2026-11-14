@@ -1,0 +1,128 @@
+package cli
+
+import (
+	"context"
+	"crypto/tls"
+	"fmt"
+	"io"
+	"net"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/jaredeh/vmtool/internal/app"
+	"github.com/jaredeh/vmtool/internal/config"
+	"github.com/jaredeh/vmtool/internal/remote"
+	"github.com/spf13/cobra"
+)
+
+const (
+	tunnelGuestPort    = "22"
+	tunnelDialTimeout  = 5 * time.Second
+	tunnelSetupTimeout = 30 * time.Second
+)
+
+// The tunnel's VM lookup, guest dial and TLS trust. Tests replace them so no
+// test reaches libvirt, a guest or the system trust store.
+var (
+	// tunnelVMIP is the IP libvirt reports for a VM on the local host.
+	tunnelVMIP = func(e *env, ref app.VMRef) (string, error) {
+		r := e.resolver()
+		m, release, err := r.Resolve(ref.Host)
+		if err != nil {
+			return "", err
+		}
+		defer release()
+		info, err := e.service("").GetVM(context.Background(), m, ref.Name)
+		if err != nil {
+			return "", err
+		}
+		return info.IP, nil
+	}
+	// tunnelDial connects to a local guest's port 22.
+	tunnelDial = func(ctx context.Context, addr string) (net.Conn, error) {
+		d := net.Dialer{Timeout: tunnelDialTimeout}
+		return d.DialContext(ctx, "tcp", addr)
+	}
+	// tunnelTLS is the TLS config for a remote daemon; nil RootCAs is the
+	// system trust store.
+	tunnelTLS *tls.Config
+)
+
+func tunnelCmd(e *env) *cobra.Command {
+	return &cobra.Command{
+		Use:   "tunnel <host/vm>",
+		Short: "Pipe stdin/stdout to a VM's SSH port (for ssh ProxyCommand)",
+		Long: `Connect stdin and stdout to TCP port 22 of a VM, for use as an SSH
+ProxyCommand. stdout carries only the SSH byte stream; errors go to stderr.
+
+On the local host it asks libvirt for the VM's IP and connects directly. For
+a host in config.yml's hosts: it opens an authenticated tunnel through that
+host's vmtool daemon (HTTPS, HTTP/1.1 Upgrade), using VMTOOL_TOKEN.
+
+  ssh -o ProxyCommand='vmtool tunnel %h' jetfire/web`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			// stdout is the byte stream: no usage text, and main prints the
+			// error once, on stderr.
+			cmd.SilenceUsage = true
+			cmd.SilenceErrors = true
+			ctx := cmd.Context()
+			if ctx == nil {
+				ctx = context.Background()
+			}
+			conn, err := openTunnel(ctx, e, args[0])
+			if err != nil {
+				return err
+			}
+			return remote.Pipe(ctx, conn, cmd.InOrStdin(), cmd.OutOrStdout())
+		},
+	}
+}
+
+// openTunnel connects to arg's (host/vm) port 22: directly for the local
+// host, through the host's daemon for a configured one.
+func openTunnel(ctx context.Context, e *env, arg string) (io.ReadWriteCloser, error) {
+	r := e.resolver()
+	ref, err := r.ParseVM(arg)
+	if err != nil {
+		return nil, err
+	}
+	setup, cancel := context.WithTimeout(ctx, tunnelSetupTimeout)
+	defer cancel()
+
+	if ref.Host == r.Local() {
+		ip, err := tunnelVMIP(e, ref)
+		if err != nil {
+			return nil, err
+		}
+		if ip == "" {
+			return nil, fmt.Errorf("VM %s has no IP address", ref)
+		}
+		addr := net.ParseIP(ip)
+		if addr == nil {
+			return nil, fmt.Errorf("VM %s has no usable IP address (libvirt reported %q)", ref, ip)
+		}
+		target := net.JoinHostPort(addr.String(), tunnelGuestPort)
+		c, err := tunnelDial(setup, target)
+		if err != nil {
+			return nil, fmt.Errorf("connect to %s at %s: %w", ref, target, err)
+		}
+		return c, nil
+	}
+
+	var h config.Host
+	ok := false
+	if e.cfg != nil {
+		h, ok = e.cfg.Hosts[ref.Host]
+	}
+	if !ok {
+		return nil, fmt.Errorf("unknown host %q; known hosts: %s", ref.Host, strings.Join(r.AllNames(), ", "))
+	}
+	port := h.Port
+	if port == 0 {
+		port = config.DefaultPort
+	}
+	base := "https://" + net.JoinHostPort(h.Address, strconv.Itoa(port))
+	return remote.Dial(setup, base, ref.Host, ref.Name, e.token, tunnelTLS)
+}

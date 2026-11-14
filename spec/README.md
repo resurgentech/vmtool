@@ -54,7 +54,14 @@ logged. `TestAuthEveryOperation` walks every operation in the spec.
 
 `vmtool server` serves HTTPS only (TLS 1.2+), on loopback too: it refuses to
 start unless `config.yml` sets `token_sha256`, `tls_cert` and `tls_key`. There
-is no plain-HTTP or unauthenticated mode.
+is no plain-HTTP or unauthenticated mode. ALPN offers only `http/1.1`.
+
+`GET /v1/hosts/{host}/vms/{name}/tunnel` (`openVMTunnel`) is the one operation
+not served by the strict handler: an HTTP/1.1 `Upgrade: vmtool-tunnel` that,
+after the bearer check, a VM lookup and a dial to the libvirt-reported IP on
+port 22, hijacks the connection and relays raw bytes (`internal/server/tunnel.go`,
+wired through `tunnelMux`). It is still in the spec, so the exclusion register
+stays empty.
 
 ## URL versioning
 

@@ -61,8 +61,10 @@ func chain(h *handlers, auth func(http.Handler) http.Handler) http.Handler {
 	if h.svc == nil {
 		h.svc = &app.Service{PlaybookDir: "ansible/playbooks", HostNames: h.hosts.AllNames()}
 	}
-	strict := api.NewStrictHandler(h, nil)
-	var next http.Handler = withMaxBytes(withRequest(api.HandlerFromMux(strict, http.NewServeMux())))
+	// tunnelMux serves openVMTunnel itself (it takes over the connection);
+	// every other operation goes to the strict adapter.
+	mux := tunnelMux{ServerInterface: api.NewStrictHandler(h, nil), h: h}
+	var next http.Handler = withMaxBytes(withRequest(api.HandlerFromMux(mux, http.NewServeMux())))
 	if auth != nil {
 		next = auth(next)
 	}
@@ -109,7 +111,14 @@ func (s *Server) httpServer() (*http.Server, error) {
 		Addr:              s.addr(),
 		Handler:           s.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
-		TLSConfig:         &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{cert}},
+		// ALPN offers HTTP/1.1 only. Without "h2" in NextProtos, Serve does
+		// not configure HTTP/2, so every client speaks HTTP/1.1 and the
+		// tunnel (openVMTunnel) can always take over the connection.
+		TLSConfig: &tls.Config{
+			MinVersion:   tls.VersionTLS12,
+			Certificates: []tls.Certificate{cert},
+			NextProtos:   []string{"http/1.1"},
+		},
 	}, nil
 }
 

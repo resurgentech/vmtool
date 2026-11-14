@@ -67,3 +67,17 @@ are appended, never edited in; a hook refuses rewrites.
   `GET /v1/hosts`, unversioned `GET /version` (API 1.0.0); `internal/hosts`
   resolver (local only), `internal/buildinfo`; unknown host 404.
 - Commits: 971152c
+
+## 2026-11-14 — T7 `host/vm` names, `.machines/<host>/<vm>/`, migration
+
+- `app.VMRef` + `ParseVMRef`; credentials keyed by (host, vm) only (IP
+  lookup removed); `vmtool_machines_dir` passed to setup_bot.yml;
+  `vmtool machines migrate [--apply]`; host/machine name collision rules;
+  TUI rows host/vm, dead stageClone chain removed; README examples.
+- Commits: f0e1bb5
+
+## 2026-11-14 — T5 follow-up: server gate
+
+- `vmtool server` needs config.yml with `token_sha256` but no local token
+  (hypervisors hold only the hash); found while building T14.
+- Commits: 48b7cfa

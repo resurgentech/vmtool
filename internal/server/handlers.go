@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"net"
 
 	"github.com/jaredeh/vmtool/internal/api"
 	"github.com/jaredeh/vmtool/internal/app"
@@ -16,6 +17,10 @@ type handlers struct {
 	listen string
 	// hosts maps {host} to a Manager; chain fills it when nil.
 	hosts *hosts.Resolver
+	// vmIP and dialGuest are the tunnel's VM lookup and guest dial (tunnel.go).
+	// nil means the resolver's Manager and a 5 s TCP dial; tests inject fakes.
+	vmIP      func(ctx context.Context, host, name string) (string, error)
+	dialGuest func(ctx context.Context, addr string) (net.Conn, error)
 }
 
 // withManager resolves host first, so an unknown host never touches libvirt,
