@@ -582,8 +582,14 @@ paths:
         `.<name>.part` in the `vmtool` pool's directory while being hashed.
         A short body or a SHA-256 that differs from X-Image-SHA256 is 400;
         the temporary file is removed and the old volume and the manifest are
-        untouched. A `.<name>.part` that already exists (another upload, or
-        one that crashed) is 409 and is left alone. On success the old
+        untouched. While an upload of {name} is running in this daemon, a
+        second PUT of {name} is 409 before its body is read, and the running
+        upload's temporary file is left alone. Otherwise a `.<name>.part`
+        left by an interrupted upload is deleted (a symlink as a link, never
+        its target) and the upload goes ahead; one another process creates
+        meanwhile is 409. At start a hypervisor daemon deletes every
+        `.<name>.part` (regular file or symlink, {name} a valid image name)
+        in the `vmtool` pool's directory and nothing else. On success the old
         volume is deleted only if the manifest lists {name} (and only from
         the `vmtool` pool); the new file is put in place with a hard link,
         which fails rather than overwrite a file that appeared during the

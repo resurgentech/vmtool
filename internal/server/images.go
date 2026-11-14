@@ -14,9 +14,15 @@ package server
 //     all), or a file of that name is in the vmtool pool's directory even
 //     if libvirt has not seen it yet. A foreign name is refused (409) before
 //     the body is read and is never touched.
-//   - The body goes to `.<name>.part` (created O_EXCL, so a temporary file
-//     that already exists is not ours either), hashed as it arrives. Any
-//     failure removes the temporary file and nothing else.
+//   - One upload of a name runs at a time in this process (uploads, a
+//     mutex-guarded set entered before the temporary file is touched): a
+//     second PUT of a running name is 409 before its body is read.
+//   - The body goes to `.<name>.part`, hashed as it arrives. A `.<name>.part`
+//     already there when no upload of name is running here was left by an
+//     interrupted one: it is removed (a symlink as a link; a directory or
+//     anything else is 409 and stays). The new one is created O_EXCL, so
+//     one another process created meanwhile is 409. Any failure removes the
+//     temporary file and nothing else.
 //   - At commit, under the manifest's lock: the ownership check is repeated;
 //     an old volume is deleted only if the manifest lists the name; the new
 //     file is put in place with os.Link, which fails instead of overwriting a
@@ -24,7 +30,10 @@ package server
 //     updated.
 //
 // The deleteImage handler (handlers.go) drops a manifest entry when it
-// deletes a listed image from the vmtool pool; nothing else here deletes.
+// deletes a listed image from the vmtool pool. At start a hypervisor daemon
+// removes the stale `.<name>.part` files (regular files and symlinks, name a
+// valid image name) in the vmtool pool's directory (startCleanup); nothing
+// else here deletes.
 
 import (
 	"context"
@@ -40,11 +49,14 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/jaredeh/vmtool/internal/api"
 	"github.com/jaredeh/vmtool/internal/app"
 	"github.com/jaredeh/vmtool/internal/config"
+	"github.com/jaredeh/vmtool/internal/hosts"
 	"github.com/jaredeh/vmtool/pkg/vmtool"
 )
 
@@ -303,11 +315,29 @@ func (h *handlers) storeImage(w http.ResponseWriter, r *http.Request, host, name
 	}
 
 	final := filepath.Join(dir, name)
-	part := filepath.Join(dir, "."+name+".part")
+	part := partPath(dir, name)
+	// One upload of a name at a time in this process. Entering the registry
+	// comes before anything touches the temporary file, so a running
+	// upload's .part is never removed by a second request.
+	if !uploads.enter(part) {
+		return fail(http.StatusConflict, "an upload of %q to %s is already running; try again when it has finished", name, host)
+	}
+	defer uploads.leave(part)
+	// No upload of name is running here: a .part is left from an interrupted
+	// one. Only a file or a symlink (the link itself) is removed.
+	if err := removeStalePart(part); err != nil {
+		if errors.Is(err, errPartNotFile) {
+			return fail(http.StatusConflict, "%v; vmtool will not remove it", err)
+		}
+		return fail(http.StatusInternalServerError, "remove stale temporary file %s: %v", part, err)
+	}
+	if afterPartCleared != nil {
+		afterPartCleared(part)
+	}
 	f, err := os.OpenFile(part, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		if errors.Is(err, fs.ErrExist) {
-			return fail(http.StatusConflict, "temporary file %s already exists: another upload of %q is running, or one was interrupted (remove the file by hand if no upload is running)", part, name)
+			return fail(http.StatusConflict, "temporary file %s was created by another process during this request; another upload of %q is running", part, name)
 		}
 		return fail(http.StatusInternalServerError, "create %s: %v", part, err)
 	}
@@ -402,6 +432,142 @@ func (h *handlers) storeImage(w http.ResponseWriter, r *http.Request, host, name
 		return fail(http.StatusInternalServerError, "stored %s but refreshing pool %q failed: %v", final, cachePool, err)
 	}
 	return api.ImageManifestEntry{Name: name, Sha256: &entry.SHA256, Size: &entry.Size, Path: &final}, nil
+}
+
+// --- temporary files ---
+
+// afterPartCleared, when set, runs in uploadImage after a stale temporary
+// file is removed and before the new one is created (tests inject a race).
+var afterPartCleared func(part string)
+
+// uploadRegistry is the set of uploads running in this process, keyed by
+// their temporary file's path (the vmtool pool's directory + name).
+type uploadRegistry struct {
+	mu  sync.Mutex
+	set map[string]struct{}
+}
+
+var uploads = &uploadRegistry{set: map[string]struct{}{}}
+
+// enter adds part and reports true, or reports false if it is already there.
+func (u *uploadRegistry) enter(part string) bool {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if _, ok := u.set[part]; ok {
+		return false
+	}
+	u.set[part] = struct{}{}
+	return true
+}
+
+func (u *uploadRegistry) leave(part string) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	delete(u.set, part)
+}
+
+func (u *uploadRegistry) running(part string) bool {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	_, ok := u.set[part]
+	return ok
+}
+
+func partPath(dir, name string) string { return filepath.Join(dir, "."+name+".part") }
+
+// partName returns n for a file name `.<n>.part` with n a valid image name.
+func partName(file string) (string, bool) {
+	if !strings.HasPrefix(file, ".") || !strings.HasSuffix(file, ".part") || len(file) < len("..part") {
+		return "", false
+	}
+	n := file[1 : len(file)-len(".part")]
+	return n, vmtool.ValidImageName(n)
+}
+
+var errPartNotFile = errors.New("not a regular file or a symlink")
+
+// removeStalePart removes part if it is a regular file or a symlink (the
+// link, never its target). Absent is fine. Anything else (a directory, a
+// socket...) fails with errPartNotFile and stays. The removal is
+// unlink(2), which never removes a directory, so a directory swapped in
+// after the check is still left alone.
+func removeStalePart(part string) error {
+	st, err := os.Lstat(part)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !st.Mode().IsRegular() && st.Mode()&fs.ModeSymlink == 0 {
+		return fmt.Errorf("%s is %w", part, errPartNotFile)
+	}
+	if err := syscall.Unlink(part); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+// cleanStaleParts removes, from the vmtool pool's directory on host, every
+// regular file or symlink named `.<n>.part` with n a valid image name, other
+// than the temporary files of uploads running in this process. Nothing else
+// is touched: no other name, no directory, no recursion, no other pool. It
+// returns the paths it removed; on an error it stops and returns those
+// removed so far.
+func cleanStaleParts(m app.Manager, host string) ([]string, error) {
+	dir, err := cachePoolDir(m, host)
+	if err != nil {
+		return nil, err
+	}
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", dir, err)
+	}
+	var removed []string
+	for _, e := range ents {
+		if _, ok := partName(e.Name()); !ok {
+			continue
+		}
+		t := e.Type()
+		if !t.IsRegular() && t&fs.ModeSymlink == 0 {
+			continue
+		}
+		p := filepath.Join(dir, e.Name())
+		if uploads.running(p) {
+			continue
+		}
+		if err := removeStalePart(p); err != nil {
+			if errors.Is(err, errPartNotFile) {
+				continue
+			}
+			return removed, fmt.Errorf("remove stale temporary file %s: %w", p, err)
+		}
+		removed = append(removed, p)
+	}
+	return removed, nil
+}
+
+// startCleanup is the daemon's start hook: on a hypervisor it removes the
+// temporary files interrupted uploads left in the image cache. A workstation
+// keeps no image cache and deletes nothing. A failure (no libvirt, no pool)
+// is logged in one line and the server serves anyway.
+func startCleanup(role string, r *hosts.Resolver) {
+	if role != config.RoleHypervisor {
+		return
+	}
+	m, done, err := r.Resolve(r.Local())
+	if err != nil {
+		slog.Warn("image cache: stale temporary files not cleaned at start", "err", err)
+		return
+	}
+	defer done()
+	removed, err := cleanStaleParts(m, r.Local())
+	if len(removed) > 0 {
+		slog.Info("image cache: removed stale temporary files", "paths", removed)
+	}
+	if err != nil {
+		slog.Warn("image cache: stale temporary files not cleaned at start", "err", err)
+	}
 }
 
 // copyBody copies at most size+1 bytes of body to dst (one more than

@@ -151,7 +151,16 @@ file in the `vmtool` pool's directory) that the manifest does not list.
 `uploadImage` refuses a foreign name with 409 before reading the body, writes
 `.<name>.part`, verifies the SHA-256, deletes an old volume only if the
 manifest lists it, and moves the file in with a hard link (never an
-overwrite). It is the only route exempt from the 1 MiB body cap
+overwrite). One upload of a name runs at a time per daemon: a second PUT of
+a name already uploading is 409 before its body is read. Otherwise a
+`.<name>.part` left by an interrupted upload is deleted (a symlink as a
+link; a directory or other non-file is 409 and stays) before the new one is
+created `O_EXCL`; one another process creates meanwhile is 409. At start,
+after binding its port, a hypervisor daemon deletes every regular file or
+symlink named `.<name>.part` (with `<name>` a valid image name) in the
+`vmtool` pool's directory and nothing else (no recursion, no other names or
+pools); without libvirt or the pool it logs one line and serves anyway. A
+workstation deletes nothing at start. It is the only route exempt from the 1 MiB body cap
 (`withMaxBytes`); the server sets no overall read timeout, and an upload that
 sends nothing for 2 minutes fails. Both operations are served by hypervisors
 only: a workstation answers 403 for itself, refuses `uploadImage` for every

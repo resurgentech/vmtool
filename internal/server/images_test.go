@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -453,17 +454,297 @@ func TestUploadImageLinkRace(t *testing.T) {
 	}
 }
 
-// A temporary file that already exists (another upload, or a crashed one) is
-// left alone: 409, nothing read.
-func TestUploadImagePartExists(t *testing.T) {
+// A temporary file left by an interrupted upload (no upload of that name is
+// running in this process) is deleted, and the upload goes ahead.
+func TestUploadImageStalePart(t *testing.T) {
 	f := newImgFixture(t, config.RoleHypervisor)
-	part := f.pm.put(t, vmtool.HypervisorPool, ".u.qcow2.part", []byte("in progress"), false)
-	rec := f.put("u.qcow2", tripReader{t}, 10, hexSum([]byte("x")))
-	if rec.Code != http.StatusConflict || !strings.Contains(errText(t, rec), part) {
+	f.pm.put(t, vmtool.HypervisorPool, ".u.qcow2.part", []byte("left by a crash"), false)
+	data := randomBytes(t, 5000)
+	rec := f.put("u.qcow2", bytes.NewReader(data), int64(len(data)), hexSum(data))
+	if rec.Code != http.StatusCreated {
 		t.Fatalf("PUT: %d %s", rec.Code, rec.Body)
 	}
-	if b, _ := os.ReadFile(part); string(b) != "in progress" {
+	if b, err := os.ReadFile(filepath.Join(f.pm.dirs[vmtool.HypervisorPool], "u.qcow2")); err != nil || !bytes.Equal(b, data) {
+		t.Fatalf("image not installed (%v)", err)
+	}
+	f.noPart(t, "u.qcow2")
+	if e, ok, err := vmtool.OpenImageManifest(f.manifest).Get("u.qcow2"); err != nil || !ok || e.SHA256 != hexSum(data) {
+		t.Errorf("manifest entry %+v %v %v", e, ok, err)
+	}
+}
+
+// A stale temporary file that is a symlink is removed as a link: its target
+// is untouched.
+func TestUploadImageStalePartSymlink(t *testing.T) {
+	f := newImgFixture(t, config.RoleHypervisor)
+	target := filepath.Join(t.TempDir(), "precious")
+	if err := os.WriteFile(target, []byte("not vmtool's"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(f.pm.dirs[vmtool.HypervisorPool], ".u.qcow2.part")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	data := []byte("image")
+	if rec := f.put("u.qcow2", bytes.NewReader(data), 5, hexSum(data)); rec.Code != http.StatusCreated {
+		t.Fatalf("PUT: %d %s", rec.Code, rec.Body)
+	}
+	if b, err := os.ReadFile(target); err != nil || string(b) != "not vmtool's" {
+		t.Errorf("symlink target now %q (%v)", b, err)
+	}
+	f.noPart(t, "u.qcow2")
+}
+
+// A directory with the temporary file's name is not a stale upload: 409,
+// body not read, the directory and its contents stay.
+func TestUploadImagePartIsDirectory(t *testing.T) {
+	f := newImgFixture(t, config.RoleHypervisor)
+	dir := filepath.Join(f.pm.dirs[vmtool.HypervisorPool], ".u.qcow2.part")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rec := f.put("u.qcow2", tripReader{t}, 10, hexSum([]byte("x")))
+	if rec.Code != http.StatusConflict || !strings.Contains(errText(t, rec), dir) {
+		t.Fatalf("PUT: %d %s", rec.Code, rec.Body)
+	}
+	if st, err := os.Lstat(dir); err != nil || !st.IsDir() {
+		t.Errorf("directory gone: %v", err)
+	}
+	// Retrying never removes it either (empty directories are removable by
+	// os.Remove; the handler must not use it).
+	if rec := f.put("u.qcow2", tripReader{t}, 10, hexSum([]byte("x"))); rec.Code != http.StatusConflict {
+		t.Fatalf("second PUT: %d %s", rec.Code, rec.Body)
+	}
+	if _, err := os.Lstat(dir); err != nil {
+		t.Errorf("directory gone after retry: %v", err)
+	}
+}
+
+// A temporary file another process creates between the stale clean-up and
+// the O_EXCL create is not ours: 409, nothing read, the file stays.
+func TestUploadImagePartRace(t *testing.T) {
+	f := newImgFixture(t, config.RoleHypervisor)
+	var part string
+	afterPartCleared = func(p string) {
+		part = p
+		if err := os.WriteFile(p, []byte("other process"), 0o644); err != nil {
+			t.Error(err)
+		}
+	}
+	t.Cleanup(func() { afterPartCleared = nil })
+	rec := f.put("u.qcow2", tripReader{t}, 10, hexSum([]byte("x")))
+	if rec.Code != http.StatusConflict || part == "" || !strings.Contains(errText(t, rec), part) {
+		t.Fatalf("PUT: %d %s (part %q)", rec.Code, rec.Body, part)
+	}
+	if b, _ := os.ReadFile(part); string(b) != "other process" {
 		t.Errorf("part now %q", b)
+	}
+}
+
+// A second PUT of a name whose upload is running in this process is 409
+// before its body is read; the running upload's temporary file is untouched
+// and that upload completes.
+func TestUploadImageInFlight(t *testing.T) {
+	f := newImgFixture(t, config.RoleHypervisor)
+	part := filepath.Join(f.pm.dirs[vmtool.HypervisorPool], ".u.qcow2.part")
+	reached, release := make(chan struct{}), make(chan struct{})
+	f.h.beforeCommit = func(string) {
+		close(reached)
+		<-release
+	}
+	data := randomBytes(t, 100000)
+	first := make(chan *httptest.ResponseRecorder, 1)
+	go func() { first <- f.put("u.qcow2", bytes.NewReader(data), int64(len(data)), hexSum(data)) }()
+	<-reached
+
+	rec := f.put("u.qcow2", tripReader{t}, 10, hexSum([]byte("x")))
+	if rec.Code != http.StatusConflict || !strings.Contains(errText(t, rec), "already running") {
+		t.Errorf("second PUT: %d %s", rec.Code, rec.Body)
+	}
+	if b, err := os.ReadFile(part); err != nil || !bytes.Equal(b, data) {
+		t.Errorf("running upload's temporary file changed (%v)", err)
+	}
+	close(release)
+	if rec := <-first; rec.Code != http.StatusCreated {
+		t.Fatalf("first PUT: %d %s", rec.Code, rec.Body)
+	}
+	if b, _ := os.ReadFile(filepath.Join(f.pm.dirs[vmtool.HypervisorPool], "u.qcow2")); !bytes.Equal(b, data) {
+		t.Error("first upload not installed")
+	}
+	f.noPart(t, "u.qcow2")
+
+	// The name left the registry: a later PUT goes ahead.
+	f.h.beforeCommit = nil
+	data2 := []byte("again")
+	if rec := f.put("u.qcow2", bytes.NewReader(data2), 5, hexSum(data2)); rec.Code != http.StatusCreated {
+		t.Errorf("PUT after the first finished: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// A refused PUT (here: foreign name) deletes no stale temporary file.
+func TestUploadImageRefusedKeepsPart(t *testing.T) {
+	f := newImgFixture(t, config.RoleHypervisor)
+	f.pm.put(t, vmtool.HypervisorPool, "u.qcow2", []byte("theirs"), false)
+	part := f.pm.put(t, vmtool.HypervisorPool, ".u.qcow2.part", []byte("stale"), false)
+	if rec := f.put("u.qcow2", tripReader{t}, 10, hexSum([]byte("x"))); rec.Code != http.StatusConflict {
+		t.Fatalf("PUT: %d %s", rec.Code, rec.Body)
+	}
+	if b, _ := os.ReadFile(part); string(b) != "stale" {
+		t.Errorf("part now %q", b)
+	}
+}
+
+// stalePartsPool fills the vmtool pool's directory with the start-up
+// clean-up's cases and returns the symlink target outside the pool.
+func stalePartsPool(t *testing.T, dir string) string {
+	t.Helper()
+	write := func(name, data string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(".a.part", "a")
+	write(".b.part", "b")
+	write(".notes", "keep")
+	write("a.qcow2", "image")
+	write(".bad name.part", "invalid name")
+	write("..x.part", "leading dot in the name")
+	write(".part", "no name")
+	for _, d := range []string{".a.part.d", ".d.part"} {
+		if err := os.Mkdir(filepath.Join(dir, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A matching file inside a directory: no recursion.
+	if err := os.WriteFile(filepath.Join(dir, ".a.part.d", ".e.part"), []byte("nested"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "target")
+	if err := os.WriteFile(target, []byte("not vmtool's"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(dir, ".c.part")); err != nil {
+		t.Fatal(err)
+	}
+	return target
+}
+
+func dirNames(t *testing.T, dir string) []string {
+	t.Helper()
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, e := range ents {
+		out = append(out, e.Name())
+	}
+	sort.Strings(out)
+	return out
+}
+
+func TestCleanStaleParts(t *testing.T) {
+	pm := newPoolMgr(t)
+	dir := pm.dirs[vmtool.HypervisorPool]
+	target := stalePartsPool(t, dir)
+	// The other pool's matching file is not the cache's.
+	other := pm.put(t, "other", ".o.part", []byte("o"), false)
+
+	removed, err := cleanStaleParts(pm, "hv1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(removed)
+	want := []string{filepath.Join(dir, ".a.part"), filepath.Join(dir, ".b.part"), filepath.Join(dir, ".c.part")}
+	if fmt.Sprint(removed) != fmt.Sprint(want) {
+		t.Errorf("removed %v\nwant    %v", removed, want)
+	}
+	if got, w := dirNames(t, dir), []string{"..x.part", ".a.part.d", ".bad name.part", ".d.part", ".notes", ".part", "a.qcow2"}; fmt.Sprint(got) != fmt.Sprint(w) {
+		t.Errorf("pool holds %q\nwant       %q", got, w)
+	}
+	if _, err := os.Lstat(filepath.Join(dir, ".a.part.d", ".e.part")); err != nil {
+		t.Errorf("nested file: %v", err)
+	}
+	if b, err := os.ReadFile(target); err != nil || string(b) != "not vmtool's" {
+		t.Errorf("symlink target now %q (%v)", b, err)
+	}
+	if _, err := os.Lstat(other); err != nil {
+		t.Errorf("other pool's file: %v", err)
+	}
+	if d := pm.deleted(); len(d) != 0 {
+		t.Errorf("Manager deletes %v", d)
+	}
+}
+
+func TestStartCleanupHypervisor(t *testing.T) {
+	pm := newPoolMgr(t)
+	dir := pm.dirs[vmtool.HypervisorPool]
+	stalePartsPool(t, dir)
+	r := hosts.NewWith("hv1", config.RoleHypervisor, nil, func() (app.Manager, func(), error) { return pm, func() {}, nil })
+	startCleanup(config.RoleHypervisor, r)
+	for _, n := range []string{".a.part", ".b.part", ".c.part"} {
+		if _, err := os.Lstat(filepath.Join(dir, n)); !os.IsNotExist(err) {
+			t.Errorf("%s still there (%v)", n, err)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(dir, ".d.part")); err != nil {
+		t.Errorf("directory .d.part: %v", err)
+	}
+}
+
+// The workstation role deletes nothing at start, and does not even open its
+// libvirt.
+func TestStartCleanupWorkstation(t *testing.T) {
+	pm := newPoolMgr(t)
+	dir := pm.dirs[vmtool.HypervisorPool]
+	stalePartsPool(t, dir)
+	before := dirNames(t, dir)
+	opened := false
+	r := hosts.NewWith("ws", config.RoleWorkstation, nil, func() (app.Manager, func(), error) {
+		opened = true
+		return pm, func() {}, nil
+	})
+	for _, role := range []string{config.RoleWorkstation, ""} {
+		startCleanup(role, r)
+	}
+	if after := dirNames(t, dir); fmt.Sprint(before) != fmt.Sprint(after) {
+		t.Errorf("pool %q -> %q", before, after)
+	}
+	if opened {
+		t.Error("workstation start opened its Manager")
+	}
+}
+
+// noPoolMgr is a libvirt without a vmtool pool.
+type noPoolMgr struct{ *rtMgr }
+
+func (noPoolMgr) ListPools() ([]vmtool.PoolInfo, error) {
+	return []vmtool.PoolInfo{{Name: "default", Path: "/nonexistent-default", Active: true}}, nil
+}
+
+// Without libvirt (or without the pool) the start-up clean-up logs one line
+// and returns; the server serves anyway.
+func TestStartCleanupUnavailable(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	r := hosts.NewWith("hv1", config.RoleHypervisor, nil, func() (app.Manager, func(), error) {
+		return nil, nil, fmt.Errorf("libvirt is not running")
+	})
+	startCleanup(config.RoleHypervisor, r)
+	if n := strings.Count(buf.String(), "\n"); n != 1 || !strings.Contains(buf.String(), "libvirt is not running") {
+		t.Errorf("log %q, want one line with the cause", buf.String())
+	}
+
+	buf.Reset()
+	noPool := hosts.NewWith("hv1", config.RoleHypervisor, nil, func() (app.Manager, func(), error) {
+		return noPoolMgr{newRTMgr(t)}, func() {}, nil
+	})
+	startCleanup(config.RoleHypervisor, noPool)
+	if n := strings.Count(buf.String(), "\n"); n != 1 || !strings.Contains(buf.String(), "vmtool") {
+		t.Errorf("log %q, want one line about the pool", buf.String())
 	}
 }
 

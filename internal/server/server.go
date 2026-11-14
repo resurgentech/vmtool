@@ -158,7 +158,8 @@ func serve(srv *http.Server, ln net.Listener) error {
 }
 
 // ListenAndServe checks the configuration, then binds and serves. Every
-// refusal happens before binding.
+// refusal happens before binding. Between binding and serving, a hypervisor
+// removes its image cache's stale temporary files (startCleanup).
 func (s *Server) ListenAndServe() error {
 	srv, err := s.httpServer()
 	if err != nil {
@@ -168,6 +169,9 @@ func (s *Server) ListenAndServe() error {
 	if err != nil {
 		return err
 	}
+	// After binding: holding the port means no other daemon on it is
+	// mid-upload, so its temporary files are stale.
+	startCleanup(s.Config.Role, hosts.New(s.Config))
 	slog.Info("vmtool API listening", "url", "https://"+srv.Addr+"/")
 	return serve(srv, ln)
 }
