@@ -1,18 +1,21 @@
 openapi: 3.0.3
 info:
   title: vmtool API
-  version: 0.1.0
+  version: 1.0.0
   description: >
     HTTP surface of `vmtool server`. Spec-first: models, stdlib ServerInterface,
     embedded spec, and a test client are generated from this file. Metal and
     alien machines (/metal) are SSH/Ansible targets registered in
     .machines/<name>/machine.yml, not libvirt domains. CLI `vmtool ssh` and
-    TUI `t` exec ssh locally. Default bind is 127.0.0.1:9473. Every operation
-    except the docs routes (/, /openapi.yaml, /openapi.json) requires
+    TUI `t` exec ssh locally. Default bind is 127.0.0.1:9473. The server
+    serves HTTPS only, loopback included, and refuses to start without
+    token_sha256, tls_cert and tls_key in config.yml. Every operation except
+    the docs routes (/, /openapi.yaml, /openapi.json) requires
     `Authorization: Bearer <token>`; the server checks the token's SHA-256
-    against token_sha256 in config.yml and answers 401 otherwise. The server
-    serves HTTPS when config.yml names tls_cert and tls_key, and refuses to
-    bind off loopback unless TLS and token_sha256 are configured.
+    against token_sha256 in config.yml and answers 401 otherwise.
+    Paths are versioned (/v1/...) and VM, network, bridge, image and pool
+    routes are scoped to a host (/v1/hosts/{host}/...). GET /version is
+    unversioned so a client built for another API version can still read it.
     createVM and runPlaybook are synchronous and may run for many minutes; clients must not
     use a short HTTP timeout.
 servers:
@@ -56,7 +59,37 @@ paths:
           content:
             application/json:
               schema: { type: object }
-  /vms:
+  /version:
+    get:
+      operationId: getVersion
+      summary: API and build version of this server
+      description: >
+        Unversioned on purpose: a client whose API version does not match can
+        still ask what the server speaks. api_version is info.version of this
+        document; clients require an exact match.
+      responses:
+        '200':
+          description: version
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VersionInfo' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /v1/hosts:
+    get:
+      operationId: listHosts
+      summary: List the hosts this server knows
+      responses:
+        '200':
+          description: hosts, the local one first
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/HostInfo' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /v1/hosts/{host}/vms:
+    parameters:
+      - $ref: '#/components/parameters/HostName'
     get:
       operationId: listVMs
       summary: List all VMs
@@ -69,6 +102,7 @@ paths:
                 type: array
                 items: { $ref: '#/components/schemas/VMInfo' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
     post:
       operationId: createVM
@@ -103,8 +137,9 @@ paths:
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
-  /vms/{name}:
+  /v1/hosts/{host}/vms/{name}:
     parameters:
+      - $ref: '#/components/parameters/HostName'
       - $ref: '#/components/parameters/VMName'
     get:
       operationId: getVM
@@ -132,8 +167,9 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
-  /vms/{name}/start:
+  /v1/hosts/{host}/vms/{name}/start:
     parameters:
+      - $ref: '#/components/parameters/HostName'
       - $ref: '#/components/parameters/VMName'
     post:
       operationId: startVM
@@ -147,8 +183,9 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
-  /vms/{name}/stop:
+  /v1/hosts/{host}/vms/{name}/stop:
     parameters:
+      - $ref: '#/components/parameters/HostName'
       - $ref: '#/components/parameters/VMName'
     post:
       operationId: stopVM
@@ -162,8 +199,9 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
-  /vms/{name}/resume:
+  /v1/hosts/{host}/vms/{name}/resume:
     parameters:
+      - $ref: '#/components/parameters/HostName'
       - $ref: '#/components/parameters/VMName'
     post:
       operationId: resumeVM
@@ -177,8 +215,9 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
-  /vms/{name}/poweroff:
+  /v1/hosts/{host}/vms/{name}/poweroff:
     parameters:
+      - $ref: '#/components/parameters/HostName'
       - $ref: '#/components/parameters/VMName'
     post:
       operationId: poweroffVM
@@ -192,8 +231,9 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
-  /vms/{name}/reboot:
+  /v1/hosts/{host}/vms/{name}/reboot:
     parameters:
+      - $ref: '#/components/parameters/HostName'
       - $ref: '#/components/parameters/VMName'
     post:
       operationId: rebootVM
@@ -211,8 +251,9 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
-  /vms/{name}/autostart:
+  /v1/hosts/{host}/vms/{name}/autostart:
     parameters:
+      - $ref: '#/components/parameters/HostName'
       - $ref: '#/components/parameters/VMName'
     put:
       operationId: setAutostart
@@ -232,8 +273,9 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
-  /vms/{name}/cmd:
+  /v1/hosts/{host}/vms/{name}/cmd:
     parameters:
+      - $ref: '#/components/parameters/HostName'
       - $ref: '#/components/parameters/VMName'
     post:
       operationId: runVMCommand
@@ -258,8 +300,9 @@ paths:
         '409': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
         '502': { $ref: '#/components/responses/Error' }
-  /vms/{name}/playbook:
+  /v1/hosts/{host}/vms/{name}/playbook:
     parameters:
+      - $ref: '#/components/parameters/HostName'
       - $ref: '#/components/parameters/VMName'
     post:
       operationId: runPlaybook
@@ -287,8 +330,9 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PlaybookResult' }
-  /vms/{name}/migrate-disk:
+  /v1/hosts/{host}/vms/{name}/migrate-disk:
     parameters:
+      - $ref: '#/components/parameters/HostName'
       - $ref: '#/components/parameters/VMName'
     post:
       operationId: migrateDisk
@@ -308,8 +352,9 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
-  /vms/{name}/resize-disk:
+  /v1/hosts/{host}/vms/{name}/resize-disk:
     parameters:
+      - $ref: '#/components/parameters/HostName'
       - $ref: '#/components/parameters/VMName'
     post:
       operationId: resizeDisk
@@ -329,8 +374,9 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
-  /vms/{name}/add-disk:
+  /v1/hosts/{host}/vms/{name}/add-disk:
     parameters:
+      - $ref: '#/components/parameters/HostName'
       - $ref: '#/components/parameters/VMName'
     post:
       operationId: addDisk
@@ -358,7 +404,9 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
-  /networks:
+  /v1/hosts/{host}/networks:
+    parameters:
+      - $ref: '#/components/parameters/HostName'
     get:
       operationId: listNetworks
       summary: List libvirt networks
@@ -369,8 +417,11 @@ paths:
             application/json:
               schema: { type: array, items: { type: string } }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
-  /bridges:
+  /v1/hosts/{host}/bridges:
+    parameters:
+      - $ref: '#/components/parameters/HostName'
     get:
       operationId: listBridges
       summary: List host bridges
@@ -381,8 +432,11 @@ paths:
             application/json:
               schema: { type: array, items: { type: string } }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
-  /images:
+  /v1/hosts/{host}/images:
+    parameters:
+      - $ref: '#/components/parameters/HostName'
     get:
       operationId: listImages
       summary: List disk images grouped by pool
@@ -397,8 +451,11 @@ paths:
                   type: array
                   items: { type: string }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
-  /images/{name}:
+  /v1/hosts/{host}/images/{name}:
+    parameters:
+      - $ref: '#/components/parameters/HostName'
     delete:
       operationId: deleteImage
       summary: Delete a disk image
@@ -416,7 +473,9 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
-  /pools:
+  /v1/hosts/{host}/pools:
+    parameters:
+      - $ref: '#/components/parameters/HostName'
     get:
       operationId: listPools
       summary: List storage pools
@@ -429,6 +488,7 @@ paths:
                 type: array
                 items: { $ref: '#/components/schemas/PoolInfo' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
     post:
       operationId: createPool
@@ -446,8 +506,9 @@ paths:
               schema: { $ref: '#/components/schemas/CreatePoolResult' }
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
-  /playbooks:
+  /v1/playbooks:
     get:
       operationId: listPlaybooks
       summary: List playbooks in ansible/playbooks
@@ -460,7 +521,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '500': { $ref: '#/components/responses/Error' }
 
-  /metal:
+  /v1/metal:
     get:
       operationId: listMachines
       summary: List metal and alien machines
@@ -512,7 +573,7 @@ paths:
         '409': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
         '502': { $ref: '#/components/responses/Error' }
-  /metal/{name}:
+  /v1/metal/{name}:
     parameters:
       - $ref: '#/components/parameters/MachineName'
     get:
@@ -538,7 +599,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
-  /metal/{name}/reboot:
+  /v1/metal/{name}/reboot:
     parameters:
       - $ref: '#/components/parameters/MachineName'
     post:
@@ -558,7 +619,7 @@ paths:
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
         '502': { $ref: '#/components/responses/Error' }
-  /metal/{name}/cmd:
+  /v1/metal/{name}/cmd:
     parameters:
       - $ref: '#/components/parameters/MachineName'
     post:
@@ -583,7 +644,7 @@ paths:
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
         '502': { $ref: '#/components/responses/Error' }
-  /metal/{name}/playbook:
+  /v1/metal/{name}/playbook:
     parameters:
       - $ref: '#/components/parameters/MachineName'
     post:
@@ -630,6 +691,14 @@ components:
       name: name
       in: path
       required: true
+      schema: { type: string }
+    HostName:
+      name: host
+      in: path
+      required: true
+      description: >
+        Host name as listed by GET /v1/hosts. A host this server does not
+        serve is 404.
       schema: { type: string }
     MachineName:
       name: name
@@ -855,6 +924,20 @@ components:
       properties:
         name: { type: string }
         path: { type: string }
+    VersionInfo:
+      type: object
+      required: [api_version, build_version, host]
+      properties:
+        api_version: { type: string, description: "info.version of this spec" }
+        build_version: { type: string, description: "module version or VCS revision of the binary, or unknown" }
+        host: { type: string, description: "name this server calls itself" }
+    HostInfo:
+      type: object
+      required: [name, role, local]
+      properties:
+        name: { type: string }
+        role: { type: string, enum: [workstation, hypervisor] }
+        local: { type: boolean, description: "true for the host this server runs on" }
     PoolInfo:
       type: object
       required: [name, path, active]

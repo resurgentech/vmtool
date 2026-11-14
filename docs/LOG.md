@@ -52,3 +52,11 @@ are appended, never edited in; a hook refuses rewrites.
   scp), `scripts/install.sh`, `deploy/vmtool.service.in`; tests with a real
   throwaway CA and stub bao/scp/ssh/sudo/systemctl.
 - Commits: 9f7b5ab
+
+## 2026-11-14 — T5 Enforce the token on every command
+
+- Root `PersistentPreRunE` gate (config.yml + VMTOOL_TOKEN vs token_sha256)
+  on every command except help, completion, `config write`; tree-walking
+  test. `vmtool server` now HTTPS + hash only. From here the binary needs
+  `just token` + `just install` to run.
+- Commits: 0a3aaf3

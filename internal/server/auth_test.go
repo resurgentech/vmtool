@@ -189,7 +189,7 @@ func TestAuthHeaderParsing(t *testing.T) {
 		{"ok lower scheme", []string{"bearer " + testToken}, 200},
 		{"ok upper scheme", []string{"BEARER " + testToken}, 200},
 	} {
-		r := httptest.NewRequest(http.MethodGet, "/metal", nil)
+		r := httptest.NewRequest(http.MethodGet, "/v1/metal", nil)
 		for _, v := range tc.headers {
 			r.Header.Add("Authorization", v)
 		}
@@ -205,7 +205,7 @@ func TestAuthHeaderParsing(t *testing.T) {
 
 func TestAuthUnknownPath(t *testing.T) {
 	h := authedServer().Handler()
-	for _, p := range []string{"/nope", "/vms/x/nope", "//openapi.yaml", "/x/../vms"} {
+	for _, p := range []string{"/nope", "/v1/hosts/x/vms/x/nope", "//openapi.yaml", "/x/../v1/hosts/x/vms"} {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, p, nil))
 		check401(t, rec, "GET "+p)
@@ -222,7 +222,7 @@ func TestAuthUnknownPath(t *testing.T) {
 func TestAuthBeforeBody(t *testing.T) {
 	h := authedServer().Handler()
 	big := bytes.Repeat([]byte("a"), 2<<20)
-	r := httptest.NewRequest(http.MethodPost, "/vms", bytes.NewReader(big))
+	r := httptest.NewRequest(http.MethodPost, "/v1/hosts/x/vms", bytes.NewReader(big))
 	r.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, r)
@@ -232,7 +232,7 @@ func TestAuthBeforeBody(t *testing.T) {
 // A Config with no token_sha256 must not authenticate anything.
 func TestAuthEmptyHashRejects(t *testing.T) {
 	h := (&Server{Config: &config.Config{}}).Handler()
-	r := httptest.NewRequest(http.MethodGet, "/metal", nil)
+	r := httptest.NewRequest(http.MethodGet, "/v1/metal", nil)
 	r.Header.Set("Authorization", "Bearer "+testToken)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, r)
@@ -253,7 +253,7 @@ func TestAuthTokenNeverLogged(t *testing.T) {
 	buf := captureSlog(t)
 	h := authedServer().Handler()
 	for _, tok := range []string{testToken, wrongToken} {
-		r := httptest.NewRequest(http.MethodGet, "/metal", nil)
+		r := httptest.NewRequest(http.MethodGet, "/v1/metal", nil)
 		r.Header.Set("Authorization", "Bearer "+tok)
 		h.ServeHTTP(httptest.NewRecorder(), r)
 	}
@@ -374,7 +374,7 @@ func TestHTTPServerRules(t *testing.T) {
 // With no Config, the handler authenticates nothing (there is no unauthenticated mode).
 func TestAuthNilConfigRejects(t *testing.T) {
 	h := (&Server{}).Handler()
-	r := httptest.NewRequest(http.MethodGet, "/metal", nil)
+	r := httptest.NewRequest(http.MethodGet, "/v1/metal", nil)
 	r.Header.Set("Authorization", "Bearer "+testToken)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, r)
@@ -442,14 +442,14 @@ func TestServeTLS(t *testing.T) {
 	if c := do("/openapi.yaml", ""); c != 200 {
 		t.Errorf("docs without token: %d", c)
 	}
-	if c := do("/metal", ""); c != 401 {
-		t.Errorf("/metal without token: %d", c)
+	if c := do("/v1/metal", ""); c != 401 {
+		t.Errorf("/v1/metal without token: %d", c)
 	}
-	if c := do("/metal", wrongToken); c != 401 {
-		t.Errorf("/metal wrong token: %d", c)
+	if c := do("/v1/metal", wrongToken); c != 401 {
+		t.Errorf("/v1/metal wrong token: %d", c)
 	}
-	if c := do("/metal", testToken); c != 200 {
-		t.Errorf("/metal with token: %d", c)
+	if c := do("/v1/metal", testToken); c != 200 {
+		t.Errorf("/v1/metal with token: %d", c)
 	}
 
 	// Plain HTTP to the TLS port does not get an API response.

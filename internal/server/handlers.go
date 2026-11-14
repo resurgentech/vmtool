@@ -2,23 +2,31 @@ package server
 
 import (
 	"context"
+	"errors"
 
 	"github.com/jaredeh/vmtool/internal/api"
 	"github.com/jaredeh/vmtool/internal/app"
+	"github.com/jaredeh/vmtool/internal/buildinfo"
+	"github.com/jaredeh/vmtool/internal/hosts"
 	"github.com/jaredeh/vmtool/pkg/vmtool"
 )
 
 type handlers struct {
 	svc    *app.Service
 	listen string
+	// hosts maps {host} to a Manager; chain fills it when nil.
+	hosts *hosts.Resolver
 }
 
-func (h *handlers) withManager(fn func(m *vmtool.Manager) (any, error)) (any, error) {
-	m, err := vmtool.NewManager()
+// withManager resolves host first, so an unknown host never touches libvirt,
+// then runs fn on its Manager and releases it. An unknown host comes back as
+// an error that kindOf reports as KindNotFound.
+func (h *handlers) withManager(host string, fn func(m app.Manager) (any, error)) (any, error) {
+	m, done, err := h.hosts.Resolve(host)
 	if err != nil {
 		return nil, err
 	}
-	defer m.Close()
+	defer done()
 	return fn(m)
 }
 
@@ -61,7 +69,7 @@ func kindOf(err error) app.Kind {
 	if app.AsError(err, &ae) {
 		return ae.Kind
 	}
-	if vmtool.IsNotFound(err) {
+	if errors.Is(err, hosts.ErrUnknownHost) || vmtool.IsNotFound(err) {
 		return app.KindNotFound
 	}
 	return app.KindInternal
@@ -85,12 +93,15 @@ func derefInt(p *int) uint {
 	return uint(*p)
 }
 
-func (h *handlers) ListVMs(ctx context.Context, _ api.ListVMsRequestObject) (api.ListVMsResponseObject, error) {
-	v, err := h.withManager(func(m *vmtool.Manager) (any, error) {
+func (h *handlers) ListVMs(ctx context.Context, req api.ListVMsRequestObject) (api.ListVMsResponseObject, error) {
+	v, err := h.withManager(req.Host, func(m app.Manager) (any, error) {
 		return h.svc.ListVMs(ctx, m)
 	})
 	if err != nil {
-		return api.ListVMs500JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
+		if kindOf(err) == app.KindNotFound {
+			return api.ListVMs404JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
+		}
+		return api.ListVMs500JSONResponse(apiErr(err)), nil
 	}
 	vms := v.([]vmtool.VMInfo)
 	out := make([]api.VMInfo, len(vms))
@@ -101,7 +112,7 @@ func (h *handlers) ListVMs(ctx context.Context, _ api.ListVMsRequestObject) (api
 }
 
 func (h *handlers) GetVM(ctx context.Context, req api.GetVMRequestObject) (api.GetVMResponseObject, error) {
-	v, err := h.withManager(func(m *vmtool.Manager) (any, error) {
+	v, err := h.withManager(req.Host, func(m app.Manager) (any, error) {
 		return h.svc.GetVM(ctx, m, req.Name)
 	})
 	if err != nil {
@@ -148,7 +159,7 @@ func (h *handlers) CreateVM(ctx context.Context, req api.CreateVMRequestObject) 
 		in.ExtraVars = map[string]string(*b.ExtraVars)
 	}
 
-	v, err := h.withManager(func(m *vmtool.Manager) (any, error) {
+	v, err := h.withManager(req.Host, func(m app.Manager) (any, error) {
 		info, e := h.svc.CreateVM(ctx, m, in)
 		if e != nil {
 			return info, e
@@ -173,7 +184,7 @@ func (h *handlers) CreateVM(ctx context.Context, req api.CreateVMRequestObject) 
 
 func (h *handlers) DeleteVM(ctx context.Context, req api.DeleteVMRequestObject) (api.DeleteVMResponseObject, error) {
 	noclone := derefBool(req.Params.Noclone)
-	_, err := h.withManager(func(m *vmtool.Manager) (any, error) {
+	_, err := h.withManager(req.Host, func(m app.Manager) (any, error) {
 		return nil, h.svc.DeleteVM(ctx, m, req.Name, noclone)
 	})
 	if err != nil {
@@ -186,7 +197,7 @@ func (h *handlers) DeleteVM(ctx context.Context, req api.DeleteVMRequestObject) 
 }
 
 func (h *handlers) StartVM(ctx context.Context, req api.StartVMRequestObject) (api.StartVMResponseObject, error) {
-	v, err := h.withManager(func(m *vmtool.Manager) (any, error) {
+	v, err := h.withManager(req.Host, func(m app.Manager) (any, error) {
 		return h.svc.StartVM(ctx, m, req.Name)
 	})
 	if err != nil {
@@ -199,7 +210,7 @@ func (h *handlers) StartVM(ctx context.Context, req api.StartVMRequestObject) (a
 }
 
 func (h *handlers) StopVM(ctx context.Context, req api.StopVMRequestObject) (api.StopVMResponseObject, error) {
-	v, err := h.withManager(func(m *vmtool.Manager) (any, error) {
+	v, err := h.withManager(req.Host, func(m app.Manager) (any, error) {
 		return h.svc.StopVM(ctx, m, req.Name)
 	})
 	if err != nil {
@@ -212,7 +223,7 @@ func (h *handlers) StopVM(ctx context.Context, req api.StopVMRequestObject) (api
 }
 
 func (h *handlers) ResumeVM(ctx context.Context, req api.ResumeVMRequestObject) (api.ResumeVMResponseObject, error) {
-	v, err := h.withManager(func(m *vmtool.Manager) (any, error) {
+	v, err := h.withManager(req.Host, func(m app.Manager) (any, error) {
 		return h.svc.ResumeVM(ctx, m, req.Name)
 	})
 	if err != nil {
@@ -225,7 +236,7 @@ func (h *handlers) ResumeVM(ctx context.Context, req api.ResumeVMRequestObject) 
 }
 
 func (h *handlers) PoweroffVM(ctx context.Context, req api.PoweroffVMRequestObject) (api.PoweroffVMResponseObject, error) {
-	v, err := h.withManager(func(m *vmtool.Manager) (any, error) {
+	v, err := h.withManager(req.Host, func(m app.Manager) (any, error) {
 		return h.svc.PoweroffVM(ctx, m, req.Name)
 	})
 	if err != nil {
@@ -238,7 +249,7 @@ func (h *handlers) PoweroffVM(ctx context.Context, req api.PoweroffVMRequestObje
 }
 
 func (h *handlers) RebootVM(ctx context.Context, req api.RebootVMRequestObject) (api.RebootVMResponseObject, error) {
-	v, err := h.withManager(func(m *vmtool.Manager) (any, error) {
+	v, err := h.withManager(req.Host, func(m app.Manager) (any, error) {
 		return h.svc.RebootVM(ctx, m, req.Name)
 	})
 	if err != nil {
@@ -254,7 +265,7 @@ func (h *handlers) SetAutostart(ctx context.Context, req api.SetAutostartRequest
 	if req.Body == nil {
 		return api.SetAutostart400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: "request body required"}}, nil
 	}
-	v, err := h.withManager(func(m *vmtool.Manager) (any, error) {
+	v, err := h.withManager(req.Host, func(m app.Manager) (any, error) {
 		return h.svc.SetAutostart(ctx, m, req.Name, req.Body.Enabled)
 	})
 	if err != nil {
@@ -270,7 +281,7 @@ func (h *handlers) RunVMCommand(ctx context.Context, req api.RunVMCommandRequest
 	if req.Body == nil || len(req.Body.Command) == 0 {
 		return api.RunVMCommand400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: "command is required"}}, nil
 	}
-	v, err := h.withManager(func(m *vmtool.Manager) (any, error) {
+	v, err := h.withManager(req.Host, func(m app.Manager) (any, error) {
 		return h.svc.RunCommand(ctx, m, req.Name, req.Body.Command)
 	})
 	if err != nil {
@@ -295,7 +306,7 @@ func (h *handlers) RunPlaybook(ctx context.Context, req api.RunPlaybookRequestOb
 	if req.Body == nil || req.Body.Playbook == "" {
 		return api.RunPlaybook400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: "playbook is required"}}, nil
 	}
-	v, err := h.withManager(func(m *vmtool.Manager) (any, error) {
+	v, err := h.withManager(req.Host, func(m app.Manager) (any, error) {
 		var extra map[string]string
 		if req.Body.ExtraVars != nil {
 			extra = map[string]string(*req.Body.ExtraVars)
@@ -327,7 +338,7 @@ func (h *handlers) MigrateDisk(ctx context.Context, req api.MigrateDiskRequestOb
 	if req.Body == nil || req.Body.Pool == "" {
 		return api.MigrateDisk400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: "pool is required"}}, nil
 	}
-	v, err := h.withManager(func(m *vmtool.Manager) (any, error) {
+	v, err := h.withManager(req.Host, func(m app.Manager) (any, error) {
 		return h.svc.MigrateDisk(ctx, m, req.Name, req.Body.Pool)
 	})
 	if err != nil {
@@ -346,7 +357,7 @@ func (h *handlers) ResizeDisk(ctx context.Context, req api.ResizeDiskRequestObje
 	if req.Body == nil || req.Body.Size < 1 {
 		return api.ResizeDisk400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: "size must be > 0"}}, nil
 	}
-	v, err := h.withManager(func(m *vmtool.Manager) (any, error) {
+	v, err := h.withManager(req.Host, func(m app.Manager) (any, error) {
 		return h.svc.ResizeDisk(ctx, m, req.Name, uint(req.Body.Size), vmtool.DefaultAuth())
 	})
 	if err != nil {
@@ -370,7 +381,7 @@ func (h *handlers) AddDisk(ctx context.Context, req api.AddDiskRequestObject) (a
 	if req.Body == nil || req.Body.Size < 1 {
 		return api.AddDisk400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: "size must be > 0"}}, nil
 	}
-	v, err := h.withManager(func(m *vmtool.Manager) (any, error) {
+	v, err := h.withManager(req.Host, func(m app.Manager) (any, error) {
 		return h.svc.AddDisk(ctx, m, req.Name, uint(req.Body.Size), derefStr(req.Body.Pool))
 	})
 	if err != nil {
@@ -386,32 +397,41 @@ func (h *handlers) AddDisk(ctx context.Context, req api.AddDiskRequestObject) (a
 	return api.AddDisk200JSONResponse{Vm: toAPI(&res.VM), Path: res.Path, Target: res.Target}, nil
 }
 
-func (h *handlers) ListNetworks(ctx context.Context, _ api.ListNetworksRequestObject) (api.ListNetworksResponseObject, error) {
-	v, err := h.withManager(func(m *vmtool.Manager) (any, error) {
+func (h *handlers) ListNetworks(ctx context.Context, req api.ListNetworksRequestObject) (api.ListNetworksResponseObject, error) {
+	v, err := h.withManager(req.Host, func(m app.Manager) (any, error) {
 		return h.svc.ListNetworks(ctx, m)
 	})
 	if err != nil {
-		return api.ListNetworks500JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
+		if kindOf(err) == app.KindNotFound {
+			return api.ListNetworks404JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
+		}
+		return api.ListNetworks500JSONResponse(apiErr(err)), nil
 	}
 	return api.ListNetworks200JSONResponse(v.([]string)), nil
 }
 
-func (h *handlers) ListBridges(ctx context.Context, _ api.ListBridgesRequestObject) (api.ListBridgesResponseObject, error) {
-	v, err := h.withManager(func(m *vmtool.Manager) (any, error) {
+func (h *handlers) ListBridges(ctx context.Context, req api.ListBridgesRequestObject) (api.ListBridgesResponseObject, error) {
+	v, err := h.withManager(req.Host, func(m app.Manager) (any, error) {
 		return h.svc.ListBridges(ctx, m)
 	})
 	if err != nil {
-		return api.ListBridges500JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
+		if kindOf(err) == app.KindNotFound {
+			return api.ListBridges404JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
+		}
+		return api.ListBridges500JSONResponse(apiErr(err)), nil
 	}
 	return api.ListBridges200JSONResponse(v.([]string)), nil
 }
 
-func (h *handlers) ListImages(ctx context.Context, _ api.ListImagesRequestObject) (api.ListImagesResponseObject, error) {
-	v, err := h.withManager(func(m *vmtool.Manager) (any, error) {
+func (h *handlers) ListImages(ctx context.Context, req api.ListImagesRequestObject) (api.ListImagesResponseObject, error) {
+	v, err := h.withManager(req.Host, func(m app.Manager) (any, error) {
 		return h.svc.ListImages(ctx, m)
 	})
 	if err != nil {
-		return api.ListImages500JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
+		if kindOf(err) == app.KindNotFound {
+			return api.ListImages404JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
+		}
+		return api.ListImages500JSONResponse(apiErr(err)), nil
 	}
 	return api.ListImages200JSONResponse(v.(map[string][]string)), nil
 }
@@ -421,7 +441,7 @@ func (h *handlers) DeleteImage(ctx context.Context, req api.DeleteImageRequestOb
 	if req.Params.Pool != nil && *req.Params.Pool != "" {
 		pool = *req.Params.Pool
 	}
-	_, err := h.withManager(func(m *vmtool.Manager) (any, error) {
+	_, err := h.withManager(req.Host, func(m app.Manager) (any, error) {
 		return nil, h.svc.DeleteImage(ctx, m, req.Name, pool)
 	})
 	if err != nil {
@@ -433,12 +453,15 @@ func (h *handlers) DeleteImage(ctx context.Context, req api.DeleteImageRequestOb
 	return api.DeleteImage204Response{}, nil
 }
 
-func (h *handlers) ListPools(ctx context.Context, _ api.ListPoolsRequestObject) (api.ListPoolsResponseObject, error) {
-	v, err := h.withManager(func(m *vmtool.Manager) (any, error) {
+func (h *handlers) ListPools(ctx context.Context, req api.ListPoolsRequestObject) (api.ListPoolsResponseObject, error) {
+	v, err := h.withManager(req.Host, func(m app.Manager) (any, error) {
 		return h.svc.ListPools(ctx, m)
 	})
 	if err != nil {
-		return api.ListPools500JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
+		if kindOf(err) == app.KindNotFound {
+			return api.ListPools404JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
+		}
+		return api.ListPools500JSONResponse(apiErr(err)), nil
 	}
 	pools := v.([]vmtool.PoolInfo)
 	out := make([]api.PoolInfo, len(pools))
@@ -452,12 +475,15 @@ func (h *handlers) CreatePool(ctx context.Context, req api.CreatePoolRequestObje
 	if req.Body == nil || req.Body.Name == "" || req.Body.Path == "" {
 		return api.CreatePool400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: "name and path are required"}}, nil
 	}
-	_, err := h.withManager(func(m *vmtool.Manager) (any, error) {
+	_, err := h.withManager(req.Host, func(m app.Manager) (any, error) {
 		return nil, h.svc.CreatePool(ctx, m, req.Body.Name, req.Body.Path)
 	})
 	if err != nil {
 		if kindOf(err) == app.KindInvalid {
 			return api.CreatePool400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
+		}
+		if kindOf(err) == app.KindNotFound {
+			return api.CreatePool404JSONResponse(apiErr(err)), nil
 		}
 		return api.CreatePool500JSONResponse(apiErr(err)), nil
 	}
@@ -470,4 +496,25 @@ func (h *handlers) ListPlaybooks(_ context.Context, _ api.ListPlaybooksRequestOb
 		return api.ListPlaybooks500JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
 	}
 	return api.ListPlaybooks200JSONResponse(pbs), nil
+}
+
+func (h *handlers) GetVersion(_ context.Context, _ api.GetVersionRequestObject) (api.GetVersionResponseObject, error) {
+	sw, err := api.GetSwagger()
+	if err != nil {
+		return nil, err
+	}
+	return api.GetVersion200JSONResponse{
+		ApiVersion:   sw.Info.Version,
+		BuildVersion: buildinfo.Version(),
+		Host:         h.hosts.Local(),
+	}, nil
+}
+
+func (h *handlers) ListHosts(_ context.Context, _ api.ListHostsRequestObject) (api.ListHostsResponseObject, error) {
+	list := h.hosts.List()
+	out := make([]api.HostInfo, len(list))
+	for i, x := range list {
+		out[i] = api.HostInfo{Name: x.Name, Role: api.HostInfoRole(x.Role), Local: x.Local}
+	}
+	return api.ListHosts200JSONResponse(out), nil
 }

@@ -58,9 +58,21 @@ is no plain-HTTP or unauthenticated mode.
 
 ## URL versioning
 
-Paths are **unversioned** (`/vms`, `/pools`, …). vmtool is a local single-binary
-tool with no lagging field clients. Revisit `/api/v1` only when a second consumer
-cannot upgrade in lockstep.
+Paths are versioned: every route except the docs routes and `GET /version`
+lives under `/v1`. Everything that acts on one hypervisor is host-scoped,
+`/v1/hosts/{host}/{vms,networks,bridges,images,pools}[...]`; `/v1/hosts`,
+`/v1/playbooks` and `/v1/metal[...]` are global. A `{host}` the server does
+not serve is `404` with a message naming the hosts it does.
+
+`GET /version` is unversioned so a client built for another API version can
+still read it. It returns `api_version` (the spec's `info.version`, read from
+the embedded spec at runtime), `build_version` (module version or VCS
+revision) and `host` (the server's own name). It needs the bearer token like
+every non-docs route.
+
+A breaking change bumps the major version in `info.version` and the path
+prefix (`/v2/...`). Clients require an exact `api_version` match and refuse a
+server that reports anything else.
 
 ## GET / pattern
 

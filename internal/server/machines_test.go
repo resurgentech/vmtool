@@ -36,7 +36,7 @@ func TestMachineRoutes(t *testing.T) {
 		return res
 	}
 
-	res := get("/metal")
+	res := get("/v1/metal")
 	var list []map[string]any
 	if err := json.NewDecoder(res.Body).Decode(&list); err != nil || res.StatusCode != 200 || len(list) != 0 {
 		t.Fatalf("empty list: %d %v %v", res.StatusCode, list, err)
@@ -47,12 +47,12 @@ func TestMachineRoutes(t *testing.T) {
 		res  *http.Response
 		want int
 	}{
-		{"get missing", get("/metal/nuc1"), 404},
-		{"cmd missing", post("/metal/nuc1/cmd", map[string]any{"command": []string{"true"}}), 404},
-		{"reboot missing", post("/metal/nuc1/reboot", nil), 404},
-		{"playbook commission", post("/metal/nuc1/playbook", map[string]any{"playbook": "commission.yml"}), 400},
-		{"add commission metal", post("/metal", map[string]any{"name": "nuc1", "host": "10.0.0.42", "commission": true}), 400},
-		{"add bad kind", post("/metal", map[string]any{"name": "nuc1", "host": "10.0.0.42", "kind": "vm"}), 400},
+		{"get missing", get("/v1/metal/nuc1"), 404},
+		{"cmd missing", post("/v1/metal/nuc1/cmd", map[string]any{"command": []string{"true"}}), 404},
+		{"reboot missing", post("/v1/metal/nuc1/reboot", nil), 404},
+		{"playbook commission", post("/v1/metal/nuc1/playbook", map[string]any{"playbook": "commission.yml"}), 400},
+		{"add commission metal", post("/v1/metal", map[string]any{"name": "nuc1", "host": "10.0.0.42", "commission": true}), 400},
+		{"add bad kind", post("/v1/metal", map[string]any{"name": "nuc1", "host": "10.0.0.42", "kind": "vm"}), 400},
 	} {
 		if tc.res.StatusCode != tc.want {
 			t.Errorf("%s: status %d, want %d", tc.name, tc.res.StatusCode, tc.want)
@@ -63,7 +63,7 @@ func TestMachineRoutes(t *testing.T) {
 	if err := vmtool.SaveMachine(vmtool.Machine{Name: "nuc1", Kind: vmtool.MachineMetal, Host: "192.0.2.1"}); err != nil {
 		t.Fatal(err)
 	}
-	req, _ := http.NewRequest(http.MethodDelete, ts.URL+"/metal/nuc1", nil)
+	req, _ := http.NewRequest(http.MethodDelete, ts.URL+"/v1/metal/nuc1", nil)
 	dres, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)

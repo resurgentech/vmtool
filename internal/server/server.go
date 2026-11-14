@@ -13,6 +13,7 @@ import (
 	"github.com/jaredeh/vmtool/internal/api"
 	"github.com/jaredeh/vmtool/internal/app"
 	"github.com/jaredeh/vmtool/internal/config"
+	"github.com/jaredeh/vmtool/internal/hosts"
 )
 
 // Server is the vmtool REST API.
@@ -35,6 +36,7 @@ func (s *Server) Handler() http.Handler {
 	h := &handlers{
 		svc:    &app.Service{PlaybookDir: s.PlaybookDir},
 		listen: s.Listen,
+		hosts:  hosts.New(s.Config),
 	}
 	var hash string
 	if s.Config != nil {
@@ -54,6 +56,9 @@ func handlerFor(h *handlers) http.Handler { return chain(h, nil) }
 func chain(h *handlers, auth func(http.Handler) http.Handler) http.Handler {
 	if h.svc == nil {
 		h.svc = &app.Service{PlaybookDir: "ansible/playbooks"}
+	}
+	if h.hosts == nil {
+		h.hosts = hosts.New(nil)
 	}
 	strict := api.NewStrictHandler(h, nil)
 	var next http.Handler = withMaxBytes(withRequest(api.HandlerFromMux(strict, http.NewServeMux())))

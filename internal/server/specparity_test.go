@@ -92,7 +92,7 @@ func TestNoConsoleInSpec(t *testing.T) {
 
 func TestConsoleRoutesGone(t *testing.T) {
 	h := handlerFor(&handlers{})
-	for _, p := range []string{"/vms/x/console", "/metal/x/console"} {
+	for _, p := range []string{"/v1/hosts/x/vms/x/console", "/v1/metal/x/console"} {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, p, nil))
 		if rec.Code != http.StatusNotFound {
