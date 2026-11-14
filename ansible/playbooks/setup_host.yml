@@ -31,6 +31,10 @@
     vmtool_configure_firewall: true
     vmtool_bridge: virbr0
 
+    # Port of the vmtool daemon to open in ufw (when ufw is active). Empty = do
+    # nothing; `just prereqs <host>` sets 9473.
+    vmtool_daemon_port: ""
+
     # Off by default: distro Go is often older than the 1.24 vmtool needs.
     vmtool_install_go: false
 
@@ -301,7 +305,7 @@
       changed_when: false
       check_mode: false
       failed_when: false
-      when: vmtool_configure_firewall | bool
+      when: (vmtool_configure_firewall | bool) or (vmtool_daemon_port | string | length > 0)
 
     - name: Allow libvirt guest traffic through ufw
       ansible.builtin.command: "ufw {{ item.rule }}"
@@ -328,6 +332,15 @@
         label: "{{ item.label }}"
       when:
         - vmtool_configure_firewall | bool
+        - vmtool_ufw.rc | default(1) == 0
+        - vmtool_ufw.stdout | default('') is search('Status:\s+active')
+
+    - name: Allow the vmtool daemon port through ufw
+      ansible.builtin.command: "ufw allow {{ vmtool_daemon_port }}/tcp comment 'vmtool daemon'"
+      register: vmtool_ufw_daemon
+      changed_when: "'Skipping' not in vmtool_ufw_daemon.stdout"
+      when:
+        - vmtool_daemon_port | string | length > 0
         - vmtool_ufw.rc | default(1) == 0
         - vmtool_ufw.stdout | default('') is search('Status:\s+active')
 

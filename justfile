@@ -11,6 +11,9 @@ bao_ca_path := "kv/infra/labtwo/selfsigned_cert"
 cert_days := "825"
 # vmtool directory on remote hosts; empty means /home/<ssh_user>/vmtool
 remote_dir := ""
+# Minimum Go on a hypervisor: the first release that honours GOTOOLCHAIN=auto,
+# which then fetches the toolchain named in go.mod.
+go_min := "1.21"
 
 default:
     @just --list
@@ -31,9 +34,13 @@ cert host:
 install:
     VMTOOL_ROOT="{{ root }}" VMTOOL_DOMAIN="{{ domain }}" BAO_CA_PATH="{{ bao_ca_path }}" CERT_DAYS="{{ cert_days }}" "{{ root }}/scripts/install.sh"
 
-# Install host prerequisites (packages, libvirt, default network + pool)
+# Install host prerequisites (packages, libvirt, default network + pool); `just prereqs <host>` does it over ssh
 prereqs *ARGS:
-    "{{ root }}/scripts/prereqs.sh" {{ ARGS }}
+    VMTOOL_ROOT="{{ root }}" "{{ root }}/scripts/prereqs.sh" {{ ARGS }}
+
+# Build vmtool on <host> over ssh, certify it, write its config.yml and run it as a systemd service
+deploy host:
+    VMTOOL_ROOT="{{ root }}" VMTOOL_DOMAIN="{{ domain }}" BAO_CA_PATH="{{ bao_ca_path }}" CERT_DAYS="{{ cert_days }}" REMOTE_DIR="{{ remote_dir }}" GO_MIN="{{ go_min }}" "{{ root }}/scripts/deploy.sh" "{{ host }}"
 
 # Build ./vmtool
 build:

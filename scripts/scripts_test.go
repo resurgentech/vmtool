@@ -258,7 +258,7 @@ func TestJustSummary(t *testing.T) {
 	for _, r := range strings.Fields(string(out)) {
 		have[r] = true
 	}
-	for _, want := range []string{"token", "token-fetch", "cert", "install"} {
+	for _, want := range []string{"token", "token-fetch", "cert", "install", "deploy", "prereqs"} {
 		if !have[want] {
 			t.Errorf("just --summary lacks %q: %s", want, out)
 		}
