@@ -67,13 +67,9 @@ func (e *env) gate() error {
 	case err != nil:
 		return &gateError{err: err, msg: "vmtool: " + err.Error()}
 	}
-	cfg, err := config.Load(e.dir)
-	switch {
-	case errors.Is(err, config.ErrNotFound):
-		return &gateError{err: err, msg: fmt.Sprintf("vmtool: no %s in %s; run 'just install' (or 'just deploy <host>' on a hypervisor)",
-			config.FileName, e.dir)}
-	case err != nil:
-		return &gateError{err: err, msg: "vmtool: " + err.Error()}
+	cfg, err := e.loadConfig()
+	if err != nil {
+		return err
 	}
 	if !config.Check(tok, cfg.TokenSHA256) {
 		return &gateError{err: config.ErrTokenMismatch, msg: fmt.Sprintf("vmtool: %s does not match token_sha256 in %s; run 'just token-fetch', or 'just install' after 'just token'",
@@ -81,6 +77,42 @@ func (e *env) gate() error {
 	}
 	e.cfg, e.token = cfg, tok
 	return nil
+}
+
+// loadConfig loads config.yml, mapping failures to a *gateError.
+func (e *env) loadConfig() (*config.Config, error) {
+	cfg, err := config.Load(e.dir)
+	switch {
+	case errors.Is(err, config.ErrNotFound):
+		return nil, &gateError{err: err, msg: fmt.Sprintf("vmtool: no %s in %s; run 'just install' (or 'just deploy <host>' on a hypervisor)",
+			config.FileName, e.dir)}
+	case err != nil:
+		return nil, &gateError{err: err, msg: "vmtool: " + err.Error()}
+	}
+	return cfg, nil
+}
+
+// serverGate is the gate for `vmtool server`: a valid config.yml with
+// token_sha256, but no local token. A hypervisor holds only the hash (deploy
+// writes config.yml with --token-stdin and stores no plain token), and the
+// server checks the bearer token of every request it serves against the hash.
+// The server itself further requires tls_cert and tls_key.
+func (e *env) serverGate() error {
+	cfg, err := e.loadConfig()
+	if err != nil {
+		return err
+	}
+	if cfg.TokenSHA256 == "" {
+		return &gateError{err: config.ErrTokenMismatch, msg: fmt.Sprintf("vmtool: %s has no token_sha256; run 'just install' (or 'just deploy <host>' on a hypervisor)",
+			config.FileName)}
+	}
+	e.cfg = cfg
+	return nil
+}
+
+// isServerCmd reports whether cmd is the top-level `server` command.
+func isServerCmd(cmd *cobra.Command) bool {
+	return cmd.Name() == "server" && cmd.HasParent() && !cmd.Parent().HasParent()
 }
 
 // exemptFromGate reports whether cmd runs without a valid token: cobra's
@@ -111,7 +143,8 @@ func newRootCmd(e *env) *cobra.Command {
 
 Every command except help, completion and 'config write' needs config.yml in
 the working directory and VMTOOL_TOKEN (environment, else .env) matching its
-token_sha256.`,
+token_sha256. 'server' needs config.yml with token_sha256 but no local token;
+it checks the bearer token of every request instead.`,
 		// The token gate. No subcommand defines its own PersistentPreRun(E)
 		// (cobra would run only the nearest one); TestGateEveryCommand checks
 		// every command in the tree is refused without a valid token.
@@ -119,7 +152,11 @@ token_sha256.`,
 			if exemptFromGate(cmd) {
 				return nil
 			}
-			if err := e.gate(); err != nil {
+			gate := e.gate
+			if isServerCmd(cmd) {
+				gate = e.serverGate
+			}
+			if err := gate(); err != nil {
 				// One line, printed once by main; no usage block.
 				cmd.SilenceUsage = true
 				cmd.SilenceErrors = true

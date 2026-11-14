@@ -30,6 +30,13 @@ var exemptPaths = map[string]bool{
 	"vmtool config write":          true,
 }
 
+// configOnlyPaths need a valid config.yml with token_sha256 but no local
+// token: `vmtool server` on a hypervisor has no .env (deploy writes only the
+// hash) and authenticates every request against the hash itself.
+var configOnlyPaths = map[string]bool{
+	"vmtool server": true,
+}
+
 type gateRun struct {
 	env    *env
 	out    string
@@ -161,6 +168,18 @@ func TestGateEveryCommand(t *testing.T) {
 			dir := writeWorkdir(t, sc.cfg, sc.dotenv)
 			for path, args := range cmds {
 				r := runGate(t, dir, nil, args...)
+				if configOnlyPaths[path] {
+					// The daemon needs a valid config.yml with a hash, not a
+					// local token: every request it serves carries one.
+					wantRun := sc.cfg == goodConfig()
+					if wantRun && (r.err != nil || len(r.ran) != 1) {
+						t.Errorf("%s (config only): err %v, ran %v", path, r.err, r.ran)
+					}
+					if !wantRun && (len(r.ran) != 0 || !isGateErr(r.err)) {
+						t.Errorf("%s (config only): err %v, ran %v, want the gate's error", path, r.err, r.ran)
+					}
+					continue
+				}
 				if exemptPaths[path] {
 					if isGateErr(r.err) || len(r.ran) != 1 {
 						t.Errorf("%s (exempt): err %v, ran %v", path, r.err, r.ran)
