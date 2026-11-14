@@ -106,11 +106,33 @@ func Load(dir string) (*Config, error) {
 	return parse(dir, b)
 }
 
+var (
+	yamlSyntaxLine = regexp.MustCompile(`^yaml: line (\d+):`)
+	yamlTypeLine   = regexp.MustCompile(`^line (\d+):`)
+)
+
+// yamlLine returns " at line N" from a yaml error, or "" when it gives no
+// line. Only the digits are taken, anchored at the start of the message, so
+// no file content can reach the result.
+func yamlLine(err error) string {
+	var te *yaml.TypeError
+	var m []string
+	if errors.As(err, &te) && len(te.Errors) > 0 {
+		m = yamlTypeLine.FindStringSubmatch(te.Errors[0])
+	} else {
+		m = yamlSyntaxLine.FindStringSubmatch(err.Error())
+	}
+	if m == nil {
+		return ""
+	}
+	return " at line " + m[1]
+}
+
 func parse(dir string, b []byte) (*Config, error) {
 	var c Config
 	if err := yaml.Unmarshal(b, &c); err != nil {
-		// yaml errors can quote file content; keep the message generic.
-		return nil, fmt.Errorf("%s: invalid YAML or field types", FileName)
+		// yaml errors can quote file content; name only the line.
+		return nil, fmt.Errorf("%s: invalid YAML or field types%s", FileName, yamlLine(err))
 	}
 	c.Dir = dir
 	if err := c.finish(); err != nil {
@@ -272,7 +294,7 @@ func Write(dir, token string, opts WriteOptions) error {
 	if b, err := os.ReadFile(path); err == nil {
 		var doc yaml.Node
 		if err := yaml.Unmarshal(b, &doc); err != nil {
-			return fmt.Errorf("%s: invalid YAML", FileName)
+			return fmt.Errorf("%s: invalid YAML%s", FileName, yamlLine(err))
 		}
 		if len(doc.Content) > 0 {
 			if doc.Content[0].Kind != yaml.MappingNode {

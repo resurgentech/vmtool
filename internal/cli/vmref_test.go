@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"errors"
 	"strings"
 	"testing"
@@ -65,7 +66,19 @@ func TestVMCommandUsage(t *testing.T) {
 			t.Errorf("%s: Use %q does not name host/vm", name, c.Use)
 		}
 	}
-	if c, _, err := root.Find([]string{"machines", "migrate"}); err != nil || c.Name() != "migrate" {
-		t.Fatalf("machines migrate: %v", err)
+}
+
+// The machines group held only migrate, which is gone. Execute fails at
+// argument validation, before any RunE.
+func TestMachinesCommandsGone(t *testing.T) {
+	for _, args := range [][]string{{"machines"}, {"machines", "migrate"}} {
+		t.Setenv("VMTOOL_TOKEN", "") // belt and braces: never reach a RunE
+		var out, errw bytes.Buffer
+		root, _ := rootFor(t.TempDir(), &out, &errw)
+		root.SetArgs(args)
+		err := root.Execute()
+		if err == nil || !strings.Contains(err.Error(), "unknown command") {
+			t.Errorf("%v: err = %v, want unknown command", args, err)
+		}
 	}
 }

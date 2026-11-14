@@ -193,7 +193,6 @@ it checks the bearer token of every request instead.`,
 		resizeDiskCmd(e),
 		addDiskCmd(e),
 		metalCmd(e),
-		machinesCmd(e),
 		serverCmd(e),
 		configCmd(func() (string, error) { return e.dir, nil }),
 	)

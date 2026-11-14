@@ -245,3 +245,40 @@ func TestLoadRefusesHostNamedLikeMachine(t *testing.T) {
 		t.Fatalf("host dir: %v", err)
 	}
 }
+
+// A mis-pasted token must never reach an error message; the line may.
+const pastedToken = "9f2c4e1ab07d83565c1e2a49bd30f7716a8c5e0d2b94f31c7ea6805d4b3f1a22"
+
+func TestParseErrorNamesLineNotContent(t *testing.T) {
+	setHost(t, "jetfire")
+	cases := map[string]string{
+		"type error":   "name: jetfire\nrole: workstation\nhosts: " + pastedToken + "\n",
+		"syntax error": "name: jetfire\nrole: workstation\ntoken_sha256: " + pastedToken + ": x\n",
+	}
+	for name, body := range cases {
+		dir := t.TempDir()
+		writeFile(t, dir, "config.yml", body)
+		_, err := Load(dir)
+		if err == nil {
+			t.Fatalf("%s: no error", name)
+		}
+		if !strings.Contains(err.Error(), "line 3") || strings.Contains(err.Error(), pastedToken) {
+			t.Errorf("%s: err = %q", name, err)
+		}
+		if want := "config.yml: invalid YAML or field types at line 3"; err.Error() != want {
+			t.Errorf("%s: err = %q, want %q", name, err, want)
+		}
+	}
+}
+
+func TestWriteErrorNamesLineNotContent(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "config.yml", "name: jetfire\nrole: workstation\ntoken_sha256: "+pastedToken+": x\n")
+	err := Write(dir, "tok", WriteOptions{})
+	if err == nil {
+		t.Fatal("no error")
+	}
+	if !strings.Contains(err.Error(), "line 3") || strings.Contains(err.Error(), pastedToken) {
+		t.Errorf("err = %q", err)
+	}
+}

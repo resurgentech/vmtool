@@ -2,7 +2,9 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -26,15 +28,44 @@ and needs VMTOOL_TOKEN in the environment (or in .env there).`,
 			if err != nil {
 				return err
 			}
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), `Host */*
-    ProxyCommand sh -c 'cd %[1]s && exec ./vmtool tunnel %%h'
-    User bot
-    IdentityFile %[1]s/.machines/%%h/id_ed25519
-    IdentitiesOnly yes
-    StrictHostKeyChecking no
-    UserKnownHostsFile /dev/null
-`, dir)
+			block, err := sshConfigBlock(dir)
+			if err != nil {
+				return err
+			}
+			_, err = io.WriteString(cmd.OutOrStdout(), block)
 			return err
 		},
 	}
+}
+
+// sshConfigBlock is the 'Host */*' block for the absolute working directory
+// dir. ssh expands % tokens in both ProxyCommand and IdentityFile, so a %
+// in dir is written %%. ssh runs ProxyCommand as `$SHELL -c "exec <line>"`,
+// so the line is `sh -c '<script>'`: the directory is shell-quoted inside
+// the script and the script is quoted again for the outer shell.
+// IdentityFile uses ssh_config double quotes, where \" and \\ are escapes.
+// A directory with a control character (newline, tab, NUL, ...) cannot be
+// written safely and is an error.
+func sshConfigBlock(dir string) (string, error) {
+	for _, r := range dir {
+		if r < 0x20 || r == 0x7f {
+			return "", fmt.Errorf("ssh-config: working directory %q contains a control character and cannot be written to ssh_config", dir)
+		}
+	}
+	pct := strings.ReplaceAll(dir, "%", "%%")
+	script := "cd " + shellQuote(pct) + " && exec ./vmtool tunnel %h"
+	ident := strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(pct)
+	return fmt.Sprintf(`Host */*
+    ProxyCommand sh -c %s
+    User bot
+    IdentityFile "%s/.machines/%%h/id_ed25519"
+    IdentitiesOnly yes
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
+`, shellQuote(script), ident), nil
+}
+
+// shellQuote single-quotes s for a POSIX shell, writing ' as '\”.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

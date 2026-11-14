@@ -112,7 +112,6 @@ just install        # build, cert, config.yml, systemd unit (vmtool server over 
 ./vmtool hosts                                          # reachability, API version, cert days left
 ./vmtool delete <host>/<name>
 ./vmtool delete jetfire/scratch --noclone               # undefine only, keep the disk
-./vmtool machines migrate [--apply]                     # one-time: move old .machines/<vm>/ to .machines/<host>/<vm>/
 ./vmtool server                                         # HTTPS REST on 127.0.0.1:9473; GET / is Swagger UI
 ```
 

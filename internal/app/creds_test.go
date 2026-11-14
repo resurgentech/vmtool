@@ -100,3 +100,13 @@ func TestDeleteVMForgetsByHostAndName(t *testing.T) {
 		t.Fatalf("Manager.Delete got %v, want the bare VM name", m.deleted)
 	}
 }
+
+func mkCreds(t *testing.T, dir, user string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "password.yml"), []byte("username: "+user+"\npassword: x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
