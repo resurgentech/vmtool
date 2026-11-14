@@ -43,3 +43,12 @@ rewrites.
   ubuntu2604_gui` and `just check` green. Real build (T5) is user-run
   and still open.
 - Commits: the commit that adds this entry ("packer_images T3: ...").
+
+## 2026-11-14 — T6 Docs: list the 26.04 templates
+
+- `CLAUDE.md`: table of all five template dirs, `just
+  generate|validate|check <template>` and `./run generate
+  --template=<dir>`, layout and "adding a distro" made per-template.
+  `README.md` (was empty): short summary and pointer to `CLAUDE.md`.
+  No behaviour change.
+- Commits: the commit that adds this entry ("packer_images T6: ...").
