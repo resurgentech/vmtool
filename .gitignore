@@ -4,3 +4,6 @@
 tmp/
 /ROADMAP.md
 /docs/reports/
+/config.yml
+/tls/
+/image-manifest.yml

@@ -1,0 +1,141 @@
+package cli
+
+import (
+	"bytes"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/jaredeh/vmtool/internal/config"
+)
+
+func runConfig(t *testing.T, dir, stdin string, args ...string) (string, error) {
+	t.Helper()
+	cmd := configCmd(func() (string, error) { return dir, nil })
+	var out, errb bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errb)
+	cmd.SetIn(strings.NewReader(stdin))
+	cmd.SetArgs(args)
+	err := cmd.Execute()
+	return out.String(), err
+}
+
+func TestConfigWriteCreates(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("VMTOOL_TOKEN", "tok-123")
+	out, err := runConfig(t, dir, "", "write", "--name", "jetfire", "--role", "hypervisor",
+		"--listen", "0.0.0.0:9473", "--tls-cert", "tls/a.crt", "--tls-key", "tls/a.key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "tok-123") {
+		t.Fatal("token printed")
+	}
+	st, err := os.Stat(filepath.Join(dir, "config.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Mode().Perm() != 0o600 {
+		t.Fatalf("mode %v", st.Mode().Perm())
+	}
+	c, err := config.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Name != "jetfire" || c.Role != config.RoleHypervisor || c.Listen != "0.0.0.0:9473" ||
+		c.TLSCert != "tls/a.crt" || c.TLSKey != "tls/a.key" || c.TokenSHA256 != config.Hash("tok-123") {
+		t.Fatalf("%+v", c)
+	}
+}
+
+func TestConfigWritePreserves(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("VMTOOL_TOKEN", "newtok")
+	orig := "name: jetfire\ntoken_sha256: " + config.Hash("old") + "\nfuture_key: keepme\nhosts:\n  veritech01: { address: v.labtwo, ssh_user: ubuntu }\n"
+	if err := os.WriteFile(filepath.Join(dir, "config.yml"), []byte(orig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runConfig(t, dir, "", "write", "--listen", "127.0.0.1:1111"); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, "config.yml"))
+	if !strings.Contains(string(b), "future_key: keepme") {
+		t.Fatalf("unknown key lost:\n%s", b)
+	}
+	c, err := config.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Hosts["veritech01"].Address != "v.labtwo" || c.Listen != "127.0.0.1:1111" ||
+		c.Name != "jetfire" || c.TokenSHA256 != config.Hash("newtok") {
+		t.Fatalf("%+v", c)
+	}
+	st, _ := os.Stat(filepath.Join(dir, "config.yml"))
+	if st.Mode().Perm() != 0o600 {
+		t.Fatalf("mode %v", st.Mode().Perm())
+	}
+}
+
+func TestConfigWriteTokenStdin(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("VMTOOL_TOKEN", "")
+	if _, err := runConfig(t, dir, "  piped-tok \nignored\n", "write", "--token-stdin"); err != nil {
+		t.Fatal(err)
+	}
+	c, err := config.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.TokenSHA256 != config.Hash("piped-tok") {
+		t.Fatal("hash not from stdin")
+	}
+}
+
+func TestConfigWriteNoToken(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("VMTOOL_TOKEN", "")
+	_, err := runConfig(t, dir, "", "write")
+	if err == nil {
+		t.Fatal("want error")
+	}
+	if _, serr := os.Stat(filepath.Join(dir, "config.yml")); serr == nil {
+		t.Fatal("config.yml written without token")
+	}
+	if _, err := runConfig(t, dir, "\n", "write", "--token-stdin"); err == nil {
+		t.Fatal("empty stdin token should error")
+	}
+}
+
+func TestConfigWriteRejectsBadRole(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("VMTOOL_TOKEN", "x")
+	if _, err := runConfig(t, dir, "", "write", "--role", "boss"); err == nil {
+		t.Fatal("want error")
+	}
+	if _, serr := os.Stat(filepath.Join(dir, "config.yml")); serr == nil {
+		t.Fatal("invalid config written")
+	}
+}
+
+func TestConfigHost(t *testing.T) {
+	dir := t.TempDir()
+	body := "hosts:\n  veritech01: { address: v.labtwo, ssh_user: ubuntu }\n"
+	if err := os.WriteFile(filepath.Join(dir, "config.yml"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runConfig(t, dir, "", "host", "veritech01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "v.labtwo ubuntu\n" {
+		t.Fatalf("%q", out)
+	}
+	if _, err := runConfig(t, dir, "", "host", "nope"); err == nil || !strings.Contains(err.Error(), "nope") {
+		t.Fatalf("unknown host err: %v", err)
+	}
+	if _, err := runConfig(t, t.TempDir(), "", "host", "veritech01"); err == nil {
+		t.Fatal("missing config should error")
+	}
+}

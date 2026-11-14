@@ -17,3 +17,16 @@ are appended, never edited in; a hook refuses rewrites.
 
 - `/orch init`: `.orch.json`, `docs/LOG.md`, `AGENTS.md`, the
   `CLAUDE.md` lines, `.grok/agents/`; `ROADMAP.md` and `tmp/` ignored.
+
+## 2026-11-14 — T0a Remove the WebSocket console
+
+- Dropped `openVMConsole` / `openMachineConsole` from the spec, regenerated
+  `internal/api`, deleted `internal/server/console.go` + test, wired the
+  strict handler directly; `gorilla/websocket` and `creack/pty` gone.
+- Commits: 0ee7231
+
+## 2026-11-14 — T2 `just token` and `just token-fetch`
+
+- `scripts/token.sh` (generate | fetch), `.env` written atomically 0600, token
+  to OpenBao on stdin only; `scripts/scripts_test.go` with stub `bao`.
+- Commits: 4f07993

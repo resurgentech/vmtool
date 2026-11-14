@@ -1,0 +1,11 @@
+# Copy to config.yml (gitignored). `vmtool config write` creates/updates it and
+# sets token_sha256 from VMTOOL_TOKEN (env or .env). The token itself is never
+# stored here.
+name: jetfire                 # optional; default: short hostname
+role: workstation             # workstation | hypervisor
+listen: 127.0.0.1:9473        # default
+token_sha256: ""              # 64 lowercase hex; set by `vmtool config write`
+tls_cert: tls/jetfire.labtwo.crt
+tls_key: tls/jetfire.labtwo.key
+hosts:                        # workstation only
+  veritech01: { address: veritech01.labtwo, ssh_user: ubuntu }   # port defaults to 9473

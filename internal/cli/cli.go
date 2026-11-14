@@ -47,6 +47,7 @@ func Execute() error {
 		addDiskCmd(),
 		metalCmd(),
 		serverCmd(),
+		configCmd(cwdDir),
 	)
 
 	err := root.Execute()
