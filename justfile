@@ -9,11 +9,16 @@ bao_token_path := "kv/infra/labtwo/vmtool/token"
 domain := "labtwo"
 bao_ca_path := "kv/infra/labtwo/selfsigned_cert"
 cert_days := "825"
-# vmtool directory on remote hosts; empty means /home/<ssh_user>/vmtool
-remote_dir := ""
+# Where the daemon lives on a hypervisor (owned by the vmtool user), and the
+# directory behind its libvirt dir pool "vmtool".
+hv_dir := "/opt/vmtool"
+hv_pool_dir := "/var/lib/vmtool/images"
 # Minimum Go on a hypervisor: the first release that honours GOTOOLCHAIN=auto,
 # which then fetches the toolchain named in go.mod.
 go_min := "1.21"
+# Go that `just prereqs <host>` installs when the host has none (or too old):
+# the `go` line of go.mod (a test keeps them equal).
+go_install_version := "1.24.0"
 
 default:
     @just --list
@@ -28,19 +33,19 @@ token-fetch:
 
 # Issue a TLS cert for <host> from the OpenBao CA (workstation only; remote hosts get it over scp)
 cert host:
-    VMTOOL_ROOT="{{ root }}" VMTOOL_DOMAIN="{{ domain }}" BAO_CA_PATH="{{ bao_ca_path }}" CERT_DAYS="{{ cert_days }}" REMOTE_DIR="{{ remote_dir }}" "{{ root }}/scripts/cert.sh" "{{ host }}"
+    VMTOOL_ROOT="{{ root }}" VMTOOL_DOMAIN="{{ domain }}" BAO_CA_PATH="{{ bao_ca_path }}" CERT_DAYS="{{ cert_days }}" HV_DIR="{{ hv_dir }}" "{{ root }}/scripts/cert.sh" "{{ host }}"
 
 # Build, certify, write config.yml and run vmtool as a systemd service on this machine
 install:
     VMTOOL_ROOT="{{ root }}" VMTOOL_DOMAIN="{{ domain }}" BAO_CA_PATH="{{ bao_ca_path }}" CERT_DAYS="{{ cert_days }}" "{{ root }}/scripts/install.sh"
 
-# Install host prerequisites (packages, libvirt, default network + pool); `just prereqs <host>` does it over ssh
+# Install host prerequisites (packages, libvirt, default network + pool; on a host also the vmtool user, /opt/vmtool and the vmtool pool); `just prereqs <host>` does it over ssh
 prereqs *ARGS:
-    VMTOOL_ROOT="{{ root }}" "{{ root }}/scripts/prereqs.sh" {{ ARGS }}
+    VMTOOL_ROOT="{{ root }}" HV_DIR="{{ hv_dir }}" HV_POOL_DIR="{{ hv_pool_dir }}" GO_MIN="{{ go_min }}" GO_INSTALL_VERSION="{{ go_install_version }}" "{{ root }}/scripts/prereqs.sh" {{ ARGS }}
 
 # Build vmtool on <host> over ssh, certify it, write its config.yml and run it as a systemd service
 deploy host:
-    VMTOOL_ROOT="{{ root }}" VMTOOL_DOMAIN="{{ domain }}" BAO_CA_PATH="{{ bao_ca_path }}" CERT_DAYS="{{ cert_days }}" REMOTE_DIR="{{ remote_dir }}" GO_MIN="{{ go_min }}" "{{ root }}/scripts/deploy.sh" "{{ host }}"
+    VMTOOL_ROOT="{{ root }}" VMTOOL_DOMAIN="{{ domain }}" BAO_CA_PATH="{{ bao_ca_path }}" CERT_DAYS="{{ cert_days }}" HV_DIR="{{ hv_dir }}" GO_MIN="{{ go_min }}" "{{ root }}/scripts/deploy.sh" "{{ host }}"
 
 # Build ./vmtool
 build:

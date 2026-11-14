@@ -9,11 +9,15 @@
 # A first argument that does not start with '-' is a host from config.yml
 # (needs a built ./vmtool and a valid token, as 'vmtool config host' does):
 #   scripts/prereqs.sh veritech01 [ansible-playbook options]
-# That runs the playbook against the host over ssh with a temporary inventory,
-# installing Go (-e vmtool_install_go=true) and opening the daemon port in ufw
-# (-e vmtool_daemon_port=9473), and always asks for the become password.
+# That runs the playbook against the host over ssh with a temporary inventory
+# as a hypervisor (-e vmtool_role=hypervisor): the vmtool user, HV_DIR, the
+# vmtool pool at HV_POOL_DIR, Go only when missing or older than GO_MIN
+# (GO_INSTALL_VERSION is what gets installed), and the daemon port in ufw
+# (-e vmtool_daemon_port=9473). It always asks for the become password.
 # VMTOOL_ROOT (default: this checkout) is where config.yml and vmtool live;
-# VMTOOL_BIN overrides the binary.
+# VMTOOL_BIN overrides the binary. The justfile sets HV_DIR (/opt/vmtool),
+# HV_POOL_DIR (/var/lib/vmtool/images), GO_MIN (1.21) and GO_INSTALL_VERSION
+# (the go line of go.mod); the defaults here match.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 repo="$PWD"
@@ -55,10 +59,20 @@ if [[ -n $host ]]; then
   if [[ ! " $* " == *" -K "* && ! " $* " == *" --ask-become-pass "* ]]; then
     become=(--ask-become-pass)
   fi
+  hv_dir="${HV_DIR:-/opt/vmtool}"
+  hv_pool_dir="${HV_POOL_DIR:-/var/lib/vmtool/images}"
+  go_min="${GO_MIN:-1.21}"
+  go_install="${GO_INSTALL_VERSION:-}"
+  if [[ -z $go_install ]]; then
+    go_install=$(sed -n 's/^go \([0-9][0-9.]*\)$/\1/p' "$repo/go.mod" | head -n1)
+  fi
+  [[ -n $go_install ]] || { echo "ERROR: no Go version for GO_INSTALL_VERSION (go.mod has no go line)." >&2; exit 1; }
   echo "Running $playbook on $host ($ssh_user@$addr)"
   rc=0
-  ansible-playbook -i "$inv" "$playbook" -e "vmtool_hosts=$host" -e vmtool_install_go=true \
-    -e vmtool_daemon_port=9473 "${become[@]}" "$@" || rc=$?
+  ansible-playbook -i "$inv" "$playbook" -e "vmtool_hosts=$host" -e vmtool_role=hypervisor \
+    -e "vmtool_hv_dir=$hv_dir" -e "vmtool_hv_pool_dir=$hv_pool_dir" \
+    -e "vmtool_go_min=$go_min" -e "vmtool_go_install_version=$go_install" \
+    -e vmtool_install_go=true -e vmtool_daemon_port=9473 "${become[@]}" "$@" || rc=$?
   exit "$rc"
 fi
 

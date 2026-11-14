@@ -7,6 +7,11 @@
 #   ansible-playbook ansible/playbooks/setup_host.yml -K \
 #     -e '{"vmtool_extra_pools":[{"name":"fast","path":"/srv/vms"}]}'
 #
+# With -e vmtool_role=hypervisor (what `just prereqs <host>` passes) it also
+# prepares the box to run the daemon: system user `vmtool`, /opt/vmtool, the
+# libvirt dir pool `vmtool` under /var/lib/vmtool/images (instead of a `default`
+# pool), and Go only when none at or above vmtool_go_min is found.
+#
 # Supports Ubuntu/Debian and Omarchy/Arch. Safe to re-run.
 - name: Install vmtool host prerequisites
   hosts: "{{ vmtool_hosts | default('localhost') }}"
@@ -16,6 +21,13 @@
   vars:
     # Account that will run vmtool; it is what gets added to the libvirt group.
     vmtool_user: "{{ ansible_facts.env.SUDO_USER | default(ansible_facts.user_id, true) }}"
+
+    # "" (workstation / local: the default pool, login user in libvirt) or
+    # "hypervisor" (also the vmtool user, vmtool_hv_dir and the vmtool pool).
+    vmtool_role: ""
+    vmtool_hv_user: vmtool
+    vmtool_hv_dir: /opt/vmtool
+    vmtool_hv_pool_dir: /var/lib/vmtool/images
 
     # Path backing the libvirt "default" dir pool. vmtool clones images here.
     vmtool_pool_path: /var/lib/libvirt/images
@@ -35,8 +47,22 @@
     # nothing; `just prereqs <host>` sets 9473.
     vmtool_daemon_port: ""
 
-    # Off by default: distro Go is often older than the 1.24 vmtool needs.
+    # Off by default. On Debian/Ubuntu this installs the upstream Go tarball
+    # (only when the Go that `deploy` would use is missing or older than
+    # vmtool_go_min); on Arch it means pacman's `go`.
     vmtool_install_go: false
+    vmtool_go_min: "1.21"
+    vmtool_go_install_version: "1.24.0"
+
+    # Is the `go env GOVERSION` output in vmtool_go_raw (go1.22.2, go1.24rc1,
+    # "" when Go is missing) at or above vmtool_go_min? Release-candidate and
+    # beta suffixes are ignored: go1.24rc1 counts as 1.24. Anything that does
+    # not start with go<digit> counts as no Go. Tested in scripts/prereqs_test.go.
+    vmtool_go_ok: >-
+      {{ (vmtool_go_raw | default('', true) | trim | regex_replace('^go', '')
+          | regex_replace('^([0-9]+([.][0-9]+)*).*$', '\1')) is version(vmtool_go_min, '>=')
+         if (vmtool_go_raw | default('', true) | trim is match('^go[0-9]'))
+         else false }}
 
     # Extras for packer_images/run (image building), not for running vmtool.
     vmtool_install_packer_deps: false
@@ -67,7 +93,6 @@
       - sshpass
       - openssh
 
-    vmtool_packages_go_debian: [golang-go]
     vmtool_packages_go_arch: [go]
     vmtool_packages_packer_debian: [gettext-base, openssl]
     vmtool_packages_packer_arch: [gettext, openssl, packer]
@@ -151,8 +176,7 @@
       vars:
         _debian: "{{ vmtool_family == 'debian' }}"
         _base: "{{ _debian | ternary(vmtool_packages_debian, vmtool_packages_arch) }}"
-        _go: "{{ (vmtool_install_go | bool)
-                 | ternary(_debian | ternary(vmtool_packages_go_debian, vmtool_packages_go_arch), []) }}"
+        _go: "{{ ((vmtool_install_go | bool) and not _debian) | ternary(vmtool_packages_go_arch, []) }}"
         _packer: "{{ (vmtool_install_packer_deps | bool)
                      | ternary(_debian | ternary(vmtool_packages_packer_debian,
                                                  vmtool_packages_packer_arch), []) }}"
@@ -243,10 +267,142 @@
       ansible.builtin.user:
         name: "{{ vmtool_user }}"
         groups: "{{ ['libvirt'] + (['kvm'] if _kvm_group is not none else []) }}"
+        # A module option: without it the user module replaces the account's
+        # supplementary groups (sudo/wheel included).
+        append: true
       vars:
         _kvm_group: "{{ ansible_facts.getent_group.kvm | default(none, true) }}"
-        append: true
       register: vmtool_groups
+
+    # ------------------------------------------------------ hypervisor account
+
+    - name: Create the vmtool system group
+      ansible.builtin.group:
+        name: "{{ vmtool_hv_user }}"
+        system: true
+        state: present
+      when: vmtool_role == 'hypervisor'
+
+    # No login shell, no sudo; home is the install dir but useradd must not
+    # create it (the file task below sets its owner and mode).
+    - name: Create the vmtool system user
+      ansible.builtin.user:
+        name: "{{ vmtool_hv_user }}"
+        group: "{{ vmtool_hv_user }}"
+        groups: "{{ ['libvirt'] + (['kvm'] if _kvm_group is not none else []) }}"
+        append: true
+        system: true
+        shell: /usr/sbin/nologin
+        home: "{{ vmtool_hv_dir }}"
+        create_home: false
+        state: present
+      vars:
+        _kvm_group: "{{ ansible_facts.getent_group.kvm | default(none, true) }}"
+      when: vmtool_role == 'hypervisor'
+
+    - name: Look up the vmtool uid and gid
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ vmtool_hv_user }}"
+        fail_key: false
+      when: vmtool_role == 'hypervisor'
+
+    - name: Create the vmtool directories
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ item.owner }}"
+        group: "{{ item.owner }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - {path: "{{ vmtool_hv_dir }}", owner: "{{ vmtool_hv_user }}", mode: "0750"}
+        - {path: "{{ vmtool_hv_dir }}/tls", owner: "{{ vmtool_hv_user }}", mode: "0700"}
+        - {path: /var/lib/vmtool, owner: root, mode: "0711"}
+      loop_control:
+        label: "{{ item.path }}"
+      when: vmtool_role == 'hypervisor'
+
+    # ----------------------------------------------------------------------- go
+
+    # Find the Go `deploy` will use: /usr/local/go first, else the login user's
+    # PATH, as that user (no become) in a login shell.
+    - name: Find the Go that deploy would use
+      ansible.builtin.command:
+        argv:
+          - bash
+          - -lc
+          - 'if [ -x /usr/local/go/bin/go ]; then g=/usr/local/go/bin/go; else g=go; fi; "$g" env GOVERSION'
+      become: false
+      register: vmtool_go_found
+      changed_when: false
+      check_mode: false
+      failed_when: false
+      when:
+        - vmtool_install_go | bool
+        - vmtool_family == 'debian'
+
+    - name: Record the Go version found
+      ansible.builtin.set_fact:
+        vmtool_go_raw: "{{ (vmtool_go_found.stdout_lines | default([])) | last | default('') if vmtool_go_found.rc | default(1) == 0 else '' }}"
+      when:
+        - vmtool_install_go | bool
+        - vmtool_family == 'debian'
+
+    - name: Report the Go decision
+      ansible.builtin.debug:
+        msg: >-
+          Go found: {{ vmtool_go_raw | default('', true) | trim | default('none', true) }};
+          minimum {{ vmtool_go_min }}; {{ 'leaving it alone' if vmtool_go_ok | bool
+          else 'installing ' ~ vmtool_go_install_version }}.
+      when:
+        - vmtool_install_go | bool
+        - vmtool_family == 'debian'
+
+    - name: Install the upstream Go toolchain
+      when:
+        - vmtool_install_go | bool
+        - vmtool_family == 'debian'
+        - not (vmtool_go_ok | bool)
+      vars:
+        _arch: "{{ {'x86_64': 'amd64', 'aarch64': 'arm64'}[ansible_facts.architecture] | default('') }}"
+        _tarball: "go{{ vmtool_go_install_version }}.linux-{{ _arch }}.tar.gz"
+        _url: "https://dl.google.com/go/{{ _tarball }}"
+      block:
+        - name: Fail on an architecture without an upstream Go tarball
+          ansible.builtin.fail:
+            msg: "No upstream Go tarball for {{ ansible_facts.architecture }}."
+          when: _arch == ''
+
+        - name: Make a download directory
+          ansible.builtin.tempfile:
+            state: directory
+            prefix: vmtool-go.
+          register: vmtool_go_tmp
+
+        # checksum: the published .sha256 file, verified by get_url.
+        - name: Download the Go tarball
+          ansible.builtin.get_url:
+            url: "{{ _url }}"
+            dest: "{{ vmtool_go_tmp.path }}/{{ _tarball }}"
+            checksum: "sha256:{{ _url }}.sha256"
+            mode: "0600"
+
+        - name: Remove the old /usr/local/go
+          ansible.builtin.file:
+            path: /usr/local/go
+            state: absent
+
+        - name: Unpack Go into /usr/local
+          ansible.builtin.unarchive:
+            src: "{{ vmtool_go_tmp.path }}/{{ _tarball }}"
+            dest: /usr/local
+            remote_src: true
+      always:
+        - name: Remove the download directory
+          ansible.builtin.file:
+            path: "{{ vmtool_go_tmp.path }}"
+            state: absent
+          when: vmtool_go_tmp.path is defined
 
     - name: Point bare virsh at qemu:///system
       ansible.builtin.copy:
@@ -346,9 +502,23 @@
 
     # ------------------------------------------------------------------- pools
 
-    - name: Ensure the default and extra storage pools
+    # A hypervisor gets the vmtool pool and no default pool; this never touches
+    # any other pool. Its XML names the vmtool uid/gid so pool-build/pool-start
+    # keep that ownership.
+    - name: Ensure the storage pools
       ansible.builtin.include_tasks: tasks/libvirt_pool.yml
-      loop: "{{ [{'name': 'default', 'path': vmtool_pool_path}] + vmtool_extra_pools }}"
+      vars:
+        _pw: "{{ (ansible_facts.getent_passwd | default({}))[vmtool_hv_user] | default(['', '', '', '']) }}"
+        _default_pool:
+          - {name: default, path: "{{ vmtool_pool_path }}"}
+        _hv_pool:
+          - name: vmtool
+            path: "{{ vmtool_hv_pool_dir }}"
+            owner: "{{ vmtool_hv_user }}"
+            uid: "{{ _pw[1] }}"
+            gid: "{{ _pw[2] }}"
+            mode: "0711"
+      loop: "{{ (_hv_pool if vmtool_role == 'hypervisor' else _default_pool) + vmtool_extra_pools }}"
       loop_control:
         loop_var: pool
         label: "{{ pool.name }} ({{ pool.path }})"

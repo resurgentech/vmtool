@@ -2,6 +2,40 @@
 # Define, build, start and autostart one dir-type libvirt storage pool.
 # Called from setup_host.yml with loop_var `pool` ({name: ..., path: ...}).
 # Mirrors Manager.CreatePool in pkg/vmtool/libvirt.go.
+#
+# A pool with `owner` (the hypervisor's vmtool pool: owner, uid, gid, mode) is
+# ours: its directory is kept at that owner and mode, and it is defined from XML
+# whose <permissions> name the uid/gid and mode. If a pool of that name already
+# exists with another target path, the play fails and changes nothing.
+
+- name: "Inspect the {{ pool.name }} pool"
+  ansible.builtin.command: "virsh -c qemu:///system pool-info {{ pool.name }}"
+  register: vmtool_pool_info
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: "Read the {{ pool.name }} pool's target path"
+  ansible.builtin.command: "virsh -c qemu:///system pool-dumpxml {{ pool.name }}"
+  register: vmtool_pool_xml
+  changed_when: false
+  check_mode: false
+  when:
+    - pool.owner is defined
+    - vmtool_pool_info.rc == 0
+
+- name: "Refuse a {{ pool.name }} pool that points somewhere else"
+  ansible.builtin.fail:
+    msg: >-
+      libvirt pool {{ pool.name }} already exists with target
+      {{ _have }}, but vmtool wants {{ pool.path }}. Nothing was changed;
+      remove or repoint that pool yourself.
+  vars:
+    _have: "{{ vmtool_pool_xml.stdout | regex_search('<target>\\s*<path>([^<]*)</path>', '\\1') | first | default('') | trim }}"
+  when:
+    - pool.owner is defined
+    - vmtool_pool_info.rc == 0
+    - _have != pool.path
 
 - name: "Check {{ pool.path }}"
   ansible.builtin.stat:
@@ -17,20 +51,46 @@
     owner: root
     group: root
     mode: "0711"
-  when: not vmtool_pool_dir.stat.exists
+  when:
+    - pool.owner is not defined
+    - not vmtool_pool_dir.stat.exists
 
-- name: "Inspect the {{ pool.name }} pool"
-  ansible.builtin.command: "virsh -c qemu:///system pool-info {{ pool.name }}"
-  register: vmtool_pool_info
-  changed_when: false
-  check_mode: false
-  failed_when: false
+# Ours: always keep the owner and mode.
+- name: "Create {{ pool.path }} for {{ pool.owner | default('') }}"
+  ansible.builtin.file:
+    path: "{{ pool.path }}"
+    state: directory
+    owner: "{{ pool.owner }}"
+    group: "{{ pool.owner }}"
+    mode: "{{ pool.mode }}"
+  when: pool.owner is defined
 
 - name: "Define the {{ pool.name }} pool"
   ansible.builtin.command: >-
     virsh -c qemu:///system pool-define-as {{ pool.name }} dir
     --target {{ pool.path }}
-  when: vmtool_pool_info.rc != 0
+  when:
+    - pool.owner is not defined
+    - vmtool_pool_info.rc != 0
+
+- name: "Define the {{ pool.name }} pool with its ownership"
+  ansible.builtin.command:
+    argv: [virsh, -c, "qemu:///system", pool-define, /dev/stdin]
+    stdin: |
+      <pool type='dir'>
+        <name>{{ pool.name }}</name>
+        <target>
+          <path>{{ pool.path }}</path>
+          <permissions>
+            <mode>{{ pool.mode }}</mode>
+            <owner>{{ pool.uid }}</owner>
+            <group>{{ pool.gid }}</group>
+          </permissions>
+        </target>
+      </pool>
+  when:
+    - pool.owner is defined
+    - vmtool_pool_info.rc != 0
 
 - name: "Build the {{ pool.name }} pool"
   ansible.builtin.command: "virsh -c qemu:///system pool-build {{ pool.name }}"

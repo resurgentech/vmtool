@@ -27,7 +27,7 @@ safe to re-run. Any extra arguments go through to `ansible-playbook`:
 
 ```bash
 just prereqs --check --diff                       # dry run
-just prereqs -e vmtool_install_go=true            # also install Go (may be older than 1.24)
+just prereqs -e vmtool_install_go=true            # Debian/Ubuntu: Go tarball if none >= 1.21; Arch: pacman go
 just prereqs -e vmtool_install_packer_deps=true   # extras for packer_images/run
 just prereqs -e vmtool_pool_path=/srv/vms         # back the default pool elsewhere
 
@@ -36,6 +36,29 @@ scripts/prereqs.sh -e '{"vmtool_extra_pools":[{"name":"fast","path":"/srv/vms"}]
 ```
 
 Log out and back in afterwards (or `newgrp libvirt`) to pick up the group.
+
+### Hypervisors
+
+`just prereqs <host>` (a host from `config.yml`) runs the same playbook over
+ssh with `-e vmtool_role=hypervisor` and asks for the sudo password. On top of
+the packages and libvirt it creates:
+
+- the system user and group `vmtool` (no login shell, no sudo, in `libvirt`
+  and, where it exists, `kvm`);
+- `/opt/vmtool` (`vmtool:vmtool 0750`, with `tls/` `0700`), where `just deploy`
+  puts the daemon;
+- `/var/lib/vmtool/images` and a libvirt dir pool `vmtool` on it, owned by
+  `vmtool` (mode `0711`). No `default` pool is created, and no other pool is
+  touched. If a pool called `vmtool` already points somewhere else, the play
+  fails and says so.
+- Go, only when `/usr/local/go/bin/go` (else `go` on the login user's PATH)
+  is missing or older than `go_min` (1.21): the upstream tarball for the
+  `go` line of `go.mod`, checked against its published sha256, replaces
+  `/usr/local/go`. A Go at or above the minimum is left alone.
+
+The paths and versions are variables at the top of the [`justfile`](justfile)
+(`hv_dir`, `hv_pool_dir`, `go_min`, `go_install_version`). Re-running is a
+no-op.
 
 ### Ubuntu / Debian (manual)
 
