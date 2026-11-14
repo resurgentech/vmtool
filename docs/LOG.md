@@ -110,3 +110,11 @@ are appended, never edited in; a hook refuses rewrites.
   cert, config write with token on stdin, unit, GET /version);
   `prereqs <host>`; setup_host.yml opens the daemon port under ufw.
 - Commits: 0980f66
+
+## 2026-11-14 — T11 Remote `app.Manager` and the host resolver
+
+- `internal/remote.Manager` over the generated client (bearer, system
+  trust, exact API version check, 30 s / 30 min timeouts); resolver reaches
+  configured hosts with the CLI token or the request bearer; CLI/TUI/REST
+  act on remote VMs; `--host` on networks/bridges/images/pool.
+- Commits: 34c17bc

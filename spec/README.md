@@ -123,6 +123,9 @@ the body and keeps the error.
 | `ListPools` | `listPools` | `PoolInfo{name,path,active}`. |
 | `CreatePool` | `createPool` | |
 
+| `ImageManifest` (`app.ImageStore`) | `getImageManifest` | New. Optional interface, remote only. `{name, sha256?, size?, foreign, path?}`. |
+| `UploadImage` (`app.ImageStore`) | `uploadImage` | New. `PUT images/{name}`, `application/octet-stream`, `X-Image-SHA256`, `Content-Length`; streamed. |
+
 `Create` is not on `app.Manager`; the workstation's `app.Service.CreateVM`
 composes `cloneVolume`, `resizeVolume`, `defineVM` and `startVM`.
 
@@ -133,6 +136,28 @@ The cleaned path is what reaches libvirt. Names in bodies (`new_name`, volume
 `name`, the VM name in `.../vms/{name}/definition`) must be plain names. The
 check is point-in-time; it is defence in depth for a loopback, token-guarded
 API, not a sandbox.
+
+## Image cache
+
+Hypervisors cache base images in their `default` pool. Each daemon keeps
+`image-manifest.yml` (name -> sha256, size) in its working directory and owns
+a volume only if that manifest lists the name. `getImageManifest` reports an
+entry, or `foreign: true` when a same-named volume exists (any pool, or a
+file in the `default` pool's directory) that the manifest does not list.
+`uploadImage` refuses a foreign name with 409 before reading the body, writes
+`.<name>.part`, verifies the SHA-256, deletes an old volume only if the
+manifest lists it, and moves the file in with a hard link (never an
+overwrite). It is the only route exempt from the 1 MiB body cap
+(`withMaxBytes`); the server sets no overall read timeout, and an upload that
+sends nothing for 2 minutes fails. Both operations are served by hypervisors
+only: a workstation answers 403 for itself, refuses `uploadImage` for every
+host (its `app.CreateVM` uploads to the daemon directly through
+`remote.Manager`) and answers `getImageManifest` for a configured host by
+asking that host's daemon. On the workstation the same file name is a hash
+cache (adds `path` and `mtime`), so an unchanged image is not re-hashed. The
+handler is `uploadImage` in `internal/server/images.go`, served by
+`tunnelMux` (not the strict handler) so it can stream and refuse before the
+body is read.
 
 ## GET / pattern
 

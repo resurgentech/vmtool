@@ -117,6 +117,41 @@ type logEntry struct {
 	output string
 }
 
+// msgSender is tea.Program.Send, set once the program exists. The model holds
+// a pointer so every copy of it sees the same sender.
+type msgSender struct{ fn func(tea.Msg) }
+
+func (s *msgSender) Send(msg tea.Msg) {
+	if s != nil && s.fn != nil {
+		s.fn(msg)
+	}
+}
+
+// progressMsg retitles a running log entry (create's upload progress).
+type progressMsg struct {
+	logIdx int
+	title  string
+}
+
+// uploadTitle is a log title for an upload progress event, or "" when ev is
+// not one.
+func uploadTitle(name string, ev app.ProgressEvent) string {
+	if ev.Stage != "upload" {
+		return ""
+	}
+	switch ev.Status {
+	case "hash":
+		return fmt.Sprintf("creating %s: hashing image...", name)
+	case "progress":
+		pct := int64(100)
+		if ev.Total > 0 {
+			pct = ev.Sent * 100 / ev.Total
+		}
+		return fmt.Sprintf("creating %s: uploading image %d%% (%d / %d MiB)", name, pct, ev.Sent>>20, ev.Total>>20)
+	}
+	return ""
+}
+
 // --- Model ---
 
 type model struct {
@@ -167,6 +202,9 @@ type model struct {
 	// tunnel is how guest SSH and ansible reach VMs (see app.Service.Tunnel);
 	// the CLI passes it, with the verified token, when it starts the TUI.
 	tunnel vmtool.Tunnel
+	// send delivers a message to the running program from a command's
+	// goroutine (create's upload progress); nil outside Run.
+	send *msgSender
 
 	// cached for dynamic net source options
 	bridges  []string
@@ -260,7 +298,12 @@ func (m *model) addLog(title string) int {
 }
 
 func (m model) svc() *app.Service {
-	return (&app.Service{PlaybookDir: m.playbookDir, InventoryPath: m.inventoryPath, HostNames: m.hostNames}).WithTunnel(m.tunnel)
+	s := &app.Service{PlaybookDir: m.playbookDir, InventoryPath: m.inventoryPath, HostNames: m.hostNames}
+	if local := m.manager; local != nil {
+		// create on a remote host uploads the image from this host's pools.
+		s.LocalImages = local.ImagePath
+	}
+	return s.WithTunnel(m.tunnel)
 }
 
 // vmRef names vm on this TUI's host.
@@ -339,6 +382,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.log[idx].status = logStatusError
 		}
 		return m, refresh(m.manager, m.svc())
+
+	case progressMsg:
+		if msg.logIdx >= 0 && msg.logIdx < len(m.log) && m.log[msg.logIdx].status == logStatusRunning {
+			m.log[msg.logIdx].title = msg.title
+		}
+		return m, nil
 
 	case cmdDoneMsg:
 		if msg.logIdx >= 0 && msg.logIdx < len(m.log) {
@@ -788,8 +837,8 @@ func (m model) submitCreate() (tea.Model, tea.Cmd) {
 
 	// The form takes a bare name (created on this host) or host/name for
 	// any host the resolver serves. The form's pickers list this host's
-	// images, networks and pools; on another host the image must already be
-	// in its pool (upload comes later).
+	// images, networks and pools; on another host the image is uploaded
+	// from this host's pool unless that host already has the same bytes.
 	ref := app.VMRef{Host: m.host, Name: name}
 	if strings.Contains(name, "/") {
 		r, err := app.ParseVMRef(name, m.host)
@@ -828,6 +877,10 @@ func (m model) submitCreate() (tea.Model, tea.Cmd) {
 	return m, func() tea.Msg {
 		var buf strings.Builder
 		in.OnProgress = func(ev app.ProgressEvent) {
+			if t := uploadTitle(name, ev); t != "" {
+				m.send.Send(progressMsg{logIdx: logIdx, title: t})
+				return
+			}
 			if ev.Output != "" {
 				buf.WriteString(ev.Output)
 			}
@@ -1504,7 +1557,9 @@ func Run(r *hosts.Resolver, tunnel vmtool.Tunnel) error {
 		return r.Resolve(h)
 	}
 	m.tunnel = tunnel
+	m.send = &msgSender{}
 	p := tea.NewProgram(m)
+	m.send.fn = p.Send
 	_, err = p.Run()
 	return err
 }

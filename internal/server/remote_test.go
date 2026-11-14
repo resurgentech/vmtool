@@ -143,6 +143,23 @@ func newRTMgr(t *testing.T) *rtMgr {
 	}
 }
 
+// seedCached puts name in the hypervisor's default pool directory and lists
+// it in the daemon's manifest (image-manifest.yml in the working directory),
+// as a previous upload would have.
+func seedCached(t *testing.T, poolDir, name string) {
+	t.Helper()
+	data := []byte("cached image " + name)
+	if err := os.WriteFile(filepath.Join(poolDir, name), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := vmtool.OpenImageManifest(vmtool.ImageManifestFile).Update(func(es map[string]vmtool.ImageEntry) error {
+		es[name] = vmtool.ImageEntry{SHA256: hexSum(data), Size: int64(len(data))}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // authLog wraps a handler and records every request's Authorization header.
 type authLog struct {
 	mu    sync.Mutex
@@ -325,9 +342,12 @@ func TestRemoteManagerEveryMethod(t *testing.T) {
 func TestCreateVMOverRemote(t *testing.T) {
 	t.Chdir(t.TempDir())
 	fm := newRTMgr(t)
+	seedCached(t, fm.pool, "ubuntu.qcow2")
 	srv, pool, _ := hypervisor(t, fm, testToken)
 	m := remoteFor(t, srv, pool, testToken)
 
+	// No LocalImages: the workstation has no copy, so the hypervisor's
+	// cached one is used as it is.
 	svc := &app.Service{IPTimeout: 7 * time.Second}
 	var stages []string
 	info, err := svc.CreateVM(context.Background(), m, app.CreateVMInput{
@@ -358,7 +378,7 @@ func TestCreateVMOverRemote(t *testing.T) {
 	if got := fm.got(); !reflect.DeepEqual(got, want) {
 		t.Errorf("hypervisor calls\n%q\nwant\n%q", got, want)
 	}
-	if strings.Join(stages, ",") != "clone,extra_disk,start,wait_ip" {
+	if strings.Join(stages, ",") != "upload,clone,extra_disk,start,wait_ip" {
 		t.Errorf("stages = %v", stages)
 	}
 	if info == nil || info.Name != "web" || info.IP != "192.0.2.44" || info.VCPUs != 3 {
@@ -402,6 +422,7 @@ func TestWorkstationForwardsBearer(t *testing.T) {
 	t.Chdir(t.TempDir())
 	const callerToken = "test-caller-token-91b7"
 	fm := newRTMgr(t)
+	seedCached(t, fm.pool, "ubuntu.qcow2")
 	hv, pool, hvLog := hypervisor(t, fm, callerToken)
 	ws := workstation(t, hv.URL, pool, callerToken, &handlers{})
 

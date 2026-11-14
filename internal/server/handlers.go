@@ -3,12 +3,14 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 
 	"github.com/jaredeh/vmtool/internal/api"
 	"github.com/jaredeh/vmtool/internal/app"
 	"github.com/jaredeh/vmtool/internal/buildinfo"
+	"github.com/jaredeh/vmtool/internal/config"
 	"github.com/jaredeh/vmtool/internal/hosts"
 	"github.com/jaredeh/vmtool/pkg/vmtool"
 )
@@ -28,6 +30,12 @@ type handlers struct {
 	// tunnelExe is the vmtool path guest SSH uses as its ProxyCommand; empty
 	// means the running executable.
 	tunnelExe string
+	// imageManifest is the daemon's image-manifest.yml; empty means
+	// vmtool.ImageManifestFile in the working directory (images.go).
+	imageManifest string
+	// beforeCommit, when set, runs in uploadImage after the body is verified
+	// and before the new file is put in place (tests inject races here).
+	beforeCommit func(name string)
 }
 
 // guestSvc is h.svc with a Tunnel for this request: the running vmtool as
@@ -481,7 +489,30 @@ func (h *handlers) DeleteImage(ctx context.Context, req api.DeleteImageRequestOb
 		pool = *req.Params.Pool
 	}
 	_, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
-		return nil, h.svc.DeleteImage(ctx, m, req.Name, pool)
+		if h.role != config.RoleHypervisor || pool != cachePool {
+			return nil, h.svc.DeleteImage(ctx, m, req.Name, pool)
+		}
+		// A hypervisor deleting from its image cache's pool drops the
+		// manifest entry of an image it owned, under the manifest's lock so
+		// an upload's commit cannot interleave.
+		man := h.manifest()
+		man.Lock()
+		defer man.Unlock()
+		if err := h.svc.DeleteImage(ctx, m, req.Name, pool); err != nil {
+			return nil, err
+		}
+		all, err := man.LoadLocked()
+		if err != nil {
+			return nil, fmt.Errorf("deleted %q but could not read the image manifest: %w", req.Name, err)
+		}
+		if _, ok := all[req.Name]; !ok {
+			return nil, nil
+		}
+		delete(all, req.Name)
+		if err := man.SaveLocked(all); err != nil {
+			return nil, fmt.Errorf("deleted %q but could not drop it from the image manifest: %w", req.Name, err)
+		}
+		return nil, nil
 	})
 	if err != nil {
 		if kindOf(err) == app.KindNotFound {

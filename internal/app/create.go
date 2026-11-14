@@ -2,12 +2,121 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"os"
 
 	"github.com/jaredeh/vmtool/pkg/vmtool"
 )
 
-func (s *Service) CreateVM(_ context.Context, m Manager, in CreateVMInput) (*vmtool.VMInfo, error) {
+// RemoteImage is a host's image-cache entry for one image (getImageManifest).
+type RemoteImage struct {
+	Name string
+	// SHA256 and Size are set when the host's manifest lists the image and
+	// the file is in place with the listed size.
+	SHA256 string
+	Size   int64
+	// Foreign: a volume of this name exists that the host did not create;
+	// it will not be replaced. Path names it.
+	Foreign bool
+	Path    string
+}
+
+// ImageStore is implemented by a Manager whose host caches base images
+// uploaded from this machine (remote.Manager). CreateVM uses it to make sure
+// the host has the same bytes as this machine's copy of the image.
+type ImageStore interface {
+	ImageManifest(name string) (RemoteImage, error)
+	// UploadImage streams size bytes from r as name; sha256 is their
+	// lowercase hex digest. progress, if set, is called with the bytes sent.
+	UploadImage(ctx context.Context, name string, r io.Reader, size int64, sha256 string, progress func(sent int64)) error
+}
+
+// foreignImageErr is the refusal for an image a host did not create.
+func foreignImageErr(name, host, path string) error {
+	return conflict("create", fmt.Errorf("image %q already exists on %s at %s; vmtool did not create it and will not replace it", name, host, path))
+}
+
+// uploadStep is how often upload progress is reported: every 1% of the
+// image, but at least every 64 MiB.
+func uploadStep(total int64) int64 {
+	return max(1, min(total/100, 64<<20))
+}
+
+// syncImage makes the host behind st hold this machine's copy of image:
+// compare digests (the local one cached by size and mtime), upload only when
+// the host's differs or is missing, and never when the host has a foreign
+// volume of that name.
+func (s *Service) syncImage(ctx context.Context, st ImageStore, in CreateVMInput) error {
+	rem, err := st.ImageManifest(in.Image)
+	if err != nil {
+		return wrap("create", err)
+	}
+	if rem.Foreign {
+		emit(in, "upload", "error", fmt.Sprintf("image %s on %s is not vmtool's", in.Image, in.Host), "")
+		return foreignImageErr(in.Image, in.Host, rem.Path)
+	}
+	local := ""
+	if s.LocalImages != nil {
+		p, err := s.LocalImages(in.Image)
+		switch {
+		case err == nil:
+			local = p
+		case !vmtool.IsNotFound(err):
+			return wrap("create", fmt.Errorf("find local image %s: %w", in.Image, err))
+		}
+	}
+	if local == "" {
+		if rem.SHA256 != "" {
+			emit(in, "upload", "done", fmt.Sprintf("%s: no local copy; using %s's cached copy", in.Image, in.Host), "")
+			return nil
+		}
+		return &Error{Kind: KindNotFound, Op: "create", Err: fmt.Errorf("image %q is neither in this machine's pools nor cached on %s: %w", in.Image, in.Host, vmtool.ErrNotFound)}
+	}
+	cachePath := s.ImageCachePath
+	if cachePath == "" {
+		cachePath = vmtool.ImageManifestFile
+	}
+	info, err := vmtool.LocalImageInfo(vmtool.OpenImageManifest(cachePath), in.Image, local, func() {
+		in.OnProgress.emitEvent(ProgressEvent{Stage: "upload", Status: "hash", Detail: "hashing " + local})
+	})
+	if err != nil {
+		return wrap("create", fmt.Errorf("hash local image %s: %w", local, err))
+	}
+	if rem.SHA256 == info.SHA256 && rem.Size == info.Size {
+		emit(in, "upload", "done", fmt.Sprintf("%s is up to date on %s", in.Image, in.Host), "")
+		return nil
+	}
+
+	f, err := os.Open(local)
+	if err != nil {
+		return wrap("create", err)
+	}
+	defer f.Close()
+	total := info.Size
+	emit(in, "upload", "start", fmt.Sprintf("uploading %s to %s (%d bytes)", in.Image, in.Host, total), "")
+	step, next := uploadStep(total), int64(0)
+	progress := func(sent int64) {
+		if sent >= next || sent == total {
+			next = sent + step
+			in.OnProgress.emitEvent(ProgressEvent{Stage: "upload", Status: "progress",
+				Detail: fmt.Sprintf("%d/%d bytes", sent, total), Sent: sent, Total: total})
+		}
+	}
+	if err := st.UploadImage(ctx, in.Image, f, total, info.SHA256, progress); err != nil {
+		emit(in, "upload", "error", err.Error(), "")
+		var ae *Error
+		if errors.As(err, &ae) {
+			return wrap("create", err)
+		}
+		return badGateway("create", err)
+	}
+	emit(in, "upload", "done", fmt.Sprintf("uploaded %s to %s", in.Image, in.Host), "")
+	return nil
+}
+
+func (s *Service) CreateVM(ctx context.Context, m Manager, in CreateVMInput) (*vmtool.VMInfo, error) {
 	if in.Name == "" || in.Image == "" {
 		return nil, invalid("create", fmt.Errorf("name and image are required"))
 	}
@@ -20,6 +129,14 @@ func (s *Service) CreateVM(_ context.Context, m Manager, in CreateVMInput) (*vmt
 	}
 	if vmtool.IsMachine(in.Name) {
 		return nil, conflict("create", fmt.Errorf("%q is registered as a metal/alien machine", in.Name))
+	}
+
+	// A host that caches images (a remote daemon) gets this machine's copy
+	// first; a local libvirt host already has its own pools.
+	if st, ok := m.(ImageStore); ok {
+		if err := s.syncImage(ctx, st, in); err != nil {
+			return nil, err
+		}
 	}
 
 	diskPath, err := m.ImagePath(in.Image)

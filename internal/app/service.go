@@ -52,6 +52,14 @@ type Service struct {
 	// callers derive one with WithTunnel. Metal and alien machines do not use
 	// it: they keep direct SSH.
 	Tunnel vmtool.Tunnel
+	// LocalImages finds a base image in this machine's own libvirt pools
+	// (the local Manager's ImagePath). CreateVM on a host whose Manager is an
+	// ImageStore uploads the image from there. nil means this machine has no
+	// local copy to offer: a host's cached copy is then used as it is.
+	LocalImages func(name string) (string, error)
+	// ImageCachePath is this machine's image-hash cache; empty means
+	// vmtool.ImageManifestFile in the working directory.
+	ImageCachePath string
 }
 
 // WithTunnel returns a shallow copy of s that reaches guests through t. The
@@ -84,6 +92,8 @@ type ProgressEvent struct {
 	Status string
 	Detail string
 	Output string
+	// Sent and Total are bytes, for stage "upload" status "progress".
+	Sent, Total int64
 }
 
 type CreateVMInput struct {
@@ -136,7 +146,11 @@ func emit(in CreateVMInput, stage, status, detail, output string) {
 }
 
 func (f ProgressFunc) emit(stage, status, detail, output string) {
+	f.emitEvent(ProgressEvent{Stage: stage, Status: status, Detail: detail, Output: output})
+}
+
+func (f ProgressFunc) emitEvent(ev ProgressEvent) {
 	if f != nil {
-		f(ProgressEvent{Stage: stage, Status: status, Detail: detail, Output: output})
+		f(ev)
 	}
 }

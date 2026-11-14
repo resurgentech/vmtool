@@ -554,6 +554,86 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+    put:
+      operationId: uploadImage
+      summary: Store a base image in a hypervisor's image cache
+      description: >
+        Served by hypervisor daemons only (a workstation answers 403: its
+        `vmtool create` uploads to a hypervisor's daemon directly). The body
+        is the image's bytes, streamed; `Content-Length` is required (411
+        without it, 400 when it is 0) and this route alone is exempt from
+        the server's 1 MiB request body limit. {name} must be a plain name
+        (letters, digits, '.', '_', '-'; not starting with '.'; at most 200
+        bytes). A missing X-Image-SHA256 is 400.
+        Ownership: the daemon owns a volume only if its `image-manifest.yml`
+        lists the name. If any storage pool has a volume called {name}, or a
+        file called {name} is in the `default` pool's directory, and the
+        manifest does not list it, the answer is 409
+        `image "<name>" already exists on <host> at <path>; vmtool did not
+        create it and will not replace it`, sent before the body is read;
+        nothing is written or deleted. Otherwise the body is written to
+        `.<name>.part` in the `default` pool's directory while being hashed.
+        A short body or a SHA-256 that differs from X-Image-SHA256 is 400;
+        the temporary file is removed and the old volume and the manifest are
+        untouched. A `.<name>.part` that already exists (another upload, or
+        one that crashed) is 409 and is left alone. On success the old
+        volume is deleted only if the manifest lists {name} (and only from
+        the `default` pool); the new file is put in place with a hard link,
+        which fails rather than overwrite a file that appeared during the
+        upload (409, temporary file removed); the manifest records the new
+        SHA-256 and size and the pool is refreshed.
+      parameters:
+        - $ref: '#/components/parameters/ImageName'
+        - name: X-Image-SHA256
+          in: header
+          required: true
+          description: SHA-256 of the body, 64 hex digits.
+          schema: { type: string, pattern: '^[0-9a-fA-F]{64}$' }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        '201':
+          description: stored; the manifest entry
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImageManifestEntry' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '411': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+  /v1/hosts/{host}/images/{name}/manifest:
+    parameters:
+      - $ref: '#/components/parameters/HostName'
+      - $ref: '#/components/parameters/ImageName'
+    get:
+      operationId: getImageManifest
+      summary: A hypervisor's image-cache entry for one image
+      description: >
+        Answered by a hypervisor daemon from its `image-manifest.yml`. sha256,
+        size and path are present when the manifest lists {name} and that
+        file is in the `default` pool's directory with the listed size.
+        foreign is true when the manifest does not list {name} and a volume
+        of that name exists (any storage pool, or a file in the `default`
+        pool's directory); path then names it. A workstation answers for a
+        configured remote host by asking that host's daemon, and answers 403
+        for itself (it keeps no image cache).
+      responses:
+        '200':
+          description: the entry
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImageManifestEntry' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
   /v1/hosts/{host}/pools:
     parameters:
       - $ref: '#/components/parameters/HostName'
@@ -1248,6 +1328,19 @@ components:
         name: { type: string }
         path: { type: string }
         active: { type: boolean }
+    ImageManifestEntry:
+      type: object
+      required: [name, foreign]
+      properties:
+        name: { type: string }
+        sha256: { type: string, description: "lowercase hex SHA-256 the manifest records" }
+        size: { type: integer, format: int64, description: "bytes the manifest records" }
+        foreign:
+          type: boolean
+          description: >
+            true when a volume of this name exists that the daemon's manifest
+            does not list: the daemon will not replace it.
+        path: { type: string, description: "the cached file, or the foreign volume's path" }
     PathResult:
       type: object
       required: [path]

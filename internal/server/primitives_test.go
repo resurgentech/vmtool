@@ -469,7 +469,10 @@ func TestWorkstationOnlySet(t *testing.T) {
 		if strings.HasPrefix(o.path, "/v1/metal") && !marked[o.id] {
 			t.Errorf("metal operation %s is not workstation-only", o.id)
 		}
-		if !marked[o.id] && o.op.Responses.Value("403") != nil {
+		// The image cache is the inverse: served by hypervisors, refused
+		// (403) by a workstation in its handler (images.go).
+		hypervisorOnly := o.id == "uploadImage" || o.id == "getImageManifest"
+		if !marked[o.id] && !hypervisorOnly && o.op.Responses.Value("403") != nil {
 			t.Errorf("%s documents 403 but is not marked", o.id)
 		}
 	}

@@ -262,7 +262,12 @@ func (m *Manager) call(op string, timeout time.Duration, out any, do func(ctx co
 // send runs do under timeout. A 2xx decodes into out (when non-nil); any
 // other status is a *StatusError inside an *app.Error.
 func (m *Manager) send(op string, timeout time.Duration, out any, do func(ctx context.Context) (*http.Response, error)) error {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	return m.sendCtx(context.Background(), op, timeout, out, do)
+}
+
+// sendCtx is send under parent as well as timeout.
+func (m *Manager) sendCtx(parent context.Context, op string, timeout time.Duration, out any, do func(ctx context.Context) (*http.Response, error)) error {
+	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 	resp, err := do(ctx)
 	if err != nil {
@@ -555,4 +560,74 @@ func (m *Manager) Define(cfg vmtool.VMConfig) error {
 	return m.call("defineVM", m.timeout, nil, func(ctx context.Context) (*http.Response, error) {
 		return m.client.DefineVM(ctx, m.name, cfg.Name, body)
 	})
+}
+
+// --- app.ImageStore ---
+
+var _ app.ImageStore = (*Manager)(nil)
+
+// minUploadRate is the slowest upload the client waits for: an upload's
+// timeout is LongTimeout plus one second per MiB of image (a 10 GiB image
+// may take 30 min + ~2.8 h).
+const minUploadRate = 1 << 20
+
+// ImageManifest is the daemon's image-cache entry for name (getImageManifest).
+func (m *Manager) ImageManifest(name string) (app.RemoteImage, error) {
+	var v api.ImageManifestEntry
+	if err := m.call("getImageManifest", m.timeout, &v, func(ctx context.Context) (*http.Response, error) {
+		return m.client.GetImageManifest(ctx, m.name, name)
+	}); err != nil {
+		return app.RemoteImage{}, err
+	}
+	out := app.RemoteImage{Name: name, Foreign: v.Foreign}
+	if v.Sha256 != nil && v.Size != nil {
+		out.SHA256, out.Size = strings.ToLower(*v.Sha256), *v.Size
+	}
+	if v.Path != nil {
+		out.Path = sanitize(*v.Path)
+	}
+	return out, nil
+}
+
+// uploadTimeout bounds an upload of size bytes.
+func (m *Manager) uploadTimeout(size int64) time.Duration {
+	return m.long + time.Duration(size/minUploadRate)*time.Second
+}
+
+// UploadImage streams size bytes of r to the daemon (uploadImage) with
+// Content-Length set, never holding the image in memory. progress gets the
+// bytes handed to the connection so far.
+func (m *Manager) UploadImage(ctx context.Context, name string, r io.Reader, size int64, sha256 string, progress func(sent int64)) error {
+	if size <= 0 {
+		return fail(app.KindInvalid, fmt.Errorf("%s: upload %s: size must be > 0", m.name, name))
+	}
+	if err := m.checkVersion(); err != nil {
+		return err
+	}
+	body := &countingReader{r: io.LimitReader(r, size), progress: progress}
+	return m.sendCtx(ctx, "uploadImage", m.uploadTimeout(size), nil, func(ctx context.Context) (*http.Response, error) {
+		return m.client.UploadImageWithBody(ctx, m.name, name, &api.UploadImageParams{XImageSHA256: sha256},
+			"application/octet-stream", body, func(_ context.Context, req *http.Request) error {
+				req.ContentLength = size
+				return nil
+			})
+	})
+}
+
+// countingReader reports the running total of bytes read.
+type countingReader struct {
+	r        io.Reader
+	sent     int64
+	progress func(int64)
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	if n > 0 {
+		c.sent += int64(n)
+		if c.progress != nil {
+			c.progress(c.sent)
+		}
+	}
+	return n, err
 }

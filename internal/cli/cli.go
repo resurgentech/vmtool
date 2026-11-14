@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -276,7 +277,48 @@ func (e *env) service(inventory string) *app.Service {
 		PlaybookDir:   filepath.Join("ansible", "playbooks"),
 		InventoryPath: inventory,
 		HostNames:     e.resolver().AllNames(),
+		LocalImages:   e.localImages,
 	}).WithTunnel(t)
+}
+
+// localImages finds a base image in this machine's own libvirt pools: create
+// on a remote host uploads it from there. The local Manager is opened only
+// for the lookup (only a remote create asks).
+func (e *env) localImages(name string) (string, error) {
+	r := e.resolver()
+	m, release, err := r.Resolve(r.Local())
+	if err != nil {
+		return "", err
+	}
+	defer release()
+	return m.ImagePath(name)
+}
+
+// uploadProgress renders create's image-upload events on stderr as one
+// updating line; it reports whether it handled ev.
+func uploadProgress(w io.Writer, ev app.ProgressEvent) bool {
+	if ev.Stage != "upload" {
+		return false
+	}
+	switch ev.Status {
+	case "hash":
+		fmt.Fprintf(w, "%s...\n", ev.Detail)
+		return true
+	case "progress":
+		pct := int64(100)
+		if ev.Total > 0 {
+			pct = ev.Sent * 100 / ev.Total
+		}
+		fmt.Fprintf(w, "\ruploading: %3d%% (%d / %d MiB)", pct, ev.Sent>>20, ev.Total>>20)
+		if ev.Sent >= ev.Total {
+			fmt.Fprintln(w)
+		}
+		return true
+	case "start":
+		fmt.Fprintln(w, ev.Detail)
+		return true
+	}
+	return false
 }
 
 // tunnel is how this process reaches guests: its own absolute executable as
@@ -349,6 +391,9 @@ upgrades) will be written back to the source image.
 				ExtraDiskPool:   extraDiskPool,
 				ExtraVars:       extra,
 				OnProgress: func(ev app.ProgressEvent) {
+					if uploadProgress(os.Stderr, ev) {
+						return
+					}
 					if ev.Output != "" {
 						fmt.Print(ev.Output)
 					}

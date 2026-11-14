@@ -35,7 +35,13 @@ func (s *Server) Handler() http.Handler {
 	}
 	r := hosts.New(s.Config)
 	h := &handlers{
-		svc:    &app.Service{PlaybookDir: s.PlaybookDir, HostNames: r.AllNames()},
+		svc: &app.Service{
+			PlaybookDir: s.PlaybookDir,
+			HostNames:   r.AllNames(),
+			// createVM on a remote host uploads the image from this
+			// machine's own pools.
+			LocalImages: localImages(r),
+		},
 		listen: s.Listen,
 		hosts:  r,
 	}
@@ -50,6 +56,19 @@ func (s *Server) Handler() http.Handler {
 	return chain(h, func(next http.Handler) http.Handler {
 		return requireBearer(hash, public, next)
 	})
+}
+
+// localImages finds an image in the local host's libvirt pools, opening the
+// local Manager for the lookup only.
+func localImages(r *hosts.Resolver) func(string) (string, error) {
+	return func(name string) (string, error) {
+		m, done, err := r.Resolve(r.Local())
+		if err != nil {
+			return "", err
+		}
+		defer done()
+		return m.ImagePath(name)
+	}
 }
 
 // handlerFor is the unauthenticated chain, for handler-level tests only.
@@ -153,9 +172,12 @@ func (s *Server) ListenAndServe() error {
 	return serve(srv, ln)
 }
 
+// withMaxBytes caps every request body at 1 MiB, except uploadImage's: an
+// image is streamed to disk (never held in memory) and bounded by its
+// Content-Length instead (images.go).
 func withMaxBytes(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Body != nil {
+		if r.Body != nil && !isUpload(r) {
 			r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		}
 		next.ServeHTTP(w, r)
