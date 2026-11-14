@@ -51,14 +51,14 @@ func newPoolMgr(t *testing.T) *poolMgr {
 	}
 	return &poolMgr{
 		rtMgr: rt,
-		dirs:  map[string]string{"default": rt.pool, "other": other},
-		known: map[string]map[string]bool{"default": {}, "other": {}},
+		dirs:  map[string]string{vmtool.HypervisorPool: rt.pool, "other": other},
+		known: map[string]map[string]bool{vmtool.HypervisorPool: {}, "other": {}},
 	}
 }
 
 func (p *poolMgr) ListPools() ([]vmtool.PoolInfo, error) {
 	return []vmtool.PoolInfo{
-		{Name: "default", Path: p.dirs["default"], Active: true},
+		{Name: vmtool.HypervisorPool, Path: p.dirs[vmtool.HypervisorPool], Active: true},
 		{Name: "other", Path: p.dirs["other"], Active: true},
 	}, nil
 }
@@ -67,7 +67,7 @@ func (p *poolMgr) ImagePath(n string) (string, error) {
 	p.rec("ImagePath %s", n)
 	p.pmu.Lock()
 	defer p.pmu.Unlock()
-	for _, pool := range []string{"default", "other"} {
+	for _, pool := range []string{vmtool.HypervisorPool, "other"} {
 		if p.known[pool][n] {
 			return filepath.Join(p.dirs[pool], n), nil
 		}
@@ -241,7 +241,7 @@ func TestUploadImageStores(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("PUT: %d %s", rec.Code, rec.Body)
 	}
-	final := filepath.Join(f.pm.dirs["default"], "ubuntu.qcow2")
+	final := filepath.Join(f.pm.dirs[vmtool.HypervisorPool], "ubuntu.qcow2")
 	got, err := os.ReadFile(final)
 	if err != nil || !bytes.Equal(got, data) {
 		t.Fatalf("stored file differs (%v)", err)
@@ -277,7 +277,7 @@ func TestUploadImageHashMismatch(t *testing.T) {
 	if rec.Code != http.StatusBadRequest || !strings.Contains(errText(t, rec), "SHA-256") {
 		t.Fatalf("PUT: %d %s", rec.Code, rec.Body)
 	}
-	if _, err := os.Lstat(filepath.Join(f.pm.dirs["default"], "u.qcow2")); !os.IsNotExist(err) {
+	if _, err := os.Lstat(filepath.Join(f.pm.dirs[vmtool.HypervisorPool], "u.qcow2")); !os.IsNotExist(err) {
 		t.Errorf("file left after a hash mismatch: %v", err)
 	}
 	f.noPart(t, "u.qcow2")
@@ -310,7 +310,7 @@ func TestUploadImageBadRequests(t *testing.T) {
 		if rec.Code != c.code {
 			t.Errorf("%s: %d %s, want %d", c.name, rec.Code, rec.Body, c.code)
 		}
-		ents, _ := os.ReadDir(f.pm.dirs["default"])
+		ents, _ := os.ReadDir(f.pm.dirs[vmtool.HypervisorPool])
 		if len(ents) != 0 {
 			t.Errorf("%s: pool holds %v", c.name, ents)
 		}
@@ -323,14 +323,14 @@ func TestUploadImageBadRequests(t *testing.T) {
 	}
 }
 
-// The foreign-volume contract: a same-named file in the default pool's
+// The foreign-volume contract: a same-named file in the vmtool pool's
 // directory that the manifest does not list (and libvirt has not even seen)
 // is refused before the body is read, and nothing changes.
 func TestUploadImageForeignFile(t *testing.T) {
 	f := newImgFixture(t, config.RoleHypervisor)
 	f.seedManifest(t, map[string]vmtool.ImageEntry{"mine.qcow2": {SHA256: hexSum([]byte("m")), Size: 1}})
-	f.pm.put(t, "default", "mine.qcow2", []byte("m"), true)
-	foreign := f.pm.put(t, "default", "ubuntu.qcow2", []byte("someone else's image"), false)
+	f.pm.put(t, vmtool.HypervisorPool, "mine.qcow2", []byte("m"), true)
+	foreign := f.pm.put(t, vmtool.HypervisorPool, "ubuntu.qcow2", []byte("someone else's image"), false)
 	old := time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)
 	if err := os.Chtimes(foreign, old, old); err != nil {
 		t.Fatal(err)
@@ -371,8 +371,8 @@ func TestUploadImageForeignOtherPool(t *testing.T) {
 	if rec.Code != http.StatusConflict || !strings.Contains(errText(t, rec), "at "+foreign+";") {
 		t.Fatalf("PUT: %d %s", rec.Code, rec.Body)
 	}
-	if ents, _ := os.ReadDir(f.pm.dirs["default"]); len(ents) != 0 {
-		t.Errorf("default pool holds %v", ents)
+	if ents, _ := os.ReadDir(f.pm.dirs[vmtool.HypervisorPool]); len(ents) != 0 {
+		t.Errorf("vmtool pool holds %v", ents)
 	}
 	if b, _ := os.ReadFile(foreign); string(b) != "theirs" {
 		t.Errorf("foreign file now %q", b)
@@ -388,7 +388,7 @@ func TestUploadImageForeignOtherPool(t *testing.T) {
 // A volume the manifest lists is the daemon's: a stale one is replaced.
 func TestUploadImageReplacesListedStale(t *testing.T) {
 	f := newImgFixture(t, config.RoleHypervisor)
-	f.pm.put(t, "default", "u.qcow2", []byte("old bytes"), true)
+	f.pm.put(t, vmtool.HypervisorPool, "u.qcow2", []byte("old bytes"), true)
 	f.seedManifest(t, map[string]vmtool.ImageEntry{
 		"u.qcow2":    {SHA256: hexSum([]byte("old bytes")), Size: 9},
 		"keep.qcow2": {SHA256: hexSum([]byte("k")), Size: 1},
@@ -398,10 +398,10 @@ func TestUploadImageReplacesListedStale(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("PUT: %d %s", rec.Code, rec.Body)
 	}
-	if d := f.pm.deleted(); len(d) != 1 || d[0] != "u.qcow2 default" {
+	if d := f.pm.deleted(); len(d) != 1 || d[0] != "u.qcow2 "+vmtool.HypervisorPool {
 		t.Errorf("deletes %v, want the old volume via the Manager", d)
 	}
-	if b, _ := os.ReadFile(filepath.Join(f.pm.dirs["default"], "u.qcow2")); !bytes.Equal(b, data) {
+	if b, _ := os.ReadFile(filepath.Join(f.pm.dirs[vmtool.HypervisorPool], "u.qcow2")); !bytes.Equal(b, data) {
 		t.Error("new bytes not in place")
 	}
 	f.noPart(t, "u.qcow2")
@@ -434,7 +434,7 @@ func TestUploadImageLinkRace(t *testing.T) {
 	f := newImgFixture(t, config.RoleHypervisor)
 	var foreign string
 	f.h.beforeCommit = func(name string) {
-		foreign = filepath.Join(f.pm.dirs["default"], name)
+		foreign = filepath.Join(f.pm.dirs[vmtool.HypervisorPool], name)
 		if err := os.WriteFile(foreign, []byte("appeared"), 0o644); err != nil {
 			t.Error(err)
 		}
@@ -457,7 +457,7 @@ func TestUploadImageLinkRace(t *testing.T) {
 // left alone: 409, nothing read.
 func TestUploadImagePartExists(t *testing.T) {
 	f := newImgFixture(t, config.RoleHypervisor)
-	part := f.pm.put(t, "default", ".u.qcow2.part", []byte("in progress"), false)
+	part := f.pm.put(t, vmtool.HypervisorPool, ".u.qcow2.part", []byte("in progress"), false)
 	rec := f.put("u.qcow2", tripReader{t}, 10, hexSum([]byte("x")))
 	if rec.Code != http.StatusConflict || !strings.Contains(errText(t, rec), part) {
 		t.Fatalf("PUT: %d %s", rec.Code, rec.Body)
@@ -478,17 +478,17 @@ func TestUploadImageWorkstationRefuses(t *testing.T) {
 	if rec := do(f.srv, http.MethodGet, "/v1/hosts/hv1/images/u.qcow2/manifest", ""); rec.Code != http.StatusForbidden {
 		t.Fatalf("GET manifest: %d %s", rec.Code, rec.Body)
 	}
-	if ents, _ := os.ReadDir(f.pm.dirs["default"]); len(ents) != 0 {
+	if ents, _ := os.ReadDir(f.pm.dirs[vmtool.HypervisorPool]); len(ents) != 0 {
 		t.Errorf("pool holds %v", ents)
 	}
 }
 
 // deleteImage is unchanged, and drops the manifest entry of a listed image it
-// deleted from the default pool.
+// deleted from the vmtool pool.
 func TestDeleteImageDropsManifestEntry(t *testing.T) {
 	f := newImgFixture(t, config.RoleHypervisor)
-	f.pm.put(t, "default", "u.qcow2", []byte("u"), true)
-	f.pm.put(t, "default", "theirs.qcow2", []byte("t"), true)
+	f.pm.put(t, vmtool.HypervisorPool, "u.qcow2", []byte("u"), true)
+	f.pm.put(t, vmtool.HypervisorPool, "theirs.qcow2", []byte("t"), true)
 	f.seedManifest(t, map[string]vmtool.ImageEntry{
 		"u.qcow2":    {SHA256: hexSum([]byte("u")), Size: 1},
 		"keep.qcow2": {SHA256: hexSum([]byte("k")), Size: 1},
@@ -514,6 +514,10 @@ func TestDeleteImageDropsManifestEntry(t *testing.T) {
 	sort.Strings(names)
 	if strings.Join(names, ",") != "keep.qcow2" {
 		t.Errorf("manifest holds %v", names)
+	}
+	// No ?pool= is the host's default pool: vmtool on a hypervisor.
+	if d := strings.Join(f.pm.deleted(), ","); d != "theirs.qcow2 vmtool,u.qcow2 vmtool" {
+		t.Errorf("deletes %s", d)
 	}
 }
 
@@ -631,7 +635,7 @@ func TestCreateVMUploadsImageOnce(t *testing.T) {
 	if n := puts(e.log); n != 1 {
 		t.Fatalf("first create made %d uploads", n)
 	}
-	if b, _ := os.ReadFile(filepath.Join(e.pm.dirs["default"], "ubuntu.qcow2")); !bytes.Equal(b, data) {
+	if b, _ := os.ReadFile(filepath.Join(e.pm.dirs[vmtool.HypervisorPool], "ubuntu.qcow2")); !bytes.Equal(b, data) {
 		t.Fatal("image not on the hypervisor")
 	}
 	ev, ok := p.last("upload", "progress")
@@ -641,7 +645,7 @@ func TestCreateVMUploadsImageOnce(t *testing.T) {
 	if p.count("upload", "hash") != 1 {
 		t.Errorf("first create hashed %d times", p.count("upload", "hash"))
 	}
-	if !strings.Contains(strings.Join(e.pm.got(), ","), "CloneImage "+filepath.Join(e.pm.dirs["default"], "ubuntu.qcow2")+" web1") {
+	if !strings.Contains(strings.Join(e.pm.got(), ","), "CloneImage "+filepath.Join(e.pm.dirs[vmtool.HypervisorPool], "ubuntu.qcow2")+" web1") {
 		t.Errorf("clone did not use the uploaded image: %v", e.pm.got())
 	}
 
@@ -684,7 +688,7 @@ func TestCreateVMUploadsImageOnce(t *testing.T) {
 	if n := puts(e.log); n != 2 {
 		t.Errorf("changed image: %d PUTs, want 2", n)
 	}
-	if b, _ := os.ReadFile(filepath.Join(e.pm.dirs["default"], "ubuntu.qcow2")); !bytes.Equal(b, data2) {
+	if b, _ := os.ReadFile(filepath.Join(e.pm.dirs[vmtool.HypervisorPool], "ubuntu.qcow2")); !bytes.Equal(b, data2) {
 		t.Error("changed image not replaced on the hypervisor")
 	}
 }
@@ -692,7 +696,7 @@ func TestCreateVMUploadsImageOnce(t *testing.T) {
 // A foreign volume stops create before any upload or libvirt work.
 func TestCreateVMForeignImageStops(t *testing.T) {
 	e := newE2E(t, []byte("my image"))
-	foreign := e.pm.put(t, "default", "ubuntu.qcow2", []byte("someone else's"), false)
+	foreign := e.pm.put(t, vmtool.HypervisorPool, "ubuntu.qcow2", []byte("someone else's"), false)
 
 	_, err := e.create(t, "web", &progressLog{})
 	var ae *app.Error

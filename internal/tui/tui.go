@@ -660,6 +660,21 @@ func (m model) updateConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // --- Create mode ---
 
+// hostDefaultPool is the create form's first Pool option: no pool, so the
+// host that owns libvirt picks its default (default on a workstation, vmtool
+// on a hypervisor).
+const hostDefaultPool = "(host default)"
+
+// formPool is the pool the create form's Pool value names: empty for
+// hostDefaultPool.
+func formPool(v string) string {
+	v = strings.TrimSpace(v)
+	if v == hostDefaultPool {
+		return ""
+	}
+	return v
+}
+
 func (m model) enterCreateMode() (tea.Model, tea.Cmd) {
 	images := flatImages(m.manager)
 	playbooks, _ := vmtool.ListPlaybooks(m.playbookDir)
@@ -674,13 +689,13 @@ func (m model) enterCreateMode() (tea.Model, tea.Cmd) {
 	bridges, _ := m.manager.ListBridges()
 	nics, _ := vmtool.ListPhysicalNICs()
 
+	// The first option, selected by default, sends no pool: the target
+	// host picks its own default. The named pools are this host's.
 	poolInfos, _ := m.manager.ListPools()
-	pools := make([]string, 0, len(poolInfos))
+	pools := make([]string, 0, len(poolInfos)+1)
+	pools = append(pools, hostDefaultPool)
 	for _, p := range poolInfos {
 		pools = append(pools, p.Name)
-	}
-	if len(pools) == 0 {
-		pools = []string{"default"}
 	}
 
 	fields := []formField{
@@ -708,13 +723,6 @@ func (m model) enterCreateMode() (tea.Model, tea.Cmd) {
 			values[i] = f.def
 		}
 	}
-	for _, p := range pools {
-		if p == "default" {
-			values[fPool] = "default"
-			break
-		}
-	}
-
 	// Store lists for dynamic switching
 	m.bridges = bridges
 	m.networks = networks
@@ -847,73 +855,17 @@ func (m model) submitCreate() (tea.Model, tea.Cmd) {
 		return m.enterBridgeMode()
 	}
 
-	name := strings.TrimSpace(m.formValues[fName])
-	image := m.formValues[fImage]
-	if name == "" || image == "" {
+	in, ok, err := m.createInput()
+	if err != nil {
+		idx := m.addLog(fmt.Sprintf("create: %v", err))
+		m.log[idx].status = logStatusError
+		m.mode = modeList
 		return m, nil
 	}
-
-	var diskSizeGB uint
-	diskSizeStr := strings.TrimSpace(m.formValues[fDiskSize])
-	if diskSizeStr != "" && diskSizeStr != "default" {
-		ds, err := strconv.ParseUint(diskSizeStr, 10, 32)
-		if err != nil || ds == 0 {
-			return m, nil
-		}
-		diskSizeGB = uint(ds)
+	if !ok {
+		return m, nil
 	}
-
-	var extraDiskSizeGB uint
-	extraDiskStr := strings.TrimSpace(m.formValues[fExtraDiskSize])
-	if extraDiskStr != "" && extraDiskStr != "none" && extraDiskStr != "0" {
-		eds, err := strconv.ParseUint(extraDiskStr, 10, 32)
-		if err != nil || eds == 0 {
-			return m, nil
-		}
-		extraDiskSizeGB = uint(eds)
-	}
-
-	vcpus, _ := strconv.ParseUint(strings.TrimSpace(m.formValues[fVCPUs]), 10, 32)
-	mem, _ := strconv.ParseUint(strings.TrimSpace(m.formValues[fMemory]), 10, 32)
-	playbookName := m.formValues[fPlaybook]
-	if playbookName == "(none)" {
-		playbookName = ""
-	}
-
-	// The form takes a bare name (created on this host) or host/name for
-	// any host the resolver serves. The form's pickers list this host's
-	// images, networks and pools; on another host the image is uploaded
-	// from this host's pool unless that host already has the same bytes.
-	ref := app.VMRef{Host: m.host, Name: name}
-	if strings.Contains(name, "/") {
-		r, err := app.ParseVMRef(name, m.host)
-		if err != nil {
-			idx := m.addLog(fmt.Sprintf("create: %v", err))
-			m.log[idx].status = logStatusError
-			m.mode = modeList
-			return m, nil
-		}
-		ref = r
-	}
-	name = ref.String()
-
-	in := app.CreateVMInput{
-		Host:            ref.Host,
-		Name:            ref.Name,
-		Image:           image,
-		VCPUs:           uint(vcpus),
-		Memory:          uint(mem),
-		DiskSizeGB:      diskSizeGB,
-		Pool:            strings.TrimSpace(m.formValues[fPool]),
-		NetType:         m.formValues[fNetType],
-		NetSource:       strings.TrimSpace(m.formValues[fNetSource]),
-		MacvtapMode:     m.formValues[fMacvtapMode],
-		SSHUser:         strings.TrimSpace(m.formValues[fSSHUser]),
-		SSHPass:         strings.TrimSpace(m.formValues[fSSHPass]),
-		Playbook:        playbookName,
-		Noclone:         m.formValues[fNoclone] == "true",
-		ExtraDiskSizeGB: extraDiskSizeGB,
-	}
+	name := app.VMRef{Host: in.Host, Name: in.Name}.String()
 
 	logIdx := m.addLog(fmt.Sprintf("creating %s...", name))
 	m.mode = modeList
@@ -954,6 +906,77 @@ func (m model) submitCreate() (tea.Model, tea.Cmd) {
 		}
 		return cmdDoneMsg{logIdx: logIdx, title: title, status: status, output: buf.String(), vms: m.fetchRows()}
 	}
+}
+
+// createInput is the CreateVMInput the create form describes. ok is false,
+// with no error, while the form is incomplete or a size is not a number
+// (submit then does nothing); err is a host/name that does not parse.
+func (m model) createInput() (in app.CreateVMInput, ok bool, err error) {
+	name := strings.TrimSpace(m.formValues[fName])
+	image := m.formValues[fImage]
+	if name == "" || image == "" {
+		return in, false, nil
+	}
+
+	var diskSizeGB uint
+	diskSizeStr := strings.TrimSpace(m.formValues[fDiskSize])
+	if diskSizeStr != "" && diskSizeStr != "default" {
+		ds, err := strconv.ParseUint(diskSizeStr, 10, 32)
+		if err != nil || ds == 0 {
+			return in, false, nil
+		}
+		diskSizeGB = uint(ds)
+	}
+
+	var extraDiskSizeGB uint
+	extraDiskStr := strings.TrimSpace(m.formValues[fExtraDiskSize])
+	if extraDiskStr != "" && extraDiskStr != "none" && extraDiskStr != "0" {
+		eds, err := strconv.ParseUint(extraDiskStr, 10, 32)
+		if err != nil || eds == 0 {
+			return in, false, nil
+		}
+		extraDiskSizeGB = uint(eds)
+	}
+
+	vcpus, _ := strconv.ParseUint(strings.TrimSpace(m.formValues[fVCPUs]), 10, 32)
+	mem, _ := strconv.ParseUint(strings.TrimSpace(m.formValues[fMemory]), 10, 32)
+	playbookName := m.formValues[fPlaybook]
+	if playbookName == "(none)" {
+		playbookName = ""
+	}
+
+	// The form takes a bare name (created on this host) or host/name for
+	// any host the resolver serves. The form's pickers list this host's
+	// images, networks and pools; on another host the image is uploaded
+	// from this host's pool unless that host already has the same bytes.
+	ref := app.VMRef{Host: m.host, Name: name}
+	if strings.Contains(name, "/") {
+		r, err := app.ParseVMRef(name, m.host)
+		if err != nil {
+			return in, false, err
+		}
+		ref = r
+	}
+
+	in = app.CreateVMInput{
+		Host:            ref.Host,
+		Name:            ref.Name,
+		Image:           image,
+		VCPUs:           uint(vcpus),
+		Memory:          uint(mem),
+		DiskSizeGB:      diskSizeGB,
+		Pool:            formPool(m.formValues[fPool]),
+		NetType:         m.formValues[fNetType],
+		NetSource:       strings.TrimSpace(m.formValues[fNetSource]),
+		MacvtapMode:     m.formValues[fMacvtapMode],
+		SSHUser:         strings.TrimSpace(m.formValues[fSSHUser]),
+		SSHPass:         strings.TrimSpace(m.formValues[fSSHPass]),
+		Playbook:        playbookName,
+		Noclone:         m.formValues[fNoclone] == "true",
+		ExtraDiskSizeGB: extraDiskSizeGB,
+	}
+
+	return in, true, nil
 }
 
 // --- Bridge creation mode ---

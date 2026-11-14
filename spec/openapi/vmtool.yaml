@@ -131,7 +131,6 @@ paths:
               image: ubuntu2404.qcow2
               vcpus: 2
               memory: 2
-              pool: default
               net_type: nat
       responses:
         '201':
@@ -553,7 +552,10 @@ paths:
         - name: pool
           in: query
           required: false
-          schema: { type: string, default: default }
+          description: >
+            Storage pool holding the image. Omitted or empty is
+            the host's default pool (`default` on a workstation, `vmtool` on a hypervisor).
+          schema: { type: string }
       responses:
         '204': { description: deleted }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -572,21 +574,23 @@ paths:
         bytes). A missing X-Image-SHA256 is 400.
         Ownership: the daemon owns a volume only if its `image-manifest.yml`
         lists the name. If any storage pool has a volume called {name}, or a
-        file called {name} is in the `default` pool's directory, and the
+        file called {name} is in the `vmtool` pool's directory, and the
         manifest does not list it, the answer is 409
         `image "<name>" already exists on <host> at <path>; vmtool did not
         create it and will not replace it`, sent before the body is read;
         nothing is written or deleted. Otherwise the body is written to
-        `.<name>.part` in the `default` pool's directory while being hashed.
+        `.<name>.part` in the `vmtool` pool's directory while being hashed.
         A short body or a SHA-256 that differs from X-Image-SHA256 is 400;
         the temporary file is removed and the old volume and the manifest are
         untouched. A `.<name>.part` that already exists (another upload, or
         one that crashed) is 409 and is left alone. On success the old
         volume is deleted only if the manifest lists {name} (and only from
-        the `default` pool); the new file is put in place with a hard link,
+        the `vmtool` pool); the new file is put in place with a hard link,
         which fails rather than overwrite a file that appeared during the
         upload (409, temporary file removed); the manifest records the new
-        SHA-256 and size and the pool is refreshed.
+        SHA-256 and size and the pool is refreshed. The image cache is the
+        hypervisor's `vmtool` libvirt pool (made by `just prereqs <host>`);
+        without it the answer is 500 `no storage pool "vmtool" on <host>`.
       parameters:
         - $ref: '#/components/parameters/ImageName'
         - name: X-Image-SHA256
@@ -622,9 +626,9 @@ paths:
       description: >
         Answered by a hypervisor daemon from its `image-manifest.yml`. sha256,
         size and path are present when the manifest lists {name} and that
-        file is in the `default` pool's directory with the listed size.
+        file is in the `vmtool` pool's directory with the listed size.
         foreign is true when the manifest does not list {name} and a volume
-        of that name exists (any storage pool, or a file in the `default`
+        of that name exists (any storage pool, or a file in the `vmtool`
         pool's directory); path then names it. A workstation answers for a
         configured remote host by asking that host's daemon, and answers 403
         for itself (it keeps no image cache).
@@ -702,8 +706,10 @@ paths:
       summary: Create an empty qcow2 volume
       description: >
         Daemon primitive (Manager.CreateVolume). Creates {name}.qcow2 of
-        size_gb GB in pool (default `default`) and returns its path. `name`
-        must be a plain file name: letters, digits, `.`, `_`, `-`.
+        size_gb GB in pool and returns its path; an omitted pool is the
+        host's default pool (`default` on a workstation, `vmtool` on a
+        hypervisor). `name` must be a plain file name: letters, digits, `.`,
+        `_`, `-`.
       requestBody:
         required: true
         content:
@@ -727,8 +733,9 @@ paths:
       summary: Clone a volume into a pool
       description: >
         Daemon primitive (Manager.CloneImage). Clones the volume at base_path
-        into target_pool (default `default`) as {new_name}.qcow2 and returns
-        the new path. base_path must resolve inside a libvirt storage pool
+        into target_pool as {new_name}.qcow2 and returns the new path; an
+        omitted target_pool is the host's default pool (`default` on a
+        workstation, `vmtool` on a hypervisor). base_path must resolve inside a libvirt storage pool
         (symlinks and `..` are resolved first); anything else is 400.
       requestBody:
         required: true
@@ -1141,7 +1148,11 @@ components:
         vcpus: { type: integer, minimum: 1 }
         memory: { type: integer, minimum: 1, description: GiB }
         disk_size: { type: integer, minimum: 0, description: GB }
-        pool: { type: string }
+        pool:
+          type: string
+          description: >
+            Storage pool for the cloned disk (and the extra disk unless it
+            names its own). Omitted is the host's default pool (`default` on a workstation, `vmtool` on a hypervisor).
         net_type:
           type: string
           enum: [nat, bridge, direct]
@@ -1289,7 +1300,8 @@ components:
         pool:
           type: string
           description: >
-            Storage pool for the new volume (default default). Volume name is
+            Storage pool for the new volume; omitted is
+            the host's default pool (`default` on a workstation, `vmtool` on a hypervisor). Volume name is
             always {vm}-N.qcow2 (N is 2 for the first extra disk, then 3, …).
     AddDiskResult:
       type: object
@@ -1372,7 +1384,7 @@ components:
       type: object
       required: [name, size_gb]
       properties:
-        pool: { type: string, description: "storage pool; default is `default`" }
+        pool: { type: string, description: "storage pool; omitted is the host's default pool (`default` on a workstation, `vmtool` on a hypervisor)" }
         name: { type: string, description: "plain file name; .qcow2 is appended if missing" }
         size_gb: { type: integer, minimum: 1 }
     CloneVolumeRequest:
@@ -1381,7 +1393,7 @@ components:
       properties:
         base_path: { type: string, description: "volume to clone; must resolve inside a storage pool" }
         new_name: { type: string, description: "plain name; the clone is {new_name}.qcow2" }
-        target_pool: { type: string, description: "default is `default`" }
+        target_pool: { type: string, description: "omitted is the host's default pool (`default` on a workstation, `vmtool` on a hypervisor)" }
     ResizeVolumeRequest:
       type: object
       required: [path, size_bytes]
@@ -1420,7 +1432,7 @@ components:
         memory_gib: { type: integer, minimum: 1 }
         disk_path: { type: string, description: "boot volume; must resolve inside a storage pool" }
         disk_size_gb: { type: integer, minimum: 0, description: "0 keeps the volume size" }
-        pool: { type: string }
+        pool: { type: string, description: "omitted is the host's default pool (`default` on a workstation, `vmtool` on a hypervisor)" }
         network: { $ref: '#/components/schemas/NetworkConfig' }
         noclone: { type: boolean }
         extra_disk_size_gb: { type: integer, minimum: 0 }

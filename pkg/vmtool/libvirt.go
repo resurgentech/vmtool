@@ -192,7 +192,7 @@ func (m *Manager) CloneImage(basePath, newName, targetPool string) (string, erro
 	}
 
 	if targetPool == "" {
-		targetPool = "default"
+		targetPool = DefaultPool
 	}
 	pool, err := m.conn.LookupStoragePoolByName(targetPool)
 	if err != nil {
@@ -689,7 +689,7 @@ func (m *Manager) CreateVolume(poolName, volName string, sizeGB uint) (string, e
 		return "", fmt.Errorf("size must be greater than 0")
 	}
 	if poolName == "" {
-		poolName = "default"
+		poolName = DefaultPool
 	}
 	volName = normalizeVolName(volName)
 	if volName == "" {
@@ -780,9 +780,9 @@ func (m *Manager) AddDisk(name string, sizeGB uint, pool string) (*DiskDevice, e
 	return disk, nil
 }
 
-// DefaultPoolPath returns the filesystem path of the "default" storage pool.
+// DefaultPoolPath returns the filesystem path of the DefaultPool storage pool.
 func (m *Manager) DefaultPoolPath() (string, error) {
-	pool, err := m.conn.LookupStoragePoolByName("default")
+	pool, err := m.conn.LookupStoragePoolByName(DefaultPool)
 	if err != nil {
 		return "", fmt.Errorf("looking up default pool: %w", err)
 	}
@@ -861,8 +861,12 @@ func (m *Manager) ListImagesByPool() (map[string][]string, error) {
 	return result, nil
 }
 
-// DeleteImage deletes a .qcow2 volume from the named storage pool.
+// DeleteImage deletes a .qcow2 volume from the named storage pool; an empty
+// pool is DefaultPool.
 func (m *Manager) DeleteImage(name, pool string) error {
+	if pool == "" {
+		pool = DefaultPool
+	}
 	p, err := m.conn.LookupStoragePoolByName(pool)
 	if err != nil {
 		return fmt.Errorf("looking up pool %q: %w", pool, err)

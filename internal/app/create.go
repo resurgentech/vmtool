@@ -151,9 +151,8 @@ func (s *Service) CreateVM(ctx context.Context, m Manager, in CreateVMInput) (*v
 		cfg.Memory = in.Memory
 	}
 	cfg.DiskSizeGB = in.DiskSizeGB
-	if in.Pool != "" {
-		cfg.Pool = in.Pool
-	}
+	// An empty pool stays empty: the host's default, resolved by the host.
+	cfg.Pool = in.Pool
 	if in.NetType != "" {
 		cfg.Network.Type = vmtool.NetworkType(in.NetType)
 	}

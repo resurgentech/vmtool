@@ -109,7 +109,7 @@ func (f *rtMgr) ListImagesByPool() (map[string][]string, error) {
 func (f *rtMgr) DeleteImage(n, p string) error { f.rec("DeleteImage %s %s", n, p); return nil }
 func (f *rtMgr) ListPools() ([]vmtool.PoolInfo, error) {
 	// not recorded: every path check calls it
-	return []vmtool.PoolInfo{{Name: "default", Path: f.pool, Active: true}, {Name: "cold", Path: "/nonexistent-cold", Active: false}}, nil
+	return []vmtool.PoolInfo{{Name: vmtool.HypervisorPool, Path: f.pool, Active: true}, {Name: "cold", Path: "/nonexistent-cold", Active: false}}, nil
 }
 func (f *rtMgr) CreatePool(n, p string) error { f.rec("CreatePool %s %s", n, p); return nil }
 func (f *rtMgr) CloneImage(base, n, pool string) (string, error) {
@@ -143,7 +143,7 @@ func newRTMgr(t *testing.T) *rtMgr {
 	}
 }
 
-// seedCached puts name in the hypervisor's default pool directory and lists
+// seedCached puts name in the hypervisor's vmtool pool directory and lists
 // it in the daemon's manifest (image-manifest.yml in the working directory),
 // as a previous upload would have.
 func seedCached(t *testing.T, poolDir, name string) {
@@ -367,8 +367,8 @@ func TestCreateVMOverRemote(t *testing.T) {
 	vol := filepath.Join(fm.pool, "web.qcow2")
 	want := []string{
 		"ImagePath ubuntu.qcow2",
-		"CloneImage " + base + " web default",
-		"CreateVolume default web-2.qcow2 5",
+		"CloneImage " + base + " web vmtool",
+		"CreateVolume vmtool web-2.qcow2 5",
 		"Define web",
 		"Start web", "Info web",
 		"WaitForIP web 7s",

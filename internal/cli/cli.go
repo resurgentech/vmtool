@@ -422,7 +422,7 @@ upgrades) will be written back to the source image.
 	cmd.Flags().StringVar(&sshPass, "ssh-pass", "", "SSH password (default packer)")
 	cmd.Flags().StringVar(&inventory, "inventory", "ansible/inventory.yml", "path to write Ansible inventory file")
 	cmd.Flags().StringVar(&playbook, "playbook", "", "playbook name under ansible/playbooks, or a path")
-	cmd.Flags().StringVar(&pool, "pool", "", "storage pool for the cloned disk (default: default)")
+	cmd.Flags().StringVar(&pool, "pool", "", "storage pool for the cloned disk (default: the host's default pool: \"default\" on a workstation, \"vmtool\" on a hypervisor)")
 	cmd.Flags().BoolVar(&noclone, "noclone", false, "boot directly from the image without cloning (changes persist to source)")
 	cmd.Flags().UintVar(&extraDiskSizeGB, "extra-disk-size", 0, "create a second empty virtio disk (vdb) named <name>-2.qcow2")
 	cmd.Flags().StringVar(&extraDiskPool, "extra-disk-pool", "", "storage pool for the extra disk (default: same as --pool)")
@@ -813,11 +813,15 @@ func imagesDeleteCmd(e *env) *cobra.Command {
 			if err := e.service("").DeleteImage(cmd.Context(), m, args[0], pool); err != nil {
 				return err
 			}
-			fmt.Printf("Image %q deleted from pool %q\n", args[0], pool)
+			if pool == "" {
+				fmt.Printf("Image %q deleted from the host's default pool\n", args[0])
+			} else {
+				fmt.Printf("Image %q deleted from pool %q\n", args[0], pool)
+			}
 			return nil
 		}),
 	}
-	cmd.Flags().StringVar(&pool, "pool", "default", "storage pool containing the image")
+	cmd.Flags().StringVar(&pool, "pool", "", "storage pool containing the image (default: the host's default pool: \"default\" on a workstation, \"vmtool\" on a hypervisor)")
 	cmd.Flags().StringVar(&host, "host", "", "vmtool host to act on (default: this host)")
 	return cmd
 }
@@ -971,7 +975,7 @@ guest sees a raw block device; it is not partitioned or formatted.
 		}),
 	}
 
-	cmd.Flags().StringVar(&pool, "pool", "", "storage pool for the new volume (default: default)")
+	cmd.Flags().StringVar(&pool, "pool", "", "storage pool for the new volume (default: the host's default pool: \"default\" on a workstation, \"vmtool\" on a hypervisor)")
 	return cmd
 }
 

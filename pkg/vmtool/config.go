@@ -41,8 +41,8 @@ type VMConfig struct {
 	VCPUs           uint
 	Memory          uint // GiB
 	DiskPath        string
-	DiskSizeGB      uint // 0 means use the base image size as-is
-	Pool            string
+	DiskSizeGB      uint   // 0 means use the base image size as-is
+	Pool            string // empty is the host's default pool (see DefaultPool, HypervisorPool)
 	Network         NetworkConfig
 	SSHUser         string
 	SSHPass         string
@@ -52,6 +52,18 @@ type VMConfig struct {
 	ExtraDisks      []DiskDevice // extra disks included in domain XML
 }
 
+// Storage pools. An empty pool name anywhere (VMConfig.Pool, CloneImage,
+// CreateVolume, AddDisk, DeleteImage) means "this host's default pool": the
+// libvirt Manager uses DefaultPool; on a hypervisor daemon the host resolver
+// (internal/hosts) substitutes HypervisorPool before libvirt sees it.
+const (
+	// DefaultPool is libvirt's conventional pool, the workstation's default.
+	DefaultPool = "default"
+	// HypervisorPool is the pool a hypervisor daemon caches images in and
+	// puts VM disks in when a request names no pool.
+	HypervisorPool = "vmtool"
+)
+
 // DefaultConfig returns a VMConfig with sensible defaults.
 func DefaultConfig(name, diskPath string) VMConfig {
 	return VMConfig{
@@ -59,7 +71,6 @@ func DefaultConfig(name, diskPath string) VMConfig {
 		VCPUs:    2,
 		Memory:   2,
 		DiskPath: diskPath,
-		Pool:     "default",
 		Network: NetworkConfig{
 			Type:   NetworkNAT,
 			Source: "default",

@@ -1,7 +1,8 @@
 // Package hosts resolves a host name to the app.Manager that drives it.
 //
 // The local host's Manager is the libvirt-backed vmtool.Manager, opened per
-// Resolve and closed by the release func. A host named in config.yml hosts:
+// Resolve and closed by the release func. On a hypervisor it is wrapped so an
+// empty pool (the host's default) means the vmtool pool; see hypervisorPools. A host named in config.yml hosts:
 // is a remote daemon: its Manager is a remote.Manager (HTTPS client) carrying
 // the caller's token, which the resolver gets from WithToken (the CLI's
 // verified token, or the bearer of the request a server is serving). No
@@ -191,7 +192,11 @@ func (r *Resolver) Resolve(host string) (app.Manager, func(), error) {
 		return nil, nil, err
 	}
 	if host == r.name {
-		return r.local()
+		m, done, err := r.local()
+		if err == nil && m != nil && r.role == config.RoleHypervisor {
+			m = hypervisorPools{m}
+		}
+		return m, done, err
 	}
 	if r.token == "" {
 		return nil, nil, fmt.Errorf("host %q: no token to authenticate to its daemon", host)
@@ -279,4 +284,53 @@ func certNotAfter(path string) (time.Time, error) {
 		}
 		return c.NotAfter, nil
 	}
+}
+
+// hypervisorPools is a hypervisor daemon's local Manager: an empty pool, which
+// every surface sends when the user names none, is the hypervisor's own
+// default pool vmtool.HypervisorPool instead of libvirt's "default" (which
+// the libvirt Manager would use, and which a shared hypervisor may not have).
+// A named pool passes through unchanged.
+type hypervisorPools struct{ app.Manager }
+
+func hvPool(pool string) string {
+	if pool == "" {
+		return vmtool.HypervisorPool
+	}
+	return pool
+}
+
+func (h hypervisorPools) MigrateDisk(name, pool string) error {
+	return h.Manager.MigrateDisk(name, hvPool(pool))
+}
+
+func (h hypervisorPools) CreateVolume(pool, name string, sizeGB uint) (string, error) {
+	return h.Manager.CreateVolume(hvPool(pool), name, sizeGB)
+}
+
+func (h hypervisorPools) AddDisk(name string, sizeGB uint, pool string) (*vmtool.DiskDevice, error) {
+	return h.Manager.AddDisk(name, sizeGB, hvPool(pool))
+}
+
+func (h hypervisorPools) DeleteImage(name, pool string) error {
+	return h.Manager.DeleteImage(name, hvPool(pool))
+}
+
+func (h hypervisorPools) CloneImage(basePath, newName, targetPool string) (string, error) {
+	return h.Manager.CloneImage(basePath, newName, hvPool(targetPool))
+}
+
+// Define fills Pool only; an empty ExtraDiskPool means "same as Pool".
+func (h hypervisorPools) Define(cfg vmtool.VMConfig) error {
+	cfg.Pool = hvPool(cfg.Pool)
+	return h.Manager.Define(cfg)
+}
+
+// RefreshPool keeps the optional interface the image cache uses
+// (internal/server refreshPool) visible through the wrapper.
+func (h hypervisorPools) RefreshPool(pool string) error {
+	if r, ok := h.Manager.(interface{ RefreshPool(string) error }); ok {
+		return r.RefreshPool(hvPool(pool))
+	}
+	return nil
 }

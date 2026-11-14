@@ -40,10 +40,9 @@ func (s *Service) ListImages(_ context.Context, m Manager) (map[string][]string,
 	return imgs, nil
 }
 
+// DeleteImage deletes name from pool; an empty pool is the host's default,
+// which the Manager (or the host behind it) resolves.
 func (s *Service) DeleteImage(_ context.Context, m Manager, name, pool string) error {
-	if pool == "" {
-		pool = "default"
-	}
 	return wrap("delete_image", m.DeleteImage(name, pool))
 }
 

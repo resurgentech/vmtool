@@ -5,11 +5,13 @@ package server
 // Hypervisors are shared: other people's VMs, and their base images, may sit
 // in the same libvirt pools. The daemon therefore owns a volume only if its
 // own image-manifest.yml lists the name, and it only ever writes, replaces or
-// deletes inside its `default` pool's directory:
+// deletes inside its `vmtool` pool's directory (vmtool.HypervisorPool, made
+// by `just prereqs <host>`; the same pool takes VM disks when a request names
+// no pool, see internal/hosts):
 //
 //   - A name is foreign when the manifest does not list it and a volume of
 //     that name exists: any pool has one (Manager.ImagePath searches them
-//     all), or a file of that name is in the default pool's directory even
+//     all), or a file of that name is in the vmtool pool's directory even
 //     if libvirt has not seen it yet. A foreign name is refused (409) before
 //     the body is read and is never touched.
 //   - The body goes to `.<name>.part` (created O_EXCL, so a temporary file
@@ -22,7 +24,7 @@ package server
 //     updated.
 //
 // The deleteImage handler (handlers.go) drops a manifest entry when it
-// deletes a listed image from the default pool; nothing else here deletes.
+// deletes a listed image from the vmtool pool; nothing else here deletes.
 
 import (
 	"context"
@@ -48,7 +50,7 @@ import (
 
 const (
 	// cachePool is the pool images are cached in.
-	cachePool = "default"
+	cachePool = vmtool.HypervisorPool
 	// uploadIdle is how long an upload may send nothing before the read
 	// fails. The server has no overall ReadTimeout (a multi-GB image takes
 	// long); this bounds a stalled client instead.
@@ -86,9 +88,10 @@ func foreignMsg(name, host, path string) string {
 	return fmt.Sprintf("image %q already exists on %s at %s; vmtool did not create it and will not replace it", name, host, path)
 }
 
-// defaultPoolDir is the default pool's directory. There is no fallback: a
-// host without one cannot cache images.
-func defaultPoolDir(m app.Manager) (string, error) {
+// cachePoolDir is the vmtool pool's directory on host. There is no fallback
+// (in particular not libvirt's "default" pool): a host without one cannot
+// cache images.
+func cachePoolDir(m app.Manager, host string) (string, error) {
 	pools, err := m.ListPools()
 	if err != nil {
 		return "", fmt.Errorf("list storage pools: %w", err)
@@ -96,16 +99,16 @@ func defaultPoolDir(m app.Manager) (string, error) {
 	for _, p := range pools {
 		if p.Name == cachePool {
 			if p.Path == "" || !filepath.IsAbs(p.Path) {
-				return "", fmt.Errorf("storage pool %q has no directory path; vmtool caches images there", cachePool)
+				return "", fmt.Errorf("storage pool %q on %s has no directory path; vmtool caches images there (run `just prereqs %s`)", cachePool, host, host)
 			}
 			return filepath.Clean(p.Path), nil
 		}
 	}
-	return "", fmt.Errorf("no storage pool %q; vmtool caches images there (run `just prereqs`)", cachePool)
+	return "", fmt.Errorf("no storage pool %q on %s; vmtool caches images there (run `just prereqs %s`)", cachePool, host, host)
 }
 
 // existingVolume reports whether a volume called name exists: in any pool
-// libvirt knows, or as a file in dir (the default pool's directory) that
+// libvirt knows, or as a file in dir (the vmtool pool's directory) that
 // libvirt has not seen. It fails closed: an error is never "absent".
 func existingVolume(m app.Manager, name, dir string) (string, bool, error) {
 	p, err := m.ImagePath(name)
@@ -180,7 +183,7 @@ func (h *handlers) GetImageManifest(ctx context.Context, req api.GetImageManifes
 // re-uploads a missing or truncated one.
 func (h *handlers) imageState(m app.Manager, host, name string) (app.RemoteImage, error) {
 	out := app.RemoteImage{Name: name}
-	dir, err := defaultPoolDir(m)
+	dir, err := cachePoolDir(m, host)
 	if err != nil {
 		return out, err
 	}
@@ -278,7 +281,7 @@ func (h *handlers) storeImage(w http.ResponseWriter, r *http.Request, host, name
 		return fail(http.StatusInternalServerError, "%v", err)
 	}
 	defer done()
-	dir, err := defaultPoolDir(m)
+	dir, err := cachePoolDir(m, host)
 	if err != nil {
 		return fail(http.StatusInternalServerError, "%v", err)
 	}
@@ -356,7 +359,7 @@ func (h *handlers) storeImage(w http.ResponseWriter, r *http.Request, host, name
 		return fail(http.StatusInternalServerError, "%v", err)
 	}
 	if _, listed := all[name]; listed {
-		// Ours: delete the old volume, from the default pool only.
+		// Ours: delete the old volume, from the vmtool pool only.
 		if err := m.DeleteImage(name, cachePool); err != nil && !vmtool.IsNotFound(err) {
 			return fail(http.StatusInternalServerError, "delete the old cached %q: %v", name, err)
 		}

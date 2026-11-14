@@ -485,9 +485,13 @@ func (h *handlers) ListImages(ctx context.Context, req api.ListImagesRequestObje
 }
 
 func (h *handlers) DeleteImage(ctx context.Context, req api.DeleteImageRequestObject) (api.DeleteImageResponseObject, error) {
-	pool := "default"
-	if req.Params.Pool != nil && *req.Params.Pool != "" {
-		pool = *req.Params.Pool
+	// No pool is the host's default. A hypervisor's is its image cache's pool
+	// (named here, so the manifest is kept below); anywhere else the empty
+	// pool goes on to the Manager: the local libvirt one uses "default", a
+	// remote host's daemon picks its own.
+	pool := derefStr(req.Params.Pool)
+	if pool == "" && h.role == config.RoleHypervisor {
+		pool = cachePool
 	}
 	_, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
 		if h.role != config.RoleHypervisor || pool != cachePool {

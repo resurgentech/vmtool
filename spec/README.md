@@ -140,11 +140,14 @@ API, not a sandbox.
 
 ## Image cache
 
-Hypervisors cache base images in their `default` pool. Each daemon keeps
+Hypervisors cache base images in their `vmtool` libvirt pool
+(`vmtool.HypervisorPool`, made by `just prereqs <host>`); there is no
+fallback to `default`, and a hypervisor without the pool answers 500
+`no storage pool "vmtool" on <host> ... (run just prereqs <host>)`. Each daemon keeps
 `image-manifest.yml` (name -> sha256, size) in its working directory and owns
 a volume only if that manifest lists the name. `getImageManifest` reports an
 entry, or `foreign: true` when a same-named volume exists (any pool, or a
-file in the `default` pool's directory) that the manifest does not list.
+file in the `vmtool` pool's directory) that the manifest does not list.
 `uploadImage` refuses a foreign name with 409 before reading the body, writes
 `.<name>.part`, verifies the SHA-256, deletes an old volume only if the
 manifest lists it, and moves the file in with a hard link (never an
@@ -159,6 +162,15 @@ cache (adds `path` and `mtime`), so an unchanged image is not re-hashed. The
 handler is `uploadImage` in `internal/server/images.go`, served by
 `tunnelMux` (not the strict handler) so it can stream and refuse before the
 body is read.
+
+An omitted or empty pool, in any request (`createVM`, `addDisk`,
+`createVolume`, `cloneVolume`, `defineVM`, `deleteImage`), is the host's
+default pool: `default` on a workstation, `vmtool` on a hypervisor. Surfaces
+and `internal/app` never fill one in; the host that owns libvirt resolves
+it. The workstation's libvirt `vmtool.Manager` maps empty to `default`; a
+hypervisor's resolver (`internal/hosts`) wraps its local Manager so empty is
+`vmtool`. So a VM created on a hypervisor with no `--pool` has its clone and
+extra disk in the `vmtool` pool, next to the cached image.
 
 ## GET / pattern
 
