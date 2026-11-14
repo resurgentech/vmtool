@@ -155,7 +155,7 @@ func TestHostsCommand(t *testing.T) {
 		"veritech01": {st: app.HostStatus{Address: "v.labtwo:9473", Reachable: true, APIVersion: "1.0.0",
 			CertNotAfter: now.Add(200*24*time.Hour + time.Hour)}},
 		"veritech02": {st: app.HostStatus{Address: "v2.labtwo:9473", Reachable: true, APIVersion: "0.9.0",
-			CertNotAfter: expiring, Err: errors.New("veritech02 speaks API 0.9.0, this vmtool speaks 1.0.0; run `just deploy veritech02`")}},
+			CertNotAfter: expiring}},
 		"veritech03": {st: app.HostStatus{Address: "v3.labtwo:9473", Err: errors.New("dial tcp: connection refused")}},
 	})
 	r := runGate(t, dir, map[string]bool{"vmtool hosts": true}, "hosts")
@@ -166,7 +166,7 @@ func TestHostsCommand(t *testing.T) {
 	want := "NAME ADDRESS REACHABLE API CERT_DAYS ERROR\n" +
 		"jetfire local yes " + ours + " - -\n" +
 		"veritech01 v.labtwo:9473 yes 1.0.0 200 -\n" +
-		"veritech02 v2.labtwo:9473 yes 0.9.0 12 veritech02 speaks API 0.9.0, this vmtool speaks 1.0.0; run `just deploy veritech02`\n" +
+		"veritech02 v2.labtwo:9473 yes 0.9.0 12 -\n" +
 		"veritech03 v3.labtwo:9473 no - - dial tcp: connection refused\n" +
 		"warning: veritech02 certificate expires in 12 days (2026-11-26); run 'just cert veritech02' and 'just deploy veritech02'\n"
 	if got := norm(r.out); got != want {

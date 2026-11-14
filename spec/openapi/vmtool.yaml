@@ -10,12 +10,13 @@ info:
     TUI `t` exec ssh locally. Default bind is 127.0.0.1:9473. The server
     serves HTTPS only, loopback included, and refuses to start without
     token_sha256, tls_cert and tls_key in config.yml. Every operation except
-    the docs routes (/, /openapi.yaml, /openapi.json) requires
-    `Authorization: Bearer <token>`; the server checks the token's SHA-256
-    against token_sha256 in config.yml and answers 401 otherwise.
+    the docs routes (/, /openapi.yaml, /openapi.json) and GET /version
+    requires `Authorization: Bearer <token>`; the server checks the token's
+    SHA-256 against token_sha256 in config.yml and answers 401 otherwise.
     Paths are versioned (/v1/...) and VM, network, bridge, image and pool
     routes are scoped to a host (/v1/hosts/{host}/...). GET /version is
-    unversioned so a client built for another API version can still read it.
+    public and unversioned: a reachability probe that clients do not use to
+    compare versions.
     createVM and runPlaybook are synchronous and may run for many minutes; clients must not
     use a short HTTP timeout.
 servers:
@@ -64,23 +65,23 @@ paths:
       operationId: getVersion
       summary: API and build version of this server
       description: >
-        Unversioned on purpose: a client whose API version does not match can
-        still ask what the server speaks. api_version is info.version of this
-        document; clients require an exact match.
+        Public (no Authorization header needed) and unversioned: a
+        reachability probe. api_version is info.version of this document,
+        informational only; clients do not compare it.
+      security: []
       responses:
         '200':
           description: version
           content:
             application/json:
               schema: { $ref: '#/components/schemas/VersionInfo' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
   /v1/hosts:
     get:
       operationId: listHosts
       summary: List the hosts this server knows, with their status
       description: >
-        Probes each configured host (GET /version over TLS, 5 s timeout, using
-        the caller's bearer) concurrently. An unreachable host is a row with
+        Probes each configured host (GET /version over TLS, 5 s timeout, no
+        Authorization header) concurrently. An unreachable host is a row with
         reachable false and its error, not a failed request.
       responses:
         '200':
@@ -1341,7 +1342,7 @@ components:
           description: "whole days until cert_not_after, rounded down; negative once expired"
         error:
           type: string
-          description: "why the host is unreachable, or a note such as an API version mismatch"
+          description: "why the host is unreachable"
     PoolInfo:
       type: object
       required: [name, path, active]

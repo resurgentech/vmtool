@@ -95,7 +95,7 @@ type HostStatus struct {
 	// presented; zero when unknown.
 	CertNotAfter time.Time
 	// Err says why the host is unreachable, or notes a problem with a host
-	// that did answer (an API version mismatch).
+	// that did answer.
 	Err error
 }
 

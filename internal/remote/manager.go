@@ -66,20 +66,13 @@ func WithTimeouts(def, long time.Duration) Option {
 // the system store unless WithRootCAs says otherwise, never follows a
 // redirect and uses no proxy.
 //
-// Before its first operation it reads GET /version and refuses a daemon whose
-// api_version differs from this binary's spec info.version. A match is
-// remembered for the Manager's life; a mismatch or a failed check is not, so
-// the next call checks again (a redeployed daemon is picked up without
-// restarting a long-lived caller). Callers make one Manager per command or
-// per request (internal/hosts), so a long-lived process re-checks often.
+// It never reads GET /version before an operation and compares no API
+// versions; /version is only a reachability probe (Probe).
 type Manager struct {
 	name, base, token string
 	client            *api.ClientWithResponses
 	transport         *http.Transport
 	timeout, long     time.Duration
-
-	mu       sync.Mutex
-	verified bool
 }
 
 // New returns the client for the daemon named name (its vmtool host name) at
@@ -110,7 +103,10 @@ func New(name, baseURL, token string, opts ...Option) (*Manager, error) {
 	c, err := api.NewClientWithResponses(m.base,
 		api.WithHTTPClient(hc),
 		api.WithRequestEditorFn(func(_ context.Context, r *http.Request) error {
-			r.Header.Set("Authorization", "Bearer "+m.token)
+			// GET /version is public: the probe sends no credential.
+			if r.URL.Path != "/version" {
+				r.Header.Set("Authorization", "Bearer "+m.token)
+			}
 			return nil
 		}))
 	if err != nil {
@@ -128,15 +124,6 @@ func (m *Manager) BaseURL() string { return m.base }
 
 // Close drops the client's idle connections. The Manager stays usable.
 func (m *Manager) Close() { m.transport.CloseIdleConnections() }
-
-// VersionError is a daemon speaking another API version.
-type VersionError struct {
-	Host, Theirs, Ours string
-}
-
-func (e *VersionError) Error() string {
-	return fmt.Sprintf("%s speaks API %s, this vmtool speaks %s; run `just deploy %s`", e.Host, e.Theirs, e.Ours, e.Host)
-}
 
 // ourVersion is info.version of the spec embedded in this binary.
 var ourVersion = sync.OnceValues(func() (string, error) {
@@ -227,35 +214,8 @@ func sanitize(s string) string {
 	return s
 }
 
-// checkVersion runs GET /version until it has once matched.
-func (m *Manager) checkVersion() error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.verified {
-		return nil
-	}
-	ours, err := ourVersion()
-	if err != nil {
-		return fail(app.KindInternal, fmt.Errorf("read this vmtool's API version: %w", err))
-	}
-	var v api.VersionInfo
-	if err := m.send("getVersion", m.timeout, &v, func(ctx context.Context) (*http.Response, error) {
-		return m.client.GetVersion(ctx)
-	}); err != nil {
-		return err
-	}
-	if v.ApiVersion != ours {
-		return fail(app.KindBadGateway, &VersionError{Host: m.name, Theirs: sanitize(v.ApiVersion), Ours: ours})
-	}
-	m.verified = true
-	return nil
-}
-
-// call checks the version, then runs one operation with timeout.
+// call runs one operation with timeout.
 func (m *Manager) call(op string, timeout time.Duration, out any, do func(ctx context.Context) (*http.Response, error)) error {
-	if err := m.checkVersion(); err != nil {
-		return err
-	}
 	return m.send(op, timeout, out, do)
 }
 
@@ -600,9 +560,6 @@ func (m *Manager) uploadTimeout(size int64) time.Duration {
 func (m *Manager) UploadImage(ctx context.Context, name string, r io.Reader, size int64, sha256 string, progress func(sent int64)) error {
 	if size <= 0 {
 		return fail(app.KindInvalid, fmt.Errorf("%s: upload %s: size must be > 0", m.name, name))
-	}
-	if err := m.checkVersion(); err != nil {
-		return err
 	}
 	body := &countingReader{r: io.LimitReader(r, size), progress: progress}
 	return m.sendCtx(ctx, "uploadImage", m.uploadTimeout(size), nil, func(ctx context.Context) (*http.Response, error) {

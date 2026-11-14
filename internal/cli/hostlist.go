@@ -80,7 +80,7 @@ func hostsCmd(e *env) *cobra.Command {
 		Short: "Show every host: address, reachability, API version, certificate days left",
 		Long: `Probe this host and every configured host (GET /version over TLS, 5 s timeout,
 concurrently) and print name, address, whether it answered, the API version it
-speaks and the days left on the certificate it presented. A warning line
+reports (informational, never compared) and the days left on the certificate it presented. A warning line
 follows for each certificate with fewer than 30 days left.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {

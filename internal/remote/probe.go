@@ -16,11 +16,10 @@ func OurVersion() (string, error) { return ourVersion() }
 
 // Probe asks the daemon for GET /version and reports what it learned: whether
 // it answered, its api_version and the NotAfter of the leaf certificate it
-// presented (read from the TLS connection state of that response). It never
-// returns an error: an unreachable host is a status with Err set. A daemon on
-// another API version is Reachable with Err a *VersionError. Probe does not
-// touch the verified-version cache, and is bounded by ctx and the client's
-// default timeout.
+// presented (read from the TLS connection state of that response). It sends
+// no Authorization header and never returns an error: an unreachable host is
+// a status with Err set. The api_version is informational; a different one
+// sets no error. It is bounded by ctx and the client's default timeout.
 func (m *Manager) Probe(ctx context.Context) app.HostStatus {
 	st := app.HostStatus{Host: m.name}
 	if u, err := url.Parse(m.base); err == nil {
@@ -54,14 +53,6 @@ func (m *Manager) Probe(ctx context.Context) app.HostStatus {
 		return st
 	}
 	st.APIVersion = sanitize(v.ApiVersion)
-	ours, err := ourVersion()
-	if err != nil {
-		st.Err = err
-		return st
-	}
-	if v.ApiVersion != ours {
-		st.Err = &VersionError{Host: m.name, Theirs: st.APIVersion, Ours: ours}
-	}
 	return st
 }
 

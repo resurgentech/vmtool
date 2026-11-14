@@ -3,7 +3,6 @@ package remote
 import (
 	"crypto/x509"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -86,47 +85,29 @@ func jsonReply(w http.ResponseWriter, status int, v any) {
 
 var _ app.Manager = (*Manager)(nil)
 
-// A host on another API version is refused with the exact text, before any
-// operation reaches it; the mismatch is not cached, so a redeploy is picked
-// up without restarting a long-lived caller.
-func TestVersionMismatch(t *testing.T) {
-	f := newFakeAPI(t, "0.9.0", func(w http.ResponseWriter, r *http.Request) {
-		t.Errorf("operation %s %s reached a mismatched host", r.Method, r.URL.Path)
+// The client never reads GET /version before an operation and never compares
+// versions: a daemon reporting another api_version serves operations normally,
+// and every operation carries the bearer token.
+func TestNoVersionCheck(t *testing.T) {
+	f := newFakeAPI(t, "9.9.9", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" {
+			jsonReply(w, 200, []api.VMInfo{})
+			return
+		}
+		w.WriteHeader(204)
 	})
 	m := f.manager(t)
-	want := "veritech01 speaks API 0.9.0, this vmtool speaks " + specVersion(t) + "; run `just deploy veritech01`"
-	for i := 0; i < 2; i++ {
-		_, err := m.List()
-		if err == nil || err.Error() != want {
-			t.Fatalf("List() err = %v\nwant %s", err, want)
-		}
-		var ve *VersionError
-		if !errors.As(err, &ve) || ve.Host != "veritech01" || ve.Theirs != "0.9.0" {
-			t.Fatalf("err %#v is not a *VersionError", err)
-		}
+	if _, err := m.List(); err != nil {
+		t.Fatalf("List against api_version 9.9.9: %v", err)
 	}
-	if n := f.versions.Load(); n != 2 {
-		t.Errorf("GET /version ran %d times, want 2 (a mismatch is re-checked)", n)
+	if err := m.Start("web"); err != nil {
+		t.Fatalf("Start against api_version 9.9.9: %v", err)
 	}
-}
-
-// A matching version is checked once per client, then every call carries the
-// bearer token.
-func TestVersionOncePerClientAndBearer(t *testing.T) {
-	f := newFakeAPI(t, specVersion(t), func(w http.ResponseWriter, r *http.Request) {
-		jsonReply(w, 200, []api.VMInfo{})
-	})
-	m := f.manager(t)
-	for i := 0; i < 3; i++ {
-		if _, err := m.List(); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if n := f.versions.Load(); n != 1 {
-		t.Errorf("GET /version ran %d times, want 1", n)
+	if n := f.versions.Load(); n != 0 {
+		t.Errorf("GET /version ran %d times, want 0", n)
 	}
 	paths, auths := f.seen()
-	if len(paths) != 4 || paths[0] != "GET /version" || paths[1] != "GET /v1/hosts/veritech01/vms" {
+	if len(paths) != 2 || paths[0] != "GET /v1/hosts/veritech01/vms" {
 		t.Errorf("paths = %v", paths)
 	}
 	for _, a := range auths {

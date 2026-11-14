@@ -40,8 +40,9 @@ generated mux (see `docs/design/spec-first.md` PR 3).
 ## Security
 
 Global `security: [bearerAuth]` (`components.securitySchemes.bearerAuth`,
-HTTP bearer). Only `getDocs`, `getOpenAPISpec` and `getOpenAPIJSON` set
-`security: []`; every other operation lists `401` (`components.responses.Unauthorized`).
+HTTP bearer). Only `getDocs`, `getOpenAPISpec`, `getOpenAPIJSON` and
+`getVersion` set `security: []`; every other operation lists `401`
+(`components.responses.Unauthorized`).
 
 The server derives the exempt routes from the embedded spec at startup
 (`internal/server/auth.go`), not from a hand-written list: an operation is
@@ -71,15 +72,15 @@ lives under `/v1`. Everything that acts on one hypervisor is host-scoped,
 `/v1/playbooks` and `/v1/metal[...]` are global. A `{host}` the server does
 not serve is `404` with a message naming the hosts it does.
 
-`GET /version` is unversioned so a client built for another API version can
-still read it. It returns `api_version` (the spec's `info.version`, read from
-the embedded spec at runtime), `build_version` (module version or VCS
-revision) and `host` (the server's own name). It needs the bearer token like
-every non-docs route.
+`GET /version` is public (no `Authorization` header needed), unversioned and a
+reachability probe. It returns `api_version` (the spec's `info.version`, read
+from the embedded spec at runtime), `build_version` (module version or VCS
+revision) and `host` (the server's own name). `api_version` is informational:
+clients do not compare versions, neither before an operation nor in
+`vmtool hosts` / `GET /v1/hosts`.
 
 A breaking change bumps the major version in `info.version` and the path
-prefix (`/v2/...`). Clients require an exact `api_version` match and refuse a
-server that reports anything else.
+prefix (`/v2/...`).
 
 ## Hypervisor role and daemon primitives
 

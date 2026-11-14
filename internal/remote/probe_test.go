@@ -3,7 +3,6 @@ package remote
 import (
 	"context"
 	"crypto/x509"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -34,16 +33,20 @@ func TestProbeReachable(t *testing.T) {
 	}
 }
 
-// A mismatch answers: reachable, with the version and a note.
-func TestProbeVersionMismatch(t *testing.T) {
+// A daemon on another API version is just reachable, with its version and
+// certificate; no error is set, and the probe sends no Authorization header.
+func TestProbeDifferentVersionNoError(t *testing.T) {
 	f := newFakeAPI(t, "0.9.0", noOps(t))
 	st := f.manager(t).Probe(context.Background())
-	var ve *VersionError
-	if !st.Reachable || st.APIVersion != "0.9.0" || !errors.As(st.Err, &ve) {
+	if !st.Reachable || st.APIVersion != "0.9.0" || st.Err != nil {
 		t.Fatalf("status %+v", st)
 	}
 	if st.CertNotAfter.IsZero() {
 		t.Error("no certificate recorded for a host that answered")
+	}
+	paths, auths := f.seen()
+	if len(paths) != 1 || paths[0] != "GET /version" || auths[0] != "" {
+		t.Errorf("probe sent %v with Authorization %q, want one GET /version and none", paths, auths)
 	}
 }
 

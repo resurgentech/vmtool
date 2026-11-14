@@ -34,7 +34,7 @@ const (
 	wrongToken = "wrong-token-b21e44"
 )
 
-var publicOps = map[string]bool{"getDocs": true, "getOpenAPISpec": true, "getOpenAPIJSON": true}
+var publicOps = map[string]bool{"getDocs": true, "getOpenAPISpec": true, "getOpenAPIJSON": true, "getVersion": true}
 
 type specOp struct {
 	method, path, id string
@@ -467,5 +467,28 @@ func TestServeTLS(t *testing.T) {
 	if res, err := old.Get(base + "/openapi.yaml"); err == nil {
 		res.Body.Close()
 		t.Error("TLS 1.1 handshake succeeded")
+	}
+}
+
+// GET /version answers 200 with no Authorization header on both roles; every
+// other operation outside the docs routes still answers 401 without a token.
+func TestVersionPublicOnBothRoles(t *testing.T) {
+	for _, role := range []string{config.RoleWorkstation, config.RoleHypervisor} {
+		s := authedServer()
+		s.Config.Role = role
+		h := s.Handler()
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest("GET", "/version", nil))
+		if rec.Code != http.StatusOK {
+			t.Errorf("role %s: GET /version without token: %d, want 200", role, rec.Code)
+		}
+		for _, o := range specOps(t) {
+			if publicOps[o.id] {
+				continue
+			}
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(o.method, concrete(o.path), nil))
+			check401(t, rec, "role "+role+" "+o.method+" "+o.path)
+		}
 	}
 }
