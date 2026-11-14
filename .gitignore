@@ -1,2 +1,6 @@
 /vmtool
 .machines/
+.env
+tmp/
+/ROADMAP.md
+/docs/reports/

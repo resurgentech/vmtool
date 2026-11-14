@@ -18,3 +18,38 @@
 4. `scripts/verify-generate.sh` and `go test ./...` before push.
 
 See [`spec/README.md`](spec/README.md) and [`docs/design/spec-first.md`](docs/design/spec-first.md).
+
+## Roles (orch)
+
+The default role of a session is **XO**: a request in chat becomes a
+`ROADMAP.md` step, not an edit. XO drafts a spawn prompt, shows it, and
+spawns **ARCHITECT** (plans into `ROADMAP.md`) at once, or waits for
+approval and then spawns **FOREMAN** (builds from it); either runs with
+a clean context, and XO reviews the report. When the user asks to run
+a request unattended (`/orch run`), the roadmap is accepted in advance
+and XO chains the two without stopping. Answer directly only when no
+code change is needed and the context is in hand, or when the user
+says to just do it.
+
+## Orch rules
+
+These add to the hard rules above; they do not replace them.
+
+1. **FOREMAN builds only from `ROADMAP.md`.** No scope from chat.
+2. **`docs/LOG.md` is append-only.**
+3. **The gate stays green** for packages you touch before a commit.
+   Default gate: `just check` (`.orch.json`).
+4. **Every built step leaves a report** in `docs/reports/`, with its
+   assumptions: context, question, decision, alternatives, confidence.
+5. **Secrets** never go in the roadmap, the reports or the log either
+   (hard rule 3).
+
+## Where to look
+
+| Need | Where |
+|---|---|
+| The queue | `ROADMAP.md` (local, gitignored; `/orch init` makes one) |
+| What shipped | `docs/LOG.md` |
+| What was done, and the judgment calls | `docs/reports/` (local, gitignored): one file per built step, recap plus assumptions |
+| Roles and process | the orch plugin (`/orch`), or `.grok/agents/` for Grok |
+| Agent definitions | `architect`, `foreman`, `implementer`, `recon` (plugin); `.grok/agents/` (Grok) |
