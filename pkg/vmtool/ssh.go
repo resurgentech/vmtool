@@ -1,6 +1,7 @@
 package vmtool
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,14 +22,34 @@ func DefaultAuth() Auth {
 	return Auth{User: "packer", Password: "packer"}
 }
 
-// ResolveAuth returns .machines credentials for ip or name when present,
-// otherwise fallback with packer defaults filled in.
-func ResolveAuth(ip, name string, fallback Auth) Auth {
-	for _, id := range []string{ip, name} {
-		if id == "" {
-			continue
-		}
-		if a, ok := loadMachinesAuth(id); ok {
+// CredsDir is where a VM's guest credentials live: .machines/<host>/<vm>,
+// relative to vmtool's working directory. setup_bot.yml writes them there
+// (vmtool passes the absolute directory as vmtool_machines_dir).
+func CredsDir(host, name string) string {
+	return filepath.Join(machinesDir, host, name)
+}
+
+// AbsCredsDir is CredsDir made absolute, for vmtool_machines_dir.
+func AbsCredsDir(host, name string) (string, error) {
+	if err := validVMKey(host, name); err != nil {
+		return "", err
+	}
+	return filepath.Abs(CredsDir(host, name))
+}
+
+func validVMKey(host, name string) error {
+	if !ValidMachineName(host) || !ValidMachineName(name) {
+		return fmt.Errorf("invalid VM %q/%q: host and name must be valid machine names", host, name)
+	}
+	return nil
+}
+
+// ResolveVMAuth returns the credentials stored for VM name on host, or
+// fallback with packer defaults filled in. Credentials are keyed by
+// (host, vm) only: IPs repeat across hosts, so there is no IP lookup.
+func ResolveVMAuth(host, name string, fallback Auth) Auth {
+	if validVMKey(host, name) == nil {
+		if a, ok := loadAuthDir(CredsDir(host, name)); ok {
 			return a
 		}
 	}
@@ -45,8 +66,8 @@ func defaultedAuth(a Auth) Auth {
 	return a
 }
 
-func loadMachinesAuth(id string) (Auth, bool) {
-	dir := filepath.Join(".machines", id)
+// loadAuthDir reads password.yml and id_ed25519 from dir.
+func loadAuthDir(dir string) (Auth, bool) {
 	st, err := os.Stat(dir)
 	if err != nil || !st.IsDir() {
 		return Auth{}, false
@@ -75,38 +96,35 @@ func loadMachinesAuth(id string) (Auth, bool) {
 	return a, true
 }
 
-// ForgetMachine removes stored .machines credentials for each non-empty id.
-// Call it when a VM's disk is replaced or destroyed; stale creds would
-// otherwise win over packer defaults in ResolveAuth. Registered metal/alien
-// machines (entries with a machine.yml) are never removed here.
-func ForgetMachine(ids ...string) error {
-	for _, id := range ids {
-		if id == "" || id != filepath.Base(id) || id == "." || id == ".." {
-			continue
-		}
-		if IsMachine(id) {
-			continue
-		}
-		if err := os.RemoveAll(filepath.Join(".machines", id)); err != nil {
-			return err
-		}
+// ForgetVM removes the stored credentials of VM name on host
+// (.machines/<host>/<name>/). Call it when the VM's disk is replaced or
+// destroyed; stale creds would otherwise win over packer defaults. A
+// directory holding a machine.yml is never removed here.
+func ForgetVM(host, name string) error {
+	if err := validVMKey(host, name); err != nil {
+		return err
 	}
-	return nil
+	dir := CredsDir(host, name)
+	if _, err := os.Stat(filepath.Join(dir, machineManifest)); err == nil {
+		return nil
+	}
+	return os.RemoveAll(dir)
 }
 
-// SSHCmd builds an interactive ssh command for the guest.
-// extraArgs are appended after user@host (remote command or ssh operands).
-func SSHCmd(ip, name string, extraArgs ...string) (*exec.Cmd, error) {
-	cmd := sshCommand(ip, ResolveAuth(ip, name, DefaultAuth()), extraArgs)
+// SSHCmd builds an interactive ssh command for VM name on host, reached at
+// ip. extraArgs are appended after user@ip (remote command or ssh operands).
+func SSHCmd(host, name, ip string, extraArgs ...string) (*exec.Cmd, error) {
+	cmd := sshCommand(ip, ResolveVMAuth(host, name, DefaultAuth()), extraArgs)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd, nil
 }
 
-// RemoteCmd builds a non-interactive ssh command that runs argv on the guest.
-func RemoteCmd(ip, name string, argv []string) (*exec.Cmd, error) {
-	return sshCommand(ip, ResolveAuth(ip, name, DefaultAuth()), argv), nil
+// RemoteCmd builds a non-interactive ssh command that runs argv on VM name
+// on host, reached at ip.
+func RemoteCmd(host, name, ip string, argv []string) (*exec.Cmd, error) {
+	return sshCommand(ip, ResolveVMAuth(host, name, DefaultAuth()), argv), nil
 }
 
 func sshCommand(ip string, auth Auth, remote []string) *exec.Cmd {

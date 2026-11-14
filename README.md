@@ -100,16 +100,17 @@ just install        # build, cert, config.yml, systemd unit (vmtool server over 
 # Interactive TUI (run from project root)
 ./vmtool i
 
-# CLI
-./vmtool create <name> <image>
-./vmtool create web ubuntu.qcow2 --net-type direct --net-source eth0 --macvtap-mode bridge
-./vmtool create scratch ubuntu.qcow2 --noclone          # boot the image in place
-./vmtool create web ubuntu.qcow2 --extra-disk-size 50   # second empty disk as vdb
-./vmtool add-disk web 50                                # attach a new empty disk (vdb, vdc, …)
-./vmtool reboot web                                     # ACPI reboot, stays defined
+# CLI — VMs are named <host>/<vm>; the local host is its hostname (jetfire here)
+./vmtool create <host>/<name> <image>
+./vmtool create jetfire/web ubuntu.qcow2 --net-type direct --net-source eth0 --macvtap-mode bridge
+./vmtool create jetfire/scratch ubuntu.qcow2 --noclone  # boot the image in place
+./vmtool create jetfire/web ubuntu.qcow2 --extra-disk-size 50   # second empty disk as vdb
+./vmtool add-disk jetfire/web 50                        # attach a new empty disk (vdb, vdc, …)
+./vmtool reboot jetfire/web                             # ACPI reboot, stays defined
 ./vmtool list
-./vmtool delete <name>
-./vmtool delete scratch --noclone                       # undefine only, keep the disk
+./vmtool delete <host>/<name>
+./vmtool delete jetfire/scratch --noclone               # undefine only, keep the disk
+./vmtool machines migrate [--apply]                     # one-time: move old .machines/<vm>/ to .machines/<host>/<vm>/
 ./vmtool server                                         # HTTPS REST on 127.0.0.1:9473; GET / is Swagger UI
 ```
 

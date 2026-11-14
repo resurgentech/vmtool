@@ -103,8 +103,10 @@ func TestAddMachineRejectsBeforeSSH(t *testing.T) {
 		{"other host", AddMachineInput{Name: "nuc1", Host: "10.0.0.99"}, KindConflict},
 		{"other kind", AddMachineInput{Name: "nuc1", Host: "10.0.0.42", Kind: "alien"}, KindConflict},
 		{"VM creds dir", AddMachineInput{Name: "oldvm", Host: "h"}, KindConflict},
+		{"local host name", AddMachineInput{Name: "jetfire", Host: "h"}, KindConflict},
+		{"configured host name", AddMachineInput{Name: "veritech01", Host: "h"}, KindConflict},
 	} {
-		_, err := (&Service{}).AddMachine(context.Background(), vms, tc.in)
+		_, err := (&Service{HostNames: []string{"jetfire", "veritech01"}}).AddMachine(context.Background(), vms, tc.in)
 		if ae := asAppErr(t, err); ae.Kind != tc.kind {
 			t.Errorf("%s: kind %v, want %v (%v)", tc.name, ae.Kind, tc.kind, err)
 		}
@@ -162,7 +164,7 @@ func TestCreateVMRefusesMachineName(t *testing.T) {
 	if err := vmtool.SaveMachine(vmtool.Machine{Name: "nuc1", Kind: vmtool.MachineMetal, Host: "10.0.0.42"}); err != nil {
 		t.Fatal(err)
 	}
-	_, err := (&Service{}).CreateVM(context.Background(), nil, CreateVMInput{Name: "nuc1", Image: "ubuntu.qcow2"})
+	_, err := (&Service{}).CreateVM(context.Background(), nil, CreateVMInput{Host: "jetfire", Name: "nuc1", Image: "ubuntu.qcow2"})
 	if ae := asAppErr(t, err); ae.Kind != KindConflict {
 		t.Fatalf("kind %v: %v", ae.Kind, err)
 	}

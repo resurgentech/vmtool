@@ -25,17 +25,16 @@ func (s *Service) ListVMs(_ context.Context, m Manager) ([]vmtool.VMInfo, error)
 	return vms, nil
 }
 
-func (s *Service) DeleteVM(_ context.Context, m Manager, name string, noclone bool) error {
-	var ip string
-	if info, err := m.Info(name); err == nil {
-		ip = info.IP
+func (s *Service) DeleteVM(_ context.Context, m Manager, ref VMRef, noclone bool) error {
+	if err := validRef("delete", ref); err != nil {
+		return err
 	}
-	if err := m.Delete(name, noclone); err != nil {
+	if err := m.Delete(ref.Name, noclone); err != nil {
 		return wrap("delete", err)
 	}
 	// noclone keeps the disk, so its guest users and keys are still valid.
 	if !noclone {
-		if err := vmtool.ForgetMachine(name, ip); err != nil {
+		if err := vmtool.ForgetVM(ref.Host, ref.Name); err != nil {
 			return wrap("delete", err)
 		}
 	}

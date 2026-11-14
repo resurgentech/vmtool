@@ -139,7 +139,13 @@ func (c *Config) finish() error {
 	if c.TokenSHA256 != "" && !hashRE.MatchString(c.TokenSHA256) {
 		return errors.New("token_sha256 must be 64 lowercase hex characters")
 	}
+	if err := c.notAMachine(c.Name); err != nil {
+		return err
+	}
 	for name, h := range c.Hosts {
+		if err := c.notAMachine(name); err != nil {
+			return err
+		}
 		if !vmtool.ValidMachineName(name) {
 			return fmt.Errorf("host name %q is not a valid machine name", name)
 		}
@@ -153,6 +159,21 @@ func (c *Config) finish() error {
 			h.Port = DefaultPort
 			c.Hosts[name] = h
 		}
+	}
+	return nil
+}
+
+// notAMachine refuses a host name that is registered as a metal/alien
+// machine: .machines/<name>/ holds that host's VM credentials, so the two
+// cannot share a name.
+func (c *Config) notAMachine(name string) error {
+	if !vmtool.ValidMachineName(name) {
+		return nil // reported by the caller's own validation
+	}
+	p := filepath.Join(c.Dir, vmtool.MachinesDir, name, vmtool.MachineManifest)
+	if _, err := os.Stat(p); err == nil {
+		return fmt.Errorf("host name %q is also a metal/alien machine (%s); rename one", name,
+			filepath.Join(vmtool.MachinesDir, name, vmtool.MachineManifest))
 	}
 	return nil
 }

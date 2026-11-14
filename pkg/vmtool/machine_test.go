@@ -70,20 +70,20 @@ func TestLoadMachineErrors(t *testing.T) {
 	}
 }
 
-func TestForgetMachineKeepsRegisteredMachines(t *testing.T) {
+// A host directory (.machines/<host>/<vm>/...) has no machine.yml and is
+// not a machine, even when it holds VM credentials.
+func TestListMachinesSkipsHostDirs(t *testing.T) {
 	t.Chdir(t.TempDir())
 	if err := SaveMachine(Machine{Name: "nuc1", Kind: MachineMetal, Host: "10.0.0.42"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(".machines", "nuc1", "password.yml"), []byte("username: bot\npassword: x\n"), 0o600); err != nil {
-		t.Fatal(err)
+	writeCreds(t, CredsDir("jetfire", "web"), "bot")
+	ms, err := ListMachines()
+	if err != nil || len(ms) != 1 || ms[0].Name != "nuc1" {
+		t.Fatalf("ListMachines = %+v, %v", ms, err)
 	}
-	// A VM delete or create of the same name must not wipe the machine.
-	if err := ForgetMachine("nuc1"); err != nil {
-		t.Fatal(err)
-	}
-	if !IsMachine("nuc1") || !HasCredentials("nuc1") {
-		t.Fatal("ForgetMachine removed a registered machine")
+	if IsMachine("jetfire") || HasCredentials("jetfire") {
+		t.Fatal("host dir counted as a machine")
 	}
 }
 

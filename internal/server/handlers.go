@@ -130,6 +130,7 @@ func (h *handlers) CreateVM(ctx context.Context, req api.CreateVMRequestObject) 
 	}
 	b := req.Body
 	in := app.CreateVMInput{
+		Host:  req.Host,
 		Name:  b.Name,
 		Image: b.Image,
 	}
@@ -185,7 +186,7 @@ func (h *handlers) CreateVM(ctx context.Context, req api.CreateVMRequestObject) 
 func (h *handlers) DeleteVM(ctx context.Context, req api.DeleteVMRequestObject) (api.DeleteVMResponseObject, error) {
 	noclone := derefBool(req.Params.Noclone)
 	_, err := h.withManager(req.Host, func(m app.Manager) (any, error) {
-		return nil, h.svc.DeleteVM(ctx, m, req.Name, noclone)
+		return nil, h.svc.DeleteVM(ctx, m, app.VMRef{Host: req.Host, Name: req.Name}, noclone)
 	})
 	if err != nil {
 		if kindOf(err) == app.KindNotFound {
@@ -282,7 +283,7 @@ func (h *handlers) RunVMCommand(ctx context.Context, req api.RunVMCommandRequest
 		return api.RunVMCommand400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: "command is required"}}, nil
 	}
 	v, err := h.withManager(req.Host, func(m app.Manager) (any, error) {
-		return h.svc.RunCommand(ctx, m, req.Name, req.Body.Command)
+		return h.svc.RunCommand(ctx, m, app.VMRef{Host: req.Host, Name: req.Name}, req.Body.Command)
 	})
 	if err != nil {
 		switch kindOf(err) {
@@ -311,7 +312,7 @@ func (h *handlers) RunPlaybook(ctx context.Context, req api.RunPlaybookRequestOb
 		if req.Body.ExtraVars != nil {
 			extra = map[string]string(*req.Body.ExtraVars)
 		}
-		return h.svc.RunPlaybook(ctx, m, req.Name, req.Body.Playbook, vmtool.DefaultAuth(), extra)
+		return h.svc.RunPlaybook(ctx, m, app.VMRef{Host: req.Host, Name: req.Name}, req.Body.Playbook, vmtool.DefaultAuth(), extra)
 	})
 	res, _ := v.(*app.PlaybookResult)
 	out := ""
@@ -358,7 +359,7 @@ func (h *handlers) ResizeDisk(ctx context.Context, req api.ResizeDiskRequestObje
 		return api.ResizeDisk400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: "size must be > 0"}}, nil
 	}
 	v, err := h.withManager(req.Host, func(m app.Manager) (any, error) {
-		return h.svc.ResizeDisk(ctx, m, req.Name, uint(req.Body.Size), vmtool.DefaultAuth())
+		return h.svc.ResizeDisk(ctx, m, app.VMRef{Host: req.Host, Name: req.Name}, uint(req.Body.Size), vmtool.DefaultAuth())
 	})
 	if err != nil {
 		if kindOf(err) == app.KindNotFound {

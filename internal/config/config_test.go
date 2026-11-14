@@ -207,3 +207,41 @@ func TestPathRelativeEmpty(t *testing.T) {
 		t.Fatal("empty path should stay empty")
 	}
 }
+
+// A host name (configured or local) may not equal a registered metal/alien
+// machine: both would claim .machines/<name>/.
+func TestLoadRefusesHostNamedLikeMachine(t *testing.T) {
+	setHost(t, "jetfire")
+	machine := func(dir, name string) {
+		t.Helper()
+		d := filepath.Join(dir, ".machines", name)
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, d, "machine.yml", "kind: metal\nhost: 10.0.0.42\n")
+	}
+
+	dir := t.TempDir()
+	machine(dir, "veritech01")
+	writeFile(t, dir, "config.yml", "hosts:\n  veritech01: { address: v.labtwo, ssh_user: ubuntu }\n")
+	if _, err := Load(dir); err == nil || !strings.Contains(err.Error(), "veritech01") || !strings.Contains(err.Error(), "machine.yml") {
+		t.Fatalf("configured host: %v", err)
+	}
+
+	dir = t.TempDir()
+	machine(dir, "jetfire")
+	writeFile(t, dir, "config.yml", "role: workstation\n")
+	if _, err := Load(dir); err == nil || !strings.Contains(err.Error(), "jetfire") {
+		t.Fatalf("local host: %v", err)
+	}
+
+	// A host directory of VM credentials (no machine.yml) is fine.
+	dir = t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".machines", "veritech01", "web"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, dir, "config.yml", "hosts:\n  veritech01: { address: v.labtwo, ssh_user: ubuntu }\n")
+	if _, err := Load(dir); err != nil {
+		t.Fatalf("host dir: %v", err)
+	}
+}

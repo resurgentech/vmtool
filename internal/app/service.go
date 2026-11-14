@@ -41,6 +41,10 @@ type Service struct {
 	PlaybookDir   string
 	InventoryPath string
 	IPTimeout     time.Duration
+	// HostNames are the local host and the configured hosts. Their
+	// .machines/<name>/ directories hold VM credentials, so AddMachine
+	// refuses them as machine names and migration leaves them alone.
+	HostNames []string
 }
 
 func (s *Service) playbookDir() string {
@@ -67,6 +71,9 @@ type ProgressEvent struct {
 }
 
 type CreateVMInput struct {
+	// Host is the vmtool host the VM is created on; credentials are kept
+	// under .machines/<Host>/<Name>/. The Manager only sees Name.
+	Host            string
 	Name            string
 	Image           string
 	VCPUs           uint

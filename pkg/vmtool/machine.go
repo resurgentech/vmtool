@@ -24,6 +24,14 @@ const (
 const (
 	machinesDir     = ".machines"
 	machineManifest = "machine.yml"
+
+	// MachinesDir is the credentials and registrations directory, relative
+	// to vmtool's working directory.
+	MachinesDir = machinesDir
+	// MachineManifest names a metal/alien registration inside
+	// .machines/<name>/. A directory without one is a host directory or a
+	// legacy VM credential cache.
+	MachineManifest = machineManifest
 )
 
 var machineNameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
@@ -58,12 +66,13 @@ func IsMachine(id string) bool {
 	return err == nil
 }
 
-// HasCredentials reports whether .machines/<id>/ holds usable credentials.
+// HasCredentials reports whether .machines/<id>/ itself holds usable
+// credentials (a host directory of VM credentials does not).
 func HasCredentials(id string) bool {
 	if !ValidMachineName(id) {
 		return false
 	}
-	_, ok := loadMachinesAuth(id)
+	_, ok := loadAuthDir(MachineDir(id))
 	return ok
 }
 
@@ -151,7 +160,26 @@ func RemoveMachine(name string) error {
 // setup_bot.yml has run. Lookup is by name only: a stale .machines/<ip>
 // entry from a VM must not shadow a machine.
 func (m Machine) Auth() Auth {
-	return ResolveAuth("", m.Name, DefaultAuth())
+	if ValidMachineName(m.Name) {
+		if a, ok := loadAuthDir(MachineDir(m.Name)); ok {
+			return a
+		}
+	}
+	return DefaultAuth()
+}
+
+// MachineDir is where a metal/alien machine's manifest and credentials
+// live: .machines/<name>, relative to vmtool's working directory.
+func MachineDir(name string) string {
+	return filepath.Join(machinesDir, name)
+}
+
+// AbsMachineDir is MachineDir made absolute, for vmtool_machines_dir.
+func AbsMachineDir(name string) (string, error) {
+	if !ValidMachineName(name) {
+		return "", fmt.Errorf("invalid machine name %q", name)
+	}
+	return filepath.Abs(MachineDir(name))
 }
 
 // MachineSSHCmd builds an interactive ssh command for the machine.

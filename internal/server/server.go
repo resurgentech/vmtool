@@ -33,10 +33,11 @@ func (s *Server) Handler() http.Handler {
 	if s.PlaybookDir == "" {
 		s.PlaybookDir = "ansible/playbooks"
 	}
+	r := hosts.New(s.Config)
 	h := &handlers{
-		svc:    &app.Service{PlaybookDir: s.PlaybookDir},
+		svc:    &app.Service{PlaybookDir: s.PlaybookDir, HostNames: r.AllNames()},
 		listen: s.Listen,
-		hosts:  hosts.New(s.Config),
+		hosts:  r,
 	}
 	var hash string
 	if s.Config != nil {
@@ -54,11 +55,11 @@ func handlerFor(h *handlers) http.Handler { return chain(h, nil) }
 // chain wires: request log -> auth (if any) -> body limit -> mux. Auth runs
 // before any body is read or handler runs; the log still records a 401.
 func chain(h *handlers, auth func(http.Handler) http.Handler) http.Handler {
-	if h.svc == nil {
-		h.svc = &app.Service{PlaybookDir: "ansible/playbooks"}
-	}
 	if h.hosts == nil {
 		h.hosts = hosts.New(nil)
+	}
+	if h.svc == nil {
+		h.svc = &app.Service{PlaybookDir: "ansible/playbooks", HostNames: h.hosts.AllNames()}
 	}
 	strict := api.NewStrictHandler(h, nil)
 	var next http.Handler = withMaxBytes(withRequest(api.HandlerFromMux(strict, http.NewServeMux())))

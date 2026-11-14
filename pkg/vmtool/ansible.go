@@ -99,13 +99,13 @@ func GrowDisk(inventoryPath string) error {
 
 // EnsureInventory checks if the inventory file has the correct IP for the VM,
 // and overwrites it if not.
-func EnsureInventory(path, name, ip string, auth Auth) (bool, error) {
+func EnsureInventory(path, name, ip string, auth Auth, machinesDir string) (bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return true, WriteInventory(path, name, ip, auth)
+		return true, WriteInventory(path, name, ip, auth, machinesDir)
 	}
 	if strings.Contains(string(data), "ansible_host: "+ip) {
 		return false, nil
 	}
-	return true, WriteInventory(path, name, ip, auth)
+	return true, WriteInventory(path, name, ip, auth, machinesDir)
 }

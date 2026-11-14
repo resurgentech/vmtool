@@ -11,6 +11,10 @@ func (s *Service) CreateVM(_ context.Context, m Manager, in CreateVMInput) (*vmt
 	if in.Name == "" || in.Image == "" {
 		return nil, invalid("create", fmt.Errorf("name and image are required"))
 	}
+	ref := VMRef{Host: in.Host, Name: in.Name}
+	if err := validRef("create", ref); err != nil {
+		return nil, err
+	}
 	if in.NetType != "" && in.NetType != "nat" && in.NetType != "bridge" && in.NetType != "direct" {
 		return nil, invalid("create", fmt.Errorf("invalid net_type %q", in.NetType))
 	}
@@ -54,8 +58,8 @@ func (s *Service) CreateVM(_ context.Context, m Manager, in CreateVMInput) (*vmt
 
 	if !in.Noclone {
 		// A fresh clone only has image-default users; drop creds left by a
-		// previous VM of the same name.
-		if err := vmtool.ForgetMachine(cfg.Name); err != nil {
+		// previous VM of the same name on this host.
+		if err := vmtool.ForgetVM(ref.Host, ref.Name); err != nil {
 			return nil, wrap("create", err)
 		}
 		emit(in, "clone", "start", "cloning image", "")
@@ -118,17 +122,14 @@ func (s *Service) CreateVM(_ context.Context, m Manager, in CreateVMInput) (*vmt
 	}
 	emit(in, "wait_ip", "done", "IP "+ip, "")
 
-	// DHCP may hand out an IP a previous VM had; its creds don't apply here.
-	if !in.Noclone {
-		if err := vmtool.ForgetMachine(ip); err != nil {
-			return info, wrap("create", err)
-		}
+	auth := vmtool.ResolveVMAuth(ref.Host, ref.Name, vmtool.Auth{User: cfg.SSHUser, Password: cfg.SSHPass})
+	credsDir, err := vmtool.AbsCredsDir(ref.Host, ref.Name)
+	if err != nil {
+		return info, wrap("create", err)
 	}
-
-	auth := vmtool.ResolveAuth(ip, cfg.Name, vmtool.Auth{User: cfg.SSHUser, Password: cfg.SSHPass})
 	if s.InventoryPath != "" {
 		emit(in, "write_inventory", "start", "writing inventory", "")
-		if err := vmtool.WriteInventory(s.InventoryPath, cfg.Name, ip, auth); err != nil {
+		if err := vmtool.WriteInventory(s.InventoryPath, cfg.Name, ip, auth, credsDir); err != nil {
 			emit(in, "write_inventory", "error", err.Error(), "")
 			return info, wrap("create", err)
 		}
@@ -137,7 +138,7 @@ func (s *Service) CreateVM(_ context.Context, m Manager, in CreateVMInput) (*vmt
 
 	if in.DiskSizeGB > 0 {
 		emit(in, "grow_disk", "start", "growing filesystem", "")
-		invPath, cleanup, err := vmtool.TempInventory(cfg.Name, ip, auth)
+		invPath, cleanup, err := vmtool.TempInventory(cfg.Name, ip, auth, credsDir)
 		if err != nil {
 			emit(in, "grow_disk", "error", err.Error(), "")
 			return info, wrap("create", err)
@@ -157,7 +158,7 @@ func (s *Service) CreateVM(_ context.Context, m Manager, in CreateVMInput) (*vmt
 			return info, err
 		}
 		emit(in, "playbook", "start", "running "+in.Playbook, "")
-		invPath, cleanup, err := vmtool.TempInventory(cfg.Name, ip, auth)
+		invPath, cleanup, err := vmtool.TempInventory(cfg.Name, ip, auth, credsDir)
 		if err != nil {
 			emit(in, "playbook", "error", err.Error(), "")
 			return info, wrap("create", err)

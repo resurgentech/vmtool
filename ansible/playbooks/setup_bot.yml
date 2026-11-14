@@ -1,9 +1,11 @@
 ---
 # Replace the image-default packer user with bot.
 # Copies packer's groups and sudoers, writes a password and ed25519
-# keypair to .machines/<inventory_hostname>/ on the control host,
-# then disables SSH password login, moves GUI autologin (gdm3/lightdm)
-# to bot, and deletes packer.
+# keypair on the control host to vmtool_machines_dir (vmtool always sets
+# it: .machines/<host>/<vm>/ for VMs, .machines/<name>/ for metal/alien;
+# run by hand without it: .machines/<inventory_hostname>/), then disables
+# SSH password login, moves GUI autologin (gdm3/lightdm) to bot, and
+# deletes packer.
 #
 # With -e vmtool_kind=metal (or alien) the machine has an owner: password
 # login is disabled for bot only and display-manager autologin is untouched.
@@ -17,7 +19,7 @@
     src_user: packer
     dest_user: bot
     project_root: "{{ playbook_dir | dirname | dirname }}"
-    machines_dir: "{{ project_root }}/.machines/{{ inventory_hostname }}"
+    machines_dir: "{{ vmtool_machines_dir | default(project_root + '/.machines/' + inventory_hostname) }}"
     # vm | metal | alien. Non-vm machines keep their sshd policy for other users.
     vmtool_kind: vm
     bot_sshd_dropin: /etc/ssh/sshd_config.d/01-vmtool-bot.conf

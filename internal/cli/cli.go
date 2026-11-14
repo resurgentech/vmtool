@@ -13,6 +13,7 @@ import (
 
 	"github.com/jaredeh/vmtool/internal/app"
 	"github.com/jaredeh/vmtool/internal/config"
+	"github.com/jaredeh/vmtool/internal/hosts"
 	"github.com/jaredeh/vmtool/internal/server"
 	"github.com/jaredeh/vmtool/internal/tui"
 	"github.com/jaredeh/vmtool/pkg/vmtool"
@@ -129,27 +130,28 @@ token_sha256.`,
 	}
 
 	root.AddCommand(
-		createCmd(),
-		startCmd(),
-		stopCmd(),
-		resumeCmd(),
-		poweroffCmd(),
-		deleteCmd(),
-		listCmd(),
-		infoCmd(),
-		sshCmd(),
-		cmdCmd(),
-		rebootCmd(),
-		autostartCmd(),
-		interactiveCmd(),
-		networksCmd(),
-		playbookCmd(),
-		imagesCmd(),
-		poolCmd(),
-		migrateDiskCmd(),
-		resizeDiskCmd(),
-		addDiskCmd(),
-		metalCmd(),
+		createCmd(e),
+		startCmd(e),
+		stopCmd(e),
+		resumeCmd(e),
+		poweroffCmd(e),
+		deleteCmd(e),
+		listCmd(e),
+		infoCmd(e),
+		sshCmd(e),
+		cmdCmd(e),
+		rebootCmd(e),
+		autostartCmd(e),
+		interactiveCmd(e),
+		networksCmd(e),
+		playbookCmd(e),
+		imagesCmd(e),
+		poolCmd(e),
+		migrateDiskCmd(e),
+		resizeDiskCmd(e),
+		addDiskCmd(e),
+		metalCmd(e),
+		machinesCmd(e),
 		serverCmd(e),
 		configCmd(func() (string, error) { return e.dir, nil }),
 	)
@@ -166,21 +168,47 @@ func (e remoteExitError) Error() string {
 	return fmt.Sprintf("exit status %d", e.code)
 }
 
-func withManager(fn func(m *vmtool.Manager, cmd *cobra.Command, args []string) error) func(*cobra.Command, []string) error {
+// resolver maps host names to Managers for the config the gate loaded.
+func (e *env) resolver() *hosts.Resolver { return hosts.New(e.cfg) }
+
+// withManager runs fn on the local host's Manager.
+func withManager(e *env, fn func(m app.Manager, cmd *cobra.Command, args []string) error) func(*cobra.Command, []string) error {
 	return func(cmd *cobra.Command, args []string) error {
-		m, err := vmtool.NewManager()
+		r := e.resolver()
+		m, release, err := r.Resolve(r.Local())
 		if err != nil {
 			return err
 		}
-		defer m.Close()
+		defer release()
 		return fn(m, cmd, args)
 	}
 }
 
-func defaultService(inventory string) *app.Service {
+// withVM parses args[0] as host/vm and runs fn on that host's Manager. A bare
+// name or a host this vmtool does not serve fails before any Manager opens.
+func withVM(e *env, fn func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error) func(*cobra.Command, []string) error {
+	return func(cmd *cobra.Command, args []string) error {
+		r := e.resolver()
+		ref, err := r.ParseVM(args[0])
+		if err != nil {
+			return err
+		}
+		m, release, err := r.Resolve(ref.Host)
+		if err != nil {
+			return err
+		}
+		defer release()
+		return fn(m, ref, cmd, args)
+	}
+}
+
+// service is the workflow layer for this config: HostNames lets AddMachine
+// and migration recognise host directories.
+func (e *env) service(inventory string) *app.Service {
 	return &app.Service{
 		PlaybookDir:   filepath.Join("ansible", "playbooks"),
 		InventoryPath: inventory,
+		HostNames:     e.resolver().AllNames(),
 	}
 }
 
@@ -192,7 +220,7 @@ func printAppErr(err error) error {
 	return err
 }
 
-func createCmd() *cobra.Command {
+func createCmd(e *env) *cobra.Command {
 	var (
 		vcpus           uint
 		memory          uint
@@ -212,31 +240,34 @@ func createCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "create <name> <image>",
+		Use:   "create <host/name> <image>",
 		Short: "Define and start a new VM",
-		Long: `Define and start a new VM from a disk image.
+		Long: `Define and start a new VM from a disk image on host.
 
 By default the image is cloned so the original is unchanged.
 Use --noclone to boot directly from the image; any changes (e.g. package
-upgrades) will be written back to the source image.`,
+upgrades) will be written back to the source image.
+
+  vmtool create jetfire/web ubuntu-24.04.qcow2`,
 		Args: cobra.ExactArgs(2),
-		RunE: withManager(func(m *vmtool.Manager, cmd *cobra.Command, args []string) error {
+		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
 			extra, err := parseExtraVars(extraVars)
 			if err != nil {
 				return err
 			}
-			info, err := defaultService(inventory).CreateVM(cmd.Context(), m, app.CreateVMInput{
-				Name:        args[0],
-				Image:       args[1],
-				VCPUs:       vcpus,
-				Memory:      memory,
-				DiskSizeGB:  diskSizeGB,
-				Pool:        pool,
-				NetType:     netType,
-				NetSource:   netSource,
-				MacvtapMode: macvtapMode,
-				SSHUser:     sshUser,
-				SSHPass:     sshPass,
+			info, err := e.service(inventory).CreateVM(cmd.Context(), m, app.CreateVMInput{
+				Host:            ref.Host,
+				Name:            ref.Name,
+				Image:           args[1],
+				VCPUs:           vcpus,
+				Memory:          memory,
+				DiskSizeGB:      diskSizeGB,
+				Pool:            pool,
+				NetType:         netType,
+				NetSource:       netSource,
+				MacvtapMode:     macvtapMode,
+				SSHUser:         sshUser,
+				SSHPass:         sshPass,
 				Playbook:        playbook,
 				Noclone:         noclone,
 				ExtraDiskSizeGB: extraDiskSizeGB,
@@ -252,7 +283,7 @@ upgrades) will be written back to the source image.`,
 				},
 			})
 			if info != nil {
-				fmt.Printf("VM %q created and started\n", info.Name)
+				fmt.Printf("VM %q created and started\n", ref.String())
 				if info.IP != "" {
 					fmt.Printf("IP: %s\n", info.IP)
 				}
@@ -280,13 +311,13 @@ upgrades) will be written back to the source image.`,
 	return cmd
 }
 
-func startCmd() *cobra.Command {
+func startCmd(e *env) *cobra.Command {
 	return &cobra.Command{
-		Use:   "start <name>",
+		Use:   "start <host/name>",
 		Short: "Start a stopped VM",
 		Args:  cobra.ExactArgs(1),
-		RunE: withManager(func(m *vmtool.Manager, cmd *cobra.Command, args []string) error {
-			if _, err := defaultService("").StartVM(cmd.Context(), m, args[0]); err != nil {
+		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
+			if _, err := e.service("").StartVM(cmd.Context(), m, ref.Name); err != nil {
 				return err
 			}
 			fmt.Printf("VM %q started\n", args[0])
@@ -295,13 +326,13 @@ func startCmd() *cobra.Command {
 	}
 }
 
-func resumeCmd() *cobra.Command {
+func resumeCmd(e *env) *cobra.Command {
 	return &cobra.Command{
-		Use:   "resume <name>",
+		Use:   "resume <host/name>",
 		Short: "Resume a paused VM",
 		Args:  cobra.ExactArgs(1),
-		RunE: withManager(func(m *vmtool.Manager, cmd *cobra.Command, args []string) error {
-			if _, err := defaultService("").ResumeVM(cmd.Context(), m, args[0]); err != nil {
+		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
+			if _, err := e.service("").ResumeVM(cmd.Context(), m, ref.Name); err != nil {
 				return err
 			}
 			fmt.Printf("VM %q resumed\n", args[0])
@@ -310,13 +341,13 @@ func resumeCmd() *cobra.Command {
 	}
 }
 
-func stopCmd() *cobra.Command {
+func stopCmd(e *env) *cobra.Command {
 	return &cobra.Command{
-		Use:   "stop <name>",
+		Use:   "stop <host/name>",
 		Short: "Gracefully shut down a VM",
 		Args:  cobra.ExactArgs(1),
-		RunE: withManager(func(m *vmtool.Manager, cmd *cobra.Command, args []string) error {
-			if _, err := defaultService("").StopVM(cmd.Context(), m, args[0]); err != nil {
+		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
+			if _, err := e.service("").StopVM(cmd.Context(), m, ref.Name); err != nil {
 				return err
 			}
 			fmt.Printf("VM %q shutdown requested\n", args[0])
@@ -325,13 +356,13 @@ func stopCmd() *cobra.Command {
 	}
 }
 
-func poweroffCmd() *cobra.Command {
+func poweroffCmd(e *env) *cobra.Command {
 	return &cobra.Command{
-		Use:   "poweroff <name>",
+		Use:   "poweroff <host/name>",
 		Short: "Force power-off a VM",
 		Args:  cobra.ExactArgs(1),
-		RunE: withManager(func(m *vmtool.Manager, cmd *cobra.Command, args []string) error {
-			if _, err := defaultService("").PoweroffVM(cmd.Context(), m, args[0]); err != nil {
+		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
+			if _, err := e.service("").PoweroffVM(cmd.Context(), m, ref.Name); err != nil {
 				return err
 			}
 			fmt.Printf("VM %q powered off\n", args[0])
@@ -340,19 +371,19 @@ func poweroffCmd() *cobra.Command {
 	}
 }
 
-func deleteCmd() *cobra.Command {
+func deleteCmd(e *env) *cobra.Command {
 	var noclone bool
 
 	cmd := &cobra.Command{
-		Use:   "delete <name>",
+		Use:   "delete <host/name>",
 		Short: "Stop and undefine a VM",
 		Long: `Stop and undefine a VM.
 
 By default also deletes the cloned disk volume.
 Use --noclone to skip volume deletion (use when the VM was created with --noclone).`,
 		Args: cobra.ExactArgs(1),
-		RunE: withManager(func(m *vmtool.Manager, cmd *cobra.Command, args []string) error {
-			if err := defaultService("").DeleteVM(cmd.Context(), m, args[0], noclone); err != nil {
+		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
+			if err := e.service("").DeleteVM(cmd.Context(), m, ref, noclone); err != nil {
 				return err
 			}
 			fmt.Printf("VM %q deleted\n", args[0])
@@ -364,16 +395,17 @@ Use --noclone to skip volume deletion (use when the VM was created with --noclon
 	return cmd
 }
 
-func listCmd() *cobra.Command {
+func listCmd(e *env) *cobra.Command {
 	return &cobra.Command{
 		Use:     "list",
-		Short:   "List all VMs",
+		Short:   "List all VMs on this host, named host/vm",
 		Aliases: []string{"ls"},
-		RunE: withManager(func(m *vmtool.Manager, cmd *cobra.Command, args []string) error {
-			vms, err := defaultService("").ListVMs(cmd.Context(), m)
+		RunE: withManager(e, func(m app.Manager, cmd *cobra.Command, args []string) error {
+			vms, err := e.service("").ListVMs(cmd.Context(), m)
 			if err != nil {
 				return err
 			}
+			local := e.resolver().Local()
 			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 			fmt.Fprintln(w, "NAME\tSTATE\tVCPUS\tMEMORY\tAUTOSTART\tIP")
 			for _, vm := range vms {
@@ -385,20 +417,21 @@ func listCmd() *cobra.Command {
 				if vm.Autostart {
 					autostart = "on"
 				}
-				fmt.Fprintf(w, "%s\t%s\t%d\t%d GiB\t%s\t%s\n", vm.Name, vm.State, vm.VCPUs, vm.Memory, autostart, ip)
+				name := app.VMRef{Host: local, Name: vm.Name}.String()
+				fmt.Fprintf(w, "%s\t%s\t%d\t%d GiB\t%s\t%s\n", name, vm.State, vm.VCPUs, vm.Memory, autostart, ip)
 			}
 			return w.Flush()
 		}),
 	}
 }
 
-func infoCmd() *cobra.Command {
+func infoCmd(e *env) *cobra.Command {
 	return &cobra.Command{
-		Use:   "info <name>",
+		Use:   "info <host/name>",
 		Short: "Show details of a VM",
 		Args:  cobra.ExactArgs(1),
-		RunE: withManager(func(m *vmtool.Manager, cmd *cobra.Command, args []string) error {
-			info, err := defaultService("").GetVM(cmd.Context(), m, args[0])
+		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
+			info, err := e.service("").GetVM(cmd.Context(), m, ref.Name)
 			if err != nil {
 				return err
 			}
@@ -421,24 +454,26 @@ func infoCmd() *cobra.Command {
 	}
 }
 
-func sshCmd() *cobra.Command {
+func sshCmd(e *env) *cobra.Command {
 	return &cobra.Command{
-		Use:   "ssh <name> [-- ssh-args...]",
+		Use:   "ssh <host/name> [-- ssh-args...]",
 		Short: "SSH into a VM using stored .machines credentials",
-		Long: `SSH into a running VM. If .machines/<ip>/ (or .machines/<name>/)
-exists, uses the username and key stored there. Otherwise falls back to packer.
-Host key checking is disabled.`,
+		Long: `SSH into a running VM. If .machines/<host>/<name>/ exists, uses the
+username and key stored there. Otherwise falls back to packer. Host key
+checking is disabled.
+
+  vmtool ssh jetfire/web`,
 		Args: cobra.MinimumNArgs(1),
-		RunE: withManager(func(m *vmtool.Manager, cmd *cobra.Command, args []string) error {
-			info, err := m.Info(args[0])
+		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
+			info, err := m.Info(ref.Name)
 			if err != nil {
 				return err
 			}
 			if info.IP == "" {
-				return fmt.Errorf("VM %q has no IP address", args[0])
+				return fmt.Errorf("VM %q has no IP address", ref.String())
 			}
 
-			c, err := vmtool.SSHCmd(info.IP, info.Name, args[1:]...)
+			c, err := vmtool.SSHCmd(ref.Host, ref.Name, info.IP, args[1:]...)
 			if err != nil {
 				return err
 			}
@@ -447,28 +482,28 @@ Host key checking is disabled.`,
 	}
 }
 
-func cmdCmd() *cobra.Command {
+func cmdCmd(e *env) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "cmd <name> <command> [args...]",
+		Use:   "cmd <host/name> <command> [args...]",
 		Short: "Run a command on a VM over SSH",
 		Long: `Run a command on a running VM and pass through stdin, stdout, stderr,
 and the remote exit code. Uses .machines credentials when present.
 
-  vmtool cmd web uname -a
-  vmtool cmd web -- sh -c 'echo hi | wc -c'`,
+  vmtool cmd jetfire/web uname -a
+  vmtool cmd jetfire/web -- sh -c 'echo hi | wc -c'`,
 		Args:          cobra.MinimumNArgs(2),
 		SilenceErrors: true,
 		SilenceUsage:  true,
-		RunE: withManager(func(m *vmtool.Manager, cmd *cobra.Command, args []string) error {
-			info, err := m.Info(args[0])
+		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
+			info, err := m.Info(ref.Name)
 			if err != nil {
 				return err
 			}
 			if info.IP == "" {
-				return fmt.Errorf("VM %q has no IP address", args[0])
+				return fmt.Errorf("VM %q has no IP address", ref.String())
 			}
 
-			c, err := vmtool.RemoteCmd(info.IP, info.Name, args[1:])
+			c, err := vmtool.RemoteCmd(ref.Host, ref.Name, info.IP, args[1:])
 			if err != nil {
 				return err
 			}
@@ -489,17 +524,17 @@ and the remote exit code. Uses .machines credentials when present.
 	return cmd
 }
 
-func rebootCmd() *cobra.Command {
+func rebootCmd(e *env) *cobra.Command {
 	return &cobra.Command{
-		Use:   "reboot <name>",
+		Use:   "reboot <host/name>",
 		Short: "Reboot a running VM",
 		Long: `Ask the guest to reboot (ACPI). The domain stays defined.
 
 Unlike stop (ACPI shutdown, then shutoff) or poweroff (force destroy),
 the VM comes back up on its own if the guest handles the reboot.`,
 		Args: cobra.ExactArgs(1),
-		RunE: withManager(func(m *vmtool.Manager, cmd *cobra.Command, args []string) error {
-			if _, err := defaultService("").RebootVM(cmd.Context(), m, args[0]); err != nil {
+		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
+			if _, err := e.service("").RebootVM(cmd.Context(), m, ref.Name); err != nil {
 				return err
 			}
 			fmt.Printf("VM %q rebooted\n", args[0])
@@ -508,12 +543,12 @@ the VM comes back up on its own if the guest handles the reboot.`,
 	}
 }
 
-func autostartCmd() *cobra.Command {
+func autostartCmd(e *env) *cobra.Command {
 	return &cobra.Command{
-		Use:   "autostart <name> <on|off>",
+		Use:   "autostart <host/name> <on|off>",
 		Short: "Enable or disable autostart for a VM",
 		Args:  cobra.ExactArgs(2),
-		RunE: withManager(func(m *vmtool.Manager, cmd *cobra.Command, args []string) error {
+		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
 			name := args[0]
 			var enable bool
 			switch args[1] {
@@ -524,7 +559,7 @@ func autostartCmd() *cobra.Command {
 			default:
 				return fmt.Errorf("invalid value %q: use on or off", args[1])
 			}
-			if _, err := defaultService("").SetAutostart(cmd.Context(), m, name, enable); err != nil {
+			if _, err := e.service("").SetAutostart(cmd.Context(), m, ref.Name, enable); err != nil {
 				return err
 			}
 			label := "disabled"
@@ -537,23 +572,24 @@ func autostartCmd() *cobra.Command {
 	}
 }
 
-func interactiveCmd() *cobra.Command {
+func interactiveCmd(e *env) *cobra.Command {
 	return &cobra.Command{
 		Use:     "i",
 		Short:   "Launch interactive TUI",
 		Aliases: []string{"interactive"},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return tui.Run()
+			r := e.resolver()
+			return tui.Run(r.Local(), r.AllNames())
 		},
 	}
 }
 
-func networksCmd() *cobra.Command {
+func networksCmd(e *env) *cobra.Command {
 	return &cobra.Command{
 		Use:   "networks",
 		Short: "List available libvirt networks",
-		RunE: withManager(func(m *vmtool.Manager, cmd *cobra.Command, args []string) error {
-			nets, err := defaultService("").ListNetworks(cmd.Context(), m)
+		RunE: withManager(e, func(m app.Manager, cmd *cobra.Command, args []string) error {
+			nets, err := e.service("").ListNetworks(cmd.Context(), m)
 			if err != nil {
 				return err
 			}
@@ -580,7 +616,7 @@ func parseExtraVars(pairs []string) (map[string]string, error) {
 	return out, nil
 }
 
-func playbookCmd() *cobra.Command {
+func playbookCmd(e *env) *cobra.Command {
 	var (
 		sshUser   string
 		sshPass   string
@@ -588,15 +624,15 @@ func playbookCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "playbook <vm-name> <playbook-path>",
+		Use:   "playbook <host/vm-name> <playbook-path>",
 		Short: "Run an Ansible playbook against a running VM",
 		Args:  cobra.ExactArgs(2),
-		RunE: withManager(func(m *vmtool.Manager, cmd *cobra.Command, args []string) error {
+		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
 			extra, err := parseExtraVars(extraVars)
 			if err != nil {
 				return err
 			}
-			res, err := defaultService("").RunPlaybook(cmd.Context(), m, args[0], args[1], vmtool.Auth{User: sshUser, Password: sshPass}, extra)
+			res, err := e.service("").RunPlaybook(cmd.Context(), m, ref, args[1], vmtool.Auth{User: sshUser, Password: sshPass}, extra)
 			if res != nil && res.Output != "" {
 				fmt.Print(res.Output)
 			}
@@ -615,21 +651,21 @@ func playbookCmd() *cobra.Command {
 	return cmd
 }
 
-func imagesCmd() *cobra.Command {
+func imagesCmd(e *env) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "images",
 		Short: "Manage disk images",
 	}
-	cmd.AddCommand(imagesListCmd(), imagesDeleteCmd())
+	cmd.AddCommand(imagesListCmd(e), imagesDeleteCmd(e))
 	return cmd
 }
 
-func imagesListCmd() *cobra.Command {
+func imagesListCmd(e *env) *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
 		Short: "List available disk images grouped by pool",
-		RunE: withManager(func(m *vmtool.Manager, cmd *cobra.Command, args []string) error {
-			byPool, err := defaultService("").ListImages(cmd.Context(), m)
+		RunE: withManager(e, func(m app.Manager, cmd *cobra.Command, args []string) error {
+			byPool, err := e.service("").ListImages(cmd.Context(), m)
 			if err != nil {
 				return err
 			}
@@ -651,14 +687,14 @@ func imagesListCmd() *cobra.Command {
 	}
 }
 
-func imagesDeleteCmd() *cobra.Command {
+func imagesDeleteCmd(e *env) *cobra.Command {
 	var pool string
 	cmd := &cobra.Command{
 		Use:   "delete <image>",
 		Short: "Delete a disk image from a storage pool",
 		Args:  cobra.ExactArgs(1),
-		RunE: withManager(func(m *vmtool.Manager, cmd *cobra.Command, args []string) error {
-			if err := defaultService("").DeleteImage(cmd.Context(), m, args[0], pool); err != nil {
+		RunE: withManager(e, func(m app.Manager, cmd *cobra.Command, args []string) error {
+			if err := e.service("").DeleteImage(cmd.Context(), m, args[0], pool); err != nil {
 				return err
 			}
 			fmt.Printf("Image %q deleted from pool %q\n", args[0], pool)
@@ -669,22 +705,22 @@ func imagesDeleteCmd() *cobra.Command {
 	return cmd
 }
 
-func poolCmd() *cobra.Command {
+func poolCmd(e *env) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "pool",
 		Short: "Manage storage pools",
 	}
-	cmd.AddCommand(poolListCmd(), poolCreateCmd())
+	cmd.AddCommand(poolListCmd(e), poolCreateCmd(e))
 	return cmd
 }
 
-func poolListCmd() *cobra.Command {
+func poolListCmd(e *env) *cobra.Command {
 	return &cobra.Command{
 		Use:     "list",
 		Short:   "List storage pools",
 		Aliases: []string{"ls"},
-		RunE: withManager(func(m *vmtool.Manager, cmd *cobra.Command, args []string) error {
-			pools, err := defaultService("").ListPools(cmd.Context(), m)
+		RunE: withManager(e, func(m app.Manager, cmd *cobra.Command, args []string) error {
+			pools, err := e.service("").ListPools(cmd.Context(), m)
 			if err != nil {
 				return err
 			}
@@ -702,13 +738,13 @@ func poolListCmd() *cobra.Command {
 	}
 }
 
-func poolCreateCmd() *cobra.Command {
+func poolCreateCmd(e *env) *cobra.Command {
 	return &cobra.Command{
 		Use:   "create <name> <path>",
 		Short: "Create a new directory-type storage pool",
 		Args:  cobra.ExactArgs(2),
-		RunE: withManager(func(m *vmtool.Manager, cmd *cobra.Command, args []string) error {
-			if err := defaultService("").CreatePool(cmd.Context(), m, args[0], args[1]); err != nil {
+		RunE: withManager(e, func(m app.Manager, cmd *cobra.Command, args []string) error {
+			if err := e.service("").CreatePool(cmd.Context(), m, args[0], args[1]); err != nil {
 				return err
 			}
 			fmt.Printf("Pool %q created at %s\n", args[0], args[1])
@@ -717,18 +753,18 @@ func poolCreateCmd() *cobra.Command {
 	}
 }
 
-func migrateDiskCmd() *cobra.Command {
+func migrateDiskCmd(e *env) *cobra.Command {
 	return &cobra.Command{
-		Use:   "migrate-disk <vm> <pool>",
+		Use:   "migrate-disk <host/vm> <pool>",
 		Short: "Move a VM's disk to a different storage pool",
 		Long: `Stop the VM (if running), copy its disk volume to the target pool,
 redefine the domain with the new path, then restart (if it was running).`,
 		Args: cobra.ExactArgs(2),
-		RunE: withManager(func(m *vmtool.Manager, cmd *cobra.Command, args []string) error {
+		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
 			vmName := args[0]
 			pool := args[1]
 			fmt.Printf("Migrating disk for VM %q to pool %q...\n", vmName, pool)
-			if _, err := defaultService("").MigrateDisk(cmd.Context(), m, vmName, pool); err != nil {
+			if _, err := e.service("").MigrateDisk(cmd.Context(), m, ref.Name, pool); err != nil {
 				return err
 			}
 			fmt.Printf("VM %q disk migrated to pool %q\n", vmName, pool)
@@ -737,21 +773,21 @@ redefine the domain with the new path, then restart (if it was running).`,
 	}
 }
 
-func resizeDiskCmd() *cobra.Command {
+func resizeDiskCmd(e *env) *cobra.Command {
 	var (
 		sshUser string
 		sshPass string
 	)
 
 	cmd := &cobra.Command{
-		Use:   "resize-disk <vm> <size-gb>",
+		Use:   "resize-disk <host/vm> <size-gb>",
 		Short: "Grow a VM's disk to a new size",
 		Long: `Resize a VM's disk volume to the given size in GB (must be larger).
 
 If the VM is running, also notifies the guest of the new size and expands
 the root partition and filesystem via SSH.`,
 		Args: cobra.ExactArgs(2),
-		RunE: withManager(func(m *vmtool.Manager, cmd *cobra.Command, args []string) error {
+		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
 			vmName := args[0]
 			sizeGB, err := strconv.ParseUint(args[1], 10, 32)
 			if err != nil || sizeGB == 0 {
@@ -759,7 +795,7 @@ the root partition and filesystem via SSH.`,
 			}
 
 			fmt.Printf("Resizing disk for VM %q to %dGB...\n", vmName, sizeGB)
-			res, err := defaultService("").ResizeDisk(cmd.Context(), m, vmName, uint(sizeGB), vmtool.Auth{User: sshUser, Password: sshPass})
+			res, err := e.service("").ResizeDisk(cmd.Context(), m, ref, uint(sizeGB), vmtool.Auth{User: sshUser, Password: sshPass})
 			if err != nil {
 				return err
 			}
@@ -782,11 +818,11 @@ the root partition and filesystem via SSH.`,
 	return cmd
 }
 
-func addDiskCmd() *cobra.Command {
+func addDiskCmd(e *env) *cobra.Command {
 	var pool string
 
 	cmd := &cobra.Command{
-		Use:   "add-disk <vm> <size-gb>",
+		Use:   "add-disk <host/vm> <size-gb>",
 		Short: "Attach a new empty disk to a VM",
 		Long: `Create an empty qcow2 volume and attach it as the next virtio disk (vdb, vdc, …).
 
@@ -795,17 +831,17 @@ again, and so on. If the VM is running the disk is hot-plugged and persisted.
 If it is shut off the change is persisted and appears on the next start. The
 guest sees a raw block device; it is not partitioned or formatted.
 
-  vmtool add-disk web 50
-  vmtool add-disk web 100 --pool fast`,
+  vmtool add-disk jetfire/web 50
+  vmtool add-disk jetfire/web 100 --pool fast`,
 		Args: cobra.ExactArgs(2),
-		RunE: withManager(func(m *vmtool.Manager, cmd *cobra.Command, args []string) error {
+		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
 			vmName := args[0]
 			sizeGB, err := strconv.ParseUint(args[1], 10, 32)
 			if err != nil || sizeGB == 0 {
 				return fmt.Errorf("invalid size %q: must be a positive integer (GB)", args[1])
 			}
 
-			res, err := defaultService("").AddDisk(cmd.Context(), m, vmName, uint(sizeGB), pool)
+			res, err := e.service("").AddDisk(cmd.Context(), m, ref.Name, uint(sizeGB), pool)
 			if err != nil {
 				return err
 			}

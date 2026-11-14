@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -220,6 +221,8 @@ func (s *Service) AddMachine(_ context.Context, vms Manager, in AddMachineInput)
 		return nil, invalid(op, fmt.Errorf("invalid kind %q: want metal or alien", in.Kind))
 	case in.Commission && kind != vmtool.MachineAlien:
 		return nil, invalid(op, fmt.Errorf("commission is only for alien machines"))
+	case slices.Contains(s.HostNames, in.Name):
+		return nil, conflict(op, fmt.Errorf("%q is a vmtool host name; .machines/%s/ holds that host's VM credentials", in.Name, in.Name))
 	}
 
 	if vms != nil {
@@ -289,7 +292,12 @@ func (s *Service) machinePlaybook(op string, m vmtool.Machine, playbook string, 
 	}
 	progress.emit("playbook", "start", "running "+playbook, "")
 	auth := m.Auth()
-	invPath, cleanup, err := vmtool.TempInventory(m.Name, m.Host, auth)
+	dir, err := vmtool.AbsMachineDir(m.Name)
+	if err != nil {
+		progress.emit("playbook", "error", err.Error(), "")
+		return wrap(op, err)
+	}
+	invPath, cleanup, err := vmtool.TempInventory(m.Name, m.Host, auth, dir)
 	if err != nil {
 		progress.emit("playbook", "error", err.Error(), "")
 		return wrap(op, err)

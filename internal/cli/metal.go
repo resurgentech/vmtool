@@ -12,7 +12,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func metalCmd() *cobra.Command {
+func metalCmd(e *env) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "metal",
 		Short: "Manage metal and alien machines (SSH/Ansible targets outside libvirt)",
@@ -22,19 +22,19 @@ an Ubuntu-compatible OS. Onboarding needs SSH as packer/packer with
 passwordless sudo; ansible/playbooks/prep_machine.yml sets that up.`,
 	}
 	cmd.AddCommand(
-		metalAddCmd(),
-		metalListCmd(),
-		metalInfoCmd(),
-		metalRmCmd(),
-		metalSSHCmd(),
-		metalCmdCmd(),
-		metalPlaybookCmd(),
-		metalRebootCmd(),
+		metalAddCmd(e),
+		metalListCmd(e),
+		metalInfoCmd(e),
+		metalRmCmd(e),
+		metalSSHCmd(e),
+		metalCmdCmd(e),
+		metalPlaybookCmd(e),
+		metalRebootCmd(e),
 	)
 	return cmd
 }
 
-func metalAddCmd() *cobra.Command {
+func metalAddCmd(e *env) *cobra.Command {
 	var (
 		kind       string
 		commission bool
@@ -58,7 +58,7 @@ Re-running with the same host and kind resumes a failed onboarding.
 				defer m.Close()
 				vms = m
 			}
-			info, err := defaultService("").AddMachine(cmd.Context(), vms, app.AddMachineInput{
+			info, err := e.service("").AddMachine(cmd.Context(), vms, app.AddMachineInput{
 				Name:       args[0],
 				Host:       args[1],
 				Kind:       kind,
@@ -84,13 +84,13 @@ Re-running with the same host and kind resumes a failed onboarding.
 	return cmd
 }
 
-func metalListCmd() *cobra.Command {
+func metalListCmd(e *env) *cobra.Command {
 	return &cobra.Command{
 		Use:     "list",
 		Short:   "List machines and probe them over SSH",
 		Aliases: []string{"ls"},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ms, err := defaultService("").ListMachines(cmd.Context())
+			ms, err := e.service("").ListMachines(cmd.Context())
 			if err != nil {
 				return err
 			}
@@ -108,13 +108,13 @@ func metalListCmd() *cobra.Command {
 	}
 }
 
-func metalInfoCmd() *cobra.Command {
+func metalInfoCmd(e *env) *cobra.Command {
 	return &cobra.Command{
 		Use:   "info <name>",
 		Short: "Show a machine and probe it over SSH",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			m, err := defaultService("").GetMachine(cmd.Context(), args[0])
+			m, err := e.service("").GetMachine(cmd.Context(), args[0])
 			if err != nil {
 				return err
 			}
@@ -133,14 +133,14 @@ func metalInfoCmd() *cobra.Command {
 	}
 }
 
-func metalRmCmd() *cobra.Command {
+func metalRmCmd(e *env) *cobra.Command {
 	return &cobra.Command{
 		Use:     "rm <name>",
 		Short:   "Forget a machine (removes .machines/<name>; the machine is untouched)",
 		Aliases: []string{"remove"},
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := defaultService("").RemoveMachine(cmd.Context(), args[0]); err != nil {
+			if err := e.service("").RemoveMachine(cmd.Context(), args[0]); err != nil {
 				return err
 			}
 			fmt.Printf("Machine %q forgotten\n", args[0])
@@ -149,13 +149,13 @@ func metalRmCmd() *cobra.Command {
 	}
 }
 
-func metalSSHCmd() *cobra.Command {
+func metalSSHCmd(e *env) *cobra.Command {
 	return &cobra.Command{
 		Use:   "ssh <name> [-- ssh-args...]",
 		Short: "SSH into a machine using its .machines credentials",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := defaultService("").MachineSSHCmd(args[0], args[1:]...)
+			c, err := e.service("").MachineSSHCmd(args[0], args[1:]...)
 			if err != nil {
 				return err
 			}
@@ -164,7 +164,7 @@ func metalSSHCmd() *cobra.Command {
 	}
 }
 
-func metalCmdCmd() *cobra.Command {
+func metalCmdCmd(e *env) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "cmd <name> <command> [args...]",
 		Short: "Run a command on a machine over SSH",
@@ -176,7 +176,7 @@ exit code.
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := defaultService("").MachineSSHCmd(args[0], args[1:]...)
+			c, err := e.service("").MachineSSHCmd(args[0], args[1:]...)
 			if err != nil {
 				return err
 			}
@@ -192,7 +192,7 @@ exit code.
 	return cmd
 }
 
-func metalPlaybookCmd() *cobra.Command {
+func metalPlaybookCmd(e *env) *cobra.Command {
 	var extraVars []string
 	cmd := &cobra.Command{
 		Use:   "playbook <name> <playbook>",
@@ -206,7 +206,7 @@ refused; use 'metal add --kind alien --commission'.`,
 			if err != nil {
 				return err
 			}
-			res, err := defaultService("").RunMachinePlaybook(cmd.Context(), args[0], args[1], extra)
+			res, err := e.service("").RunMachinePlaybook(cmd.Context(), args[0], args[1], extra)
 			if res != nil && res.Output != "" {
 				fmt.Print(res.Output)
 			}
@@ -221,13 +221,13 @@ refused; use 'metal add --kind alien --commission'.`,
 	return cmd
 }
 
-func metalRebootCmd() *cobra.Command {
+func metalRebootCmd(e *env) *cobra.Command {
 	return &cobra.Command{
 		Use:   "reboot <name>",
 		Short: "Reboot a machine over SSH (there is no power-off or start)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if _, err := defaultService("").RebootMachine(cmd.Context(), args[0]); err != nil {
+			if _, err := e.service("").RebootMachine(cmd.Context(), args[0]); err != nil {
 				return err
 			}
 			fmt.Printf("Machine %q rebooting\n", args[0])

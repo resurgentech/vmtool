@@ -66,6 +66,19 @@ func TestListAndNames(t *testing.T) {
 	}
 }
 
+func TestAllNamesAndParseVM(t *testing.T) {
+	r := New(&config.Config{Name: "ws", Hosts: map[string]config.Host{"zeta": {}, "alpha": {}}})
+	if got := strings.Join(r.AllNames(), ","); got != "ws,alpha,zeta" {
+		t.Fatalf("AllNames() = %s", got)
+	}
+	if ref, err := r.ParseVM("ws/web"); err != nil || ref != (app.VMRef{Host: "ws", Name: "web"}) {
+		t.Fatalf("ParseVM = %+v, %v", ref, err)
+	}
+	if _, err := r.ParseVM("web"); err == nil || !strings.Contains(err.Error(), "did you mean ws/web?") {
+		t.Fatalf("bare: %v", err)
+	}
+}
+
 func TestNewNilConfig(t *testing.T) {
 	short, err := config.ShortHostname()
 	if err != nil {

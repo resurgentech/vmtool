@@ -60,3 +60,10 @@ are appended, never edited in; a hook refuses rewrites.
   test. `vmtool server` now HTTPS + hash only. From here the binary needs
   `just token` + `just install` to run.
 - Commits: 0a3aaf3
+
+## 2026-11-14 — T6 Versioned, host-scoped API paths and `/version`
+
+- `/v1/hosts/{host}/...` for VMs and inventories, `/v1/{playbooks,metal}`,
+  `GET /v1/hosts`, unversioned `GET /version` (API 1.0.0); `internal/hosts`
+  resolver (local only), `internal/buildinfo`; unknown host 404.
+- Commits: 971152c

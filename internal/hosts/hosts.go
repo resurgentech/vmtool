@@ -84,6 +84,18 @@ func (r *Resolver) Local() string { return r.name }
 // Names lists the hosts Resolve serves.
 func (r *Resolver) Names() []string { return []string{r.name} }
 
+// AllNames is the local host followed by the configured hosts in name order:
+// every name that owns a .machines/<host>/ directory (app.Service.HostNames).
+func (r *Resolver) AllNames() []string {
+	return append([]string{r.name}, r.configured...)
+}
+
+// ParseVM parses a host/vm argument, suggesting the local host for a bare
+// name. It does not check that the host is served; Resolve does.
+func (r *Resolver) ParseVM(s string) (app.VMRef, error) {
+	return app.ParseVMRef(s, r.name)
+}
+
 // List is the local host followed by the configured hosts in name order.
 func (r *Resolver) List() []Host {
 	out := []Host{{Name: r.name, Role: r.role, Local: true}}

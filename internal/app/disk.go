@@ -21,14 +21,17 @@ func (s *Service) MigrateDisk(_ context.Context, m Manager, name, pool string) (
 	return info, nil
 }
 
-func (s *Service) ResizeDisk(_ context.Context, m Manager, name string, sizeGB uint, auth vmtool.Auth) (*ResizeResult, error) {
+func (s *Service) ResizeDisk(_ context.Context, m Manager, ref VMRef, sizeGB uint, auth vmtool.Auth) (*ResizeResult, error) {
 	if sizeGB == 0 {
 		return nil, invalid("resize_disk", fmt.Errorf("size must be > 0"))
 	}
-	if err := m.ResizeDisk(name, sizeGB); err != nil {
+	if err := validRef("resize_disk", ref); err != nil {
+		return nil, err
+	}
+	if err := m.ResizeDisk(ref.Name, sizeGB); err != nil {
 		return nil, wrap("resize_disk", err)
 	}
-	info, err := m.Info(name)
+	info, err := m.Info(ref.Name)
 	if err != nil {
 		return nil, wrap("resize_disk", err)
 	}
@@ -36,8 +39,13 @@ func (s *Service) ResizeDisk(_ context.Context, m Manager, name string, sizeGB u
 	if info.State != vmtool.StateRunning || info.IP == "" {
 		return res, nil
 	}
-	resolved := vmtool.ResolveAuth(info.IP, name, auth)
-	invPath, cleanup, err := vmtool.TempInventory(name, info.IP, resolved)
+	credsDir, err := vmtool.AbsCredsDir(ref.Host, ref.Name)
+	if err != nil {
+		res.GrowError = err.Error()
+		return res, nil
+	}
+	resolved := vmtool.ResolveVMAuth(ref.Host, ref.Name, auth)
+	invPath, cleanup, err := vmtool.TempInventory(ref.Name, info.IP, resolved, credsDir)
 	if err != nil {
 		res.GrowError = err.Error()
 		return res, nil
