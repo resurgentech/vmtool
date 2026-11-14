@@ -33,3 +33,13 @@ rewrites.
   committed. `just validate ubuntu2604` and `just check` green. Real
   build (T4) is user-run and still open.
 - Commits: the commit that adds this entry ("packer_images T2: ...").
+
+## 2026-11-14 — T3 `ubuntu2604_gui` template
+
+- `qemu_images/ubuntu2604_gui/`: copy of `ubuntu2404_gui/` with the
+  same 26.04.1 ISO URL/checksum change as T2; 20G disk; ansible
+  provisioner still runs the shared `ansible/playbooks/install_gui.yml`
+  (not forked, not edited). `http/user-data` ignored. `just validate
+  ubuntu2604_gui` and `just check` green. Real build (T5) is user-run
+  and still open.
+- Commits: the commit that adds this entry ("packer_images T3: ...").
