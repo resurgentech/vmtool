@@ -6,8 +6,8 @@ import (
 	"testing"
 )
 
-func TestInventoryYAMLVM(t *testing.T) {
-	got := inventoryYAML("web", "10.0.0.5", Auth{User: "bot", KeyPath: ".machines/jetfire/web/id_ed25519"}, "/srv/vmtool/.machines/jetfire/web")
+func TestInventoryYAMLDirectVM(t *testing.T) {
+	got := inventoryYAML("web", "10.0.0.5", "", Auth{User: "bot", KeyPath: ".machines/jetfire/web/id_ed25519"}, "/srv/vmtool/.machines/jetfire/web")
 	want := `all:
   hosts:
     web:
@@ -24,7 +24,7 @@ func TestInventoryYAMLVM(t *testing.T) {
 }
 
 func TestInventoryYAMLMetal(t *testing.T) {
-	got := inventoryYAML("nuc1", "10.0.0.42", DefaultAuth(), "/srv/vmtool/.machines/nuc1")
+	got := inventoryYAML("nuc1", "10.0.0.42", "", DefaultAuth(), "/srv/vmtool/.machines/nuc1")
 	want := `all:
   hosts:
     nuc1:
@@ -58,7 +58,7 @@ func TestTempInventoryWritesMachinesDir(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(b) != inventoryYAML("web", "10.0.0.5", DefaultAuth(), abs) {
+	if string(b) != inventoryYAML("web", "10.0.0.5", "", DefaultAuth(), abs) {
 		t.Fatalf("inventory %q", b)
 	}
 	mabs, err := AbsMachineDir("nuc1")

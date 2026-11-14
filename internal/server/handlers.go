@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"net/http"
 
 	"github.com/jaredeh/vmtool/internal/api"
 	"github.com/jaredeh/vmtool/internal/app"
@@ -21,6 +22,25 @@ type handlers struct {
 	// nil means the resolver's Manager and a 5 s TCP dial; tests inject fakes.
 	vmIP      func(ctx context.Context, host, name string) (string, error)
 	dialGuest func(ctx context.Context, addr string) (net.Conn, error)
+	// tunnelExe is the vmtool path guest SSH uses as its ProxyCommand; empty
+	// means the running executable.
+	tunnelExe string
+}
+
+// guestSvc is h.svc with a Tunnel for this request: the running vmtool as
+// ProxyCommand and the request's own bearer token (requireBearer already
+// checked it) as VMTOOL_TOKEN for the ssh and ansible children. The shared
+// h.svc is never given a token. ssh runs the ProxyCommand in the service's
+// working directory, where config.yml lives.
+func (h *handlers) guestSvc(ctx context.Context) *app.Service {
+	t := vmtool.Tunnel{Exe: h.tunnelExe}
+	if t.Exe == "" {
+		t.Exe, _ = vmtool.CurrentExe()
+	}
+	if r, ok := ctx.Value(requestKey).(*http.Request); ok && r != nil {
+		t.Token, _ = bearerToken(r)
+	}
+	return h.svc.WithTunnel(t)
 }
 
 // withManager resolves host first, so an unknown host never touches libvirt,
@@ -166,7 +186,7 @@ func (h *handlers) CreateVM(ctx context.Context, req api.CreateVMRequestObject) 
 	}
 
 	v, err := h.withManager(req.Host, func(m app.Manager) (any, error) {
-		info, e := h.svc.CreateVM(ctx, m, in)
+		info, e := h.guestSvc(ctx).CreateVM(ctx, m, in)
 		if e != nil {
 			return info, e
 		}
@@ -288,7 +308,7 @@ func (h *handlers) RunVMCommand(ctx context.Context, req api.RunVMCommandRequest
 		return api.RunVMCommand400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: "command is required"}}, nil
 	}
 	v, err := h.withManager(req.Host, func(m app.Manager) (any, error) {
-		return h.svc.RunCommand(ctx, m, app.VMRef{Host: req.Host, Name: req.Name}, req.Body.Command)
+		return h.guestSvc(ctx).RunCommand(ctx, m, app.VMRef{Host: req.Host, Name: req.Name}, req.Body.Command)
 	})
 	if err != nil {
 		switch kindOf(err) {
@@ -317,7 +337,7 @@ func (h *handlers) RunPlaybook(ctx context.Context, req api.RunPlaybookRequestOb
 		if req.Body.ExtraVars != nil {
 			extra = map[string]string(*req.Body.ExtraVars)
 		}
-		return h.svc.RunPlaybook(ctx, m, app.VMRef{Host: req.Host, Name: req.Name}, req.Body.Playbook, vmtool.DefaultAuth(), extra)
+		return h.guestSvc(ctx).RunPlaybook(ctx, m, app.VMRef{Host: req.Host, Name: req.Name}, req.Body.Playbook, vmtool.DefaultAuth(), extra)
 	})
 	res, _ := v.(*app.PlaybookResult)
 	out := ""
@@ -364,7 +384,7 @@ func (h *handlers) ResizeDisk(ctx context.Context, req api.ResizeDiskRequestObje
 		return api.ResizeDisk400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: "size must be > 0"}}, nil
 	}
 	v, err := h.withManager(req.Host, func(m app.Manager) (any, error) {
-		return h.svc.ResizeDisk(ctx, m, app.VMRef{Host: req.Host, Name: req.Name}, uint(req.Body.Size), vmtool.DefaultAuth())
+		return h.guestSvc(ctx).ResizeDisk(ctx, m, app.VMRef{Host: req.Host, Name: req.Name}, uint(req.Body.Size), vmtool.DefaultAuth())
 	})
 	if err != nil {
 		if kindOf(err) == app.KindNotFound {

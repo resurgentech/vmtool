@@ -45,6 +45,22 @@ type Service struct {
 	// .machines/<name>/ directories hold VM credentials, so AddMachine
 	// refuses them as machine names and migration leaves them alone.
 	HostNames []string
+	// Tunnel is how guest SSH, ansible and the inventory reach libvirt VMs:
+	// through `vmtool tunnel host/vm`, with Tunnel.Token in the child's
+	// environment. The token is per caller (the CLI's loaded token, the
+	// daemon's per-request bearer), so a long-lived Service holds none and
+	// callers derive one with WithTunnel. Metal and alien machines do not use
+	// it: they keep direct SSH.
+	Tunnel vmtool.Tunnel
+}
+
+// WithTunnel returns a shallow copy of s that reaches guests through t. The
+// receiver is not changed, so a shared Service can serve concurrent requests,
+// each with its own token.
+func (s *Service) WithTunnel(t vmtool.Tunnel) *Service {
+	c := *s
+	c.Tunnel = t
+	return &c
 }
 
 func (s *Service) playbookDir() string {

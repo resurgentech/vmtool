@@ -129,7 +129,7 @@ func (s *Service) CreateVM(_ context.Context, m Manager, in CreateVMInput) (*vmt
 	}
 	if s.InventoryPath != "" {
 		emit(in, "write_inventory", "start", "writing inventory", "")
-		if err := vmtool.WriteInventory(s.InventoryPath, cfg.Name, ip, auth, credsDir); err != nil {
+		if err := s.WriteInventory(ref, s.InventoryPath, vmtool.Auth{User: cfg.SSHUser, Password: cfg.SSHPass}); err != nil {
 			emit(in, "write_inventory", "error", err.Error(), "")
 			return info, wrap("create", err)
 		}
@@ -138,12 +138,12 @@ func (s *Service) CreateVM(_ context.Context, m Manager, in CreateVMInput) (*vmt
 
 	if in.DiskSizeGB > 0 {
 		emit(in, "grow_disk", "start", "growing filesystem", "")
-		invPath, cleanup, err := vmtool.TempInventory(cfg.Name, ip, auth, credsDir)
+		invPath, cleanup, err := vmtool.TempVMInventory(s.Tunnel, ref.Host, ref.Name, auth, credsDir)
 		if err != nil {
 			emit(in, "grow_disk", "error", err.Error(), "")
 			return info, wrap("create", err)
 		}
-		err = vmtool.GrowDisk(invPath)
+		err = vmtool.GrowDisk(s.Tunnel, invPath)
 		cleanup()
 		if err != nil {
 			emit(in, "grow_disk", "error", err.Error(), "")
@@ -158,12 +158,12 @@ func (s *Service) CreateVM(_ context.Context, m Manager, in CreateVMInput) (*vmt
 			return info, err
 		}
 		emit(in, "playbook", "start", "running "+in.Playbook, "")
-		invPath, cleanup, err := vmtool.TempInventory(cfg.Name, ip, auth, credsDir)
+		invPath, cleanup, err := vmtool.TempVMInventory(s.Tunnel, ref.Host, ref.Name, auth, credsDir)
 		if err != nil {
 			emit(in, "playbook", "error", err.Error(), "")
 			return info, wrap("create", err)
 		}
-		out, err := vmtool.RunPlaybook(invPath, pb, withDeviceID(cfg.Name, in.ExtraVars))
+		out, err := vmtool.RunPlaybook(s.Tunnel, invPath, pb, withDeviceID(cfg.Name, in.ExtraVars))
 		cleanup()
 		if err != nil {
 			emit(in, "playbook", "error", err.Error(), out)

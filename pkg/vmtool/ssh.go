@@ -111,20 +111,38 @@ func ForgetVM(host, name string) error {
 	return os.RemoveAll(dir)
 }
 
-// SSHCmd builds an interactive ssh command for VM name on host, reached at
-// ip. extraArgs are appended after user@ip (remote command or ssh operands).
-func SSHCmd(host, name, ip string, extraArgs ...string) (*exec.Cmd, error) {
-	cmd := sshCommand(ip, ResolveVMAuth(host, name, DefaultAuth()), extraArgs)
+// SSHCmd builds an interactive ssh command for VM name on host. ssh reaches
+// the guest through `vmtool tunnel host/vm` (t), not by IP; the destination is
+// host/vm and the user comes from -l. extraArgs follow the destination.
+func SSHCmd(t Tunnel, host, name string, extraArgs ...string) (*exec.Cmd, error) {
+	cmd, err := vmSSH(t, host, name, extraArgs)
+	if err != nil {
+		return nil, err
+	}
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd, nil
 }
 
-// RemoteCmd builds a non-interactive ssh command that runs argv on VM name
-// on host, reached at ip.
-func RemoteCmd(host, name, ip string, argv []string) (*exec.Cmd, error) {
-	return sshCommand(ip, ResolveVMAuth(host, name, DefaultAuth()), argv), nil
+// RemoteCmd builds a non-interactive ssh command that runs argv on VM name on
+// host, through the tunnel.
+func RemoteCmd(t Tunnel, host, name string, argv []string) (*exec.Cmd, error) {
+	return vmSSH(t, host, name, argv)
+}
+
+func vmSSH(t Tunnel, host, name string, remote []string) (*exec.Cmd, error) {
+	if err := validVMKey(host, name); err != nil {
+		return nil, err
+	}
+	if err := t.check(); err != nil {
+		return nil, err
+	}
+	auth := ResolveVMAuth(host, name, DefaultAuth())
+	opts := []string{"-o", "ProxyCommand=" + t.ProxyCommand(host, name)}
+	cmd := buildSSH(host+"/"+name, true, auth, opts, remote)
+	cmd.Env = t.Environ(cmd.Environ())
+	return cmd, nil
 }
 
 func sshCommand(ip string, auth Auth, remote []string) *exec.Cmd {
@@ -132,8 +150,15 @@ func sshCommand(ip string, auth Auth, remote []string) *exec.Cmd {
 }
 
 // sshCommandOpts is sshCommand with extra ssh options placed before the
-// destination.
+// destination. It is the direct path (metal and alien machines): user@addr,
+// no tunnel.
 func sshCommandOpts(ip string, auth Auth, opts, remote []string) *exec.Cmd {
+	return buildSSH(ip, false, auth, opts, remote)
+}
+
+// buildSSH assembles the ssh (or sshpass -e ssh) command. With loginFlag the
+// user is passed as -l and dest stays bare; otherwise it is user@dest.
+func buildSSH(dest string, loginFlag bool, auth Auth, opts, remote []string) *exec.Cmd {
 	args := []string{
 		"-o", "StrictHostKeyChecking=no",
 		"-o", "UserKnownHostsFile=/dev/null",
@@ -143,9 +168,12 @@ func sshCommandOpts(ip string, auth Auth, opts, remote []string) *exec.Cmd {
 	if auth.KeyPath != "" {
 		args = append(args, "-o", "IdentitiesOnly=yes", "-i", auth.KeyPath)
 	}
-	dest := ip
 	if auth.User != "" {
-		dest = auth.User + "@" + ip
+		if loginFlag {
+			args = append(args, "-l", auth.User)
+		} else {
+			dest = auth.User + "@" + dest
+		}
 	}
 	args = append(args, dest)
 	args = append(args, remote...)

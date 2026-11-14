@@ -45,13 +45,13 @@ func (s *Service) ResizeDisk(_ context.Context, m Manager, ref VMRef, sizeGB uin
 		return res, nil
 	}
 	resolved := vmtool.ResolveVMAuth(ref.Host, ref.Name, auth)
-	invPath, cleanup, err := vmtool.TempInventory(ref.Name, info.IP, resolved, credsDir)
+	invPath, cleanup, err := vmtool.TempVMInventory(s.Tunnel, ref.Host, ref.Name, resolved, credsDir)
 	if err != nil {
 		res.GrowError = err.Error()
 		return res, nil
 	}
 	defer cleanup()
-	if err := vmtool.GrowDisk(invPath); err != nil {
+	if err := vmtool.GrowDisk(s.Tunnel, invPath); err != nil {
 		res.GrowError = err.Error()
 		return res, nil
 	}

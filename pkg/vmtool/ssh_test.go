@@ -121,18 +121,18 @@ func TestSSHCmdUsesHostScopedKey(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "password.yml"), []byte("username: bot\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	c, err := RemoteCmd("jetfire", "web", "10.0.0.5", []string{"true"})
+	c, err := RemoteCmd(testTunnel(), "jetfire", "web", []string{"true"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Contains(c.Args, filepath.Join(dir, "id_ed25519")) || !slices.Contains(c.Args, "bot@10.0.0.5") {
+	if !slices.Contains(c.Args, filepath.Join(dir, "id_ed25519")) || !slices.Contains(c.Args, "jetfire/web") || !slices.Contains(c.Args, "bot") {
 		t.Fatalf("argv %q", c.Args)
 	}
-	c, err = SSHCmd("veritech01", "web", "10.0.0.5")
+	c, err = SSHCmd(testTunnel(), "veritech01", "web")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Contains(c.Args, "packer@10.0.0.5") {
+	if !slices.Contains(c.Args, "veritech01/web") || !slices.Contains(c.Args, "packer") {
 		t.Fatalf("other host argv %q, want packer", c.Args)
 	}
 }

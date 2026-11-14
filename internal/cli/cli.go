@@ -177,6 +177,7 @@ it checks the bearer token of every request instead.`,
 		infoCmd(e),
 		sshCmd(e),
 		tunnelCmd(e),
+		sshConfigCmd(e),
 		cmdCmd(e),
 		rebootCmd(e),
 		autostartCmd(e),
@@ -243,11 +244,22 @@ func withVM(e *env, fn func(m app.Manager, ref app.VMRef, cmd *cobra.Command, ar
 // service is the workflow layer for this config: HostNames lets AddMachine
 // and migration recognise host directories.
 func (e *env) service(inventory string) *app.Service {
-	return &app.Service{
+	// A failed executable lookup leaves Exe empty: guest SSH then fails with
+	// a clear error, and metal commands, which never tunnel, are unaffected.
+	t, _ := e.tunnel()
+	return (&app.Service{
 		PlaybookDir:   filepath.Join("ansible", "playbooks"),
 		InventoryPath: inventory,
 		HostNames:     e.resolver().AllNames(),
-	}
+	}).WithTunnel(t)
+}
+
+// tunnel is how this process reaches guests: its own absolute executable as
+// the ProxyCommand, and the token the gate verified, passed to children in
+// VMTOOL_TOKEN (never in argv).
+func (e *env) tunnel() (vmtool.Tunnel, error) {
+	exe, err := vmtool.CurrentExe()
+	return vmtool.Tunnel{Exe: exe, Token: e.token}, err
 }
 
 func printAppErr(err error) error {
@@ -511,7 +523,7 @@ checking is disabled.
 				return fmt.Errorf("VM %q has no IP address", ref.String())
 			}
 
-			c, err := vmtool.SSHCmd(ref.Host, ref.Name, info.IP, args[1:]...)
+			c, err := e.service("").SSHCmd(ref, args[1:]...)
 			if err != nil {
 				return err
 			}
@@ -541,7 +553,7 @@ and the remote exit code. Uses .machines credentials when present.
 				return fmt.Errorf("VM %q has no IP address", ref.String())
 			}
 
-			c, err := vmtool.RemoteCmd(ref.Host, ref.Name, info.IP, args[1:])
+			c, err := e.service("").RemoteCmd(ref, args[1:])
 			if err != nil {
 				return err
 			}
@@ -617,7 +629,11 @@ func interactiveCmd(e *env) *cobra.Command {
 		Aliases: []string{"interactive"},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			r := e.resolver()
-			return tui.Run(r.Local(), r.AllNames())
+			t, err := e.tunnel()
+			if err != nil {
+				return err
+			}
+			return tui.Run(r.Local(), r.AllNames(), t)
 		},
 	}
 }

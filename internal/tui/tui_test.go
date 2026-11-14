@@ -19,3 +19,13 @@ func TestRowsShowHostSlashVM(t *testing.T) {
 		t.Fatalf("vmRef = %+v", ref)
 	}
 }
+
+// The TUI's service carries the tunnel the CLI handed it, so its ssh and
+// inventory writes go through internal/app with the right token.
+func TestSvcCarriesTunnel(t *testing.T) {
+	m := initialModel(nil, "jetfire", "ansible/playbooks", "ansible/inventory.yml")
+	m.tunnel = vmtool.Tunnel{Exe: "/opt/vmtool/vmtool", Token: "tui-test-token"}
+	if got := m.svc().Tunnel; got != m.tunnel {
+		t.Fatalf("svc tunnel = %+v", got)
+	}
+}

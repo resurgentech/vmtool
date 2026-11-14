@@ -303,7 +303,7 @@ func (s *Service) machinePlaybook(op string, m vmtool.Machine, playbook string, 
 		return wrap(op, err)
 	}
 	defer cleanup()
-	out, err := vmtool.RunPlaybook(invPath, pb, withMachineVars(m, extra))
+	out, err := vmtool.RunPlaybook(vmtool.Tunnel{}, invPath, pb, withMachineVars(m, extra))
 	if err != nil {
 		progress.emit("playbook", "error", err.Error(), out)
 		return &Error{Kind: KindInternal, Op: op, Err: err, Output: out}

@@ -81,3 +81,10 @@ are appended, never edited in; a hook refuses rewrites.
 - `vmtool server` needs config.yml with `token_sha256` but no local token
   (hypervisors hold only the hash); found while building T14.
 - Commits: 48b7cfa
+
+## 2026-11-14 — T8 Tunnel endpoint and `vmtool tunnel`
+
+- `GET /v1/hosts/{host}/vms/{name}/tunnel` (HTTP/1.1 Upgrade to the guest's
+  port 22, libvirt IP only, dial before hijack); `internal/remote` Dial/Pipe;
+  `vmtool tunnel host/vm`; server ALPN pinned to http/1.1.
+- Commits: a41ac84

@@ -157,6 +157,9 @@ type model struct {
 
 	playbookDir   string
 	inventoryPath string
+	// tunnel is how guest SSH and ansible reach VMs (see app.Service.Tunnel);
+	// the CLI passes it, with the verified token, when it starts the TUI.
+	tunnel vmtool.Tunnel
 
 	// cached for dynamic net source options
 	bridges  []string
@@ -250,7 +253,7 @@ func (m *model) addLog(title string) int {
 }
 
 func (m model) svc() *app.Service {
-	return &app.Service{PlaybookDir: m.playbookDir, InventoryPath: m.inventoryPath, HostNames: m.hostNames}
+	return (&app.Service{PlaybookDir: m.playbookDir, InventoryPath: m.inventoryPath, HostNames: m.hostNames}).WithTunnel(m.tunnel)
 }
 
 // vmRef names vm on this TUI's host.
@@ -513,7 +516,7 @@ func (m model) sshSelected() (tea.Model, tea.Cmd) {
 		m.log[idx].status = logStatusError
 		return m, nil
 	}
-	cmd, err := vmtool.SSHCmd(ref.Host, ref.Name, vm.IP)
+	cmd, err := m.svc().SSHCmd(ref)
 	if err != nil {
 		idx := m.addLog(fmt.Sprintf("ssh %s: %v", ref, err))
 		m.log[idx].status = logStatusError
@@ -1427,8 +1430,8 @@ func (m model) viewConfirm() string {
 
 // Run launches the interactive TUI on the local host, named host. hostNames
 // are every vmtool host (local and configured), which machine names may not
-// take.
-func Run(host string, hostNames []string) error {
+// take. tunnel is how guests are reached (the CLI's own executable and token).
+func Run(host string, hostNames []string, tunnel vmtool.Tunnel) error {
 	mgr, err := vmtool.NewManager()
 	if err != nil {
 		return err
@@ -1440,6 +1443,7 @@ func Run(host string, hostNames []string) error {
 
 	m := initialModel(mgr, host, playbookDir, inventoryPath)
 	m.hostNames = append([]string(nil), hostNames...)
+	m.tunnel = tunnel
 	p := tea.NewProgram(m)
 	_, err = p.Run()
 	return err

@@ -50,13 +50,10 @@ func ListPlaybooks(dir string) ([]string, error) {
 // RunPlaybook executes an ansible-playbook against the given inventory file.
 // extraVars are passed as repeated --extra-vars key=value.
 // Returns the combined stdout/stderr output and any error.
-func RunPlaybook(inventoryPath, playbookPath string, extraVars map[string]string) (string, error) {
-	args := []string{"--inventory", inventoryPath, playbookPath}
-	for _, kv := range extraVarArgs(extraVars) {
-		args = append(args, "--extra-vars", kv)
-	}
-	cmd := exec.Command("ansible-playbook", args...)
-	cmd.Env = ansibleEnv()
+// t puts the token in the child's environment for the tunnel's ProxyCommand;
+// pass Tunnel{} for a metal machine.
+func RunPlaybook(t Tunnel, inventoryPath, playbookPath string, extraVars map[string]string) (string, error) {
+	cmd := playbookCmd(t, inventoryPath, playbookPath, extraVars)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return string(out), fmt.Errorf("running playbook %s: %w", filepath.Base(playbookPath), err)
@@ -64,16 +61,20 @@ func RunPlaybook(inventoryPath, playbookPath string, extraVars map[string]string
 	return string(out), nil
 }
 
+func playbookCmd(t Tunnel, inventoryPath, playbookPath string, extraVars map[string]string) *exec.Cmd {
+	args := []string{"--inventory", inventoryPath, playbookPath}
+	for _, kv := range extraVarArgs(extraVars) {
+		args = append(args, "--extra-vars", kv)
+	}
+	cmd := exec.Command("ansible-playbook", args...)
+	cmd.Env = ansibleEnv(t)
+	return cmd
+}
+
 // RunCommand runs an ad-hoc ansible command on all hosts in the inventory.
 // Returns the combined output and any error.
-func RunCommand(inventoryPath, command string) (string, error) {
-	cmd := exec.Command("ansible", "all",
-		"--inventory", inventoryPath,
-		"--become",
-		"--module-name", "shell",
-		"--args", command,
-	)
-	cmd.Env = ansibleEnv()
+func RunCommand(t Tunnel, inventoryPath, command string) (string, error) {
+	cmd := adhocCmd(t, inventoryPath, command)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return string(out), fmt.Errorf("running command: %w", err)
@@ -81,31 +82,29 @@ func RunCommand(inventoryPath, command string) (string, error) {
 	return string(out), nil
 }
 
-func ansibleEnv() []string {
-	return append(os.Environ(),
+func adhocCmd(t Tunnel, inventoryPath, command string) *exec.Cmd {
+	cmd := exec.Command("ansible", "all",
+		"--inventory", inventoryPath,
+		"--become",
+		"--module-name", "shell",
+		"--args", command,
+	)
+	cmd.Env = ansibleEnv(t)
+	return cmd
+}
+
+func ansibleEnv(t Tunnel) []string {
+	return t.Environ(append(os.Environ(),
 		"ANSIBLE_HOST_KEY_CHECKING=False",
 		"ANSIBLE_SSH_ARGS=-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR",
-	)
+	))
 }
 
 // GrowDisk expands the root partition and filesystem to fill the disk.
 // Assumes standard Ubuntu direct layout: vda1=ESP, vda2=root.
-func GrowDisk(inventoryPath string) error {
-	if _, err := RunCommand(inventoryPath, "growpart /dev/vda 2 && resize2fs /dev/vda2"); err != nil {
+func GrowDisk(t Tunnel, inventoryPath string) error {
+	if _, err := RunCommand(t, inventoryPath, "growpart /dev/vda 2 && resize2fs /dev/vda2"); err != nil {
 		return fmt.Errorf("growing disk: %w", err)
 	}
 	return nil
-}
-
-// EnsureInventory checks if the inventory file has the correct IP for the VM,
-// and overwrites it if not.
-func EnsureInventory(path, name, ip string, auth Auth, machinesDir string) (bool, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return true, WriteInventory(path, name, ip, auth, machinesDir)
-	}
-	if strings.Contains(string(data), "ansible_host: "+ip) {
-		return false, nil
-	}
-	return true, WriteInventory(path, name, ip, auth, machinesDir)
 }
