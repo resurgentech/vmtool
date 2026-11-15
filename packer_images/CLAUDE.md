@@ -12,6 +12,7 @@ Packer-based QEMU/KVM VM image builder. Builds qcow2 images and installs them in
 | `ubuntu2404_gui` | 24.04 live-server ISO | 20G disk; ansible runs `../ansible/playbooks/install_gui.yml` (GNOME, gdm3 autologin, chromium) |
 | `ubuntu2404_aws` | 24.04 (noble) cloud image, cloud-init via `cd_files` | 10G disk |
 | `ubuntu2604` | 26.04.1 live-server ISO, subiquity autoinstall | 10G disk |
+| `ubuntu2604_btrfs` | 26.04.1 live-server ISO, explicit `storage: config:` | 10G disk; flat btrfs root on partition 2, no swap file |
 | `ubuntu2604_gui` | 26.04.1 live-server ISO | 20G disk; same shared `install_gui.yml` playbook |
 
 `just templates` lists them.
@@ -43,7 +44,7 @@ just distclean                 # delete all output
 ```
 justfile                         # recipes: generate, validate, check, clean, ...
 run                              # older entry script, sets PKR_VAR_* env vars
-qemu_images/<template>/          # ubuntu2404, ubuntu2404_gui, ubuntu2404_aws, ubuntu2604, ubuntu2604_gui
+qemu_images/<template>/          # ubuntu2404*, ubuntu2604* (see table above)
   template.pkr.hcl               # Packer QEMU builder config
   .gitignore                     # ignores http/user-data
   http/
