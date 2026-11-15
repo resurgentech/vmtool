@@ -90,8 +90,8 @@ real build proves it installs.
 
 ## Check after the first build
 
-- **Root is still partition 2.** vmtool's disk grow runs
-  `growpart /dev/vda 2 && resize2fs /dev/vda2` (`../pkg/vmtool/ansible.go`).
+- **Root is still partition 2.** vmtool's disk grow assumes `/dev/vda2`
+  (`growDiskCommand` in `../pkg/vmtool/ansible.go`).
   Inspect the image without booting it:
 
   ```bash
@@ -131,5 +131,5 @@ do. Firmware then stops being something the caller must get right.
   labelled `cidata` (the mechanism `ubuntu2404_aws` already uses via
   `cd_files`). It would need step 1 first, and probably a `virtio` video
   device in place of `qxl`.
-- **btrfs root:** separate from firmware, but the grow command above is
-  ext4-only; btrfs needs `btrfs filesystem resize max /`.
+- **btrfs root:** separate from firmware. `ubuntu2604_btrfs` is the BIOS
+  btrfs template; the grow command handles both ext4 and btrfs.
