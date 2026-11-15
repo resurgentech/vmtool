@@ -100,10 +100,16 @@ func ansibleEnv(t Tunnel) []string {
 	))
 }
 
+// growDiskCommand runs in the guest under /bin/sh. resize2fs only handles
+// ext2/3/4; btrfs is resized online through its mount point.
+const growDiskCommand = `growpart /dev/vda 2 && case "$(findmnt -n -o FSTYPE /)" in ` +
+	`btrfs) btrfs filesystem resize max / ;; ` +
+	`*) resize2fs /dev/vda2 ;; esac`
+
 // GrowDisk expands the root partition and filesystem to fill the disk.
-// Assumes standard Ubuntu direct layout: vda1=ESP, vda2=root.
+// Assumes the packer_images layout: root is /dev/vda2, ext4 or btrfs.
 func GrowDisk(t Tunnel, inventoryPath string) error {
-	if _, err := RunCommand(t, inventoryPath, "growpart /dev/vda 2 && resize2fs /dev/vda2"); err != nil {
+	if _, err := RunCommand(t, inventoryPath, growDiskCommand); err != nil {
 		return fmt.Errorf("growing disk: %w", err)
 	}
 	return nil
