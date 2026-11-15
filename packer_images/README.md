@@ -3,7 +3,7 @@
 Packer templates that build qcow2 VM images for vmtool and install them
 into the libvirt `default` pool. One template per directory in
 `qemu_images/`: `ubuntu2404`, `ubuntu2404_gui`, `ubuntu2404_aws`,
-`ubuntu2604`, `ubuntu2604_btrfs`, `ubuntu2604_gui` (`just templates` lists them).
+`ubuntu2604`, `ubuntu2604_btrfs`, `ubuntu2604_btrfs_gui`, `ubuntu2604_gui` (`just templates` lists them).
 
 ```bash
 just generate ubuntu2604        # build + install (needs KVM, sudo, ~3 GB ISO download)

@@ -13,6 +13,7 @@ Packer-based QEMU/KVM VM image builder. Builds qcow2 images and installs them in
 | `ubuntu2404_aws` | 24.04 (noble) cloud image, cloud-init via `cd_files` | 10G disk |
 | `ubuntu2604` | 26.04.1 live-server ISO, subiquity autoinstall | 10G disk |
 | `ubuntu2604_btrfs` | 26.04.1 live-server ISO, explicit `storage: config:` | 10G disk; flat btrfs root on partition 2, no swap file |
+| `ubuntu2604_btrfs_gui` | 26.04.1 live-server ISO, explicit `storage: config:` | 20G disk; `ubuntu2604_btrfs` storage plus the `install_gui.yml` playbook |
 | `ubuntu2604_gui` | 26.04.1 live-server ISO | 20G disk; same shared `install_gui.yml` playbook |
 
 `just templates` lists them.

@@ -52,3 +52,27 @@ rewrites.
   `README.md` (was empty): short summary and pointer to `CLAUDE.md`.
   No behaviour change.
 - Commits: the commit that adds this entry ("packer_images T6: ...").
+
+## 2026-11-14 — T4 `ubuntu2604` real build
+
+- User ran the build and reported it passed. Image inspected offline:
+  GPT, 1M BIOS boot partition, ext4 root on partition 2.
+
+## 2026-11-14 — `ubuntu2604_btrfs` and `ubuntu2604_btrfs_gui` templates
+
+- Built outside the roadmap at the user's direction. Both are the
+  ext4 templates with an explicit autoinstall `storage: config:`: same
+  BIOS layout, flat btrfs root on partition 2, no swap file.
+- Real packer builds (no libvirt install) succeeded: server in 9 min,
+  GUI in 30 min with `install_gui.yml` green (ok=8, failed=0). Images
+  inspected offline: btrfs on partition 2. Not yet booted under vmtool.
+- vmtool's grow step now handles btrfs (`pkg/vmtool/ansible.go`).
+- `UEFI.md` added: notes on converting to UEFI.
+
+## 2026-11-14 — T5 `ubuntu2604_gui` real build (build half)
+
+- Packer build (no libvirt install) succeeded in 16 min;
+  `install_gui.yml` green on 26.04 unchanged (ok=8, failed=0). Image
+  inspected offline: 20G, ext4 root on partition 2.
+- Still open: install into libvirt and the booted smoke checks
+  (logged-in desktop session, chromium, session type).
