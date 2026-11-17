@@ -11,7 +11,7 @@ import (
 
 func TestGuestSvcUsesRequestBearer(t *testing.T) {
 	h := &handlers{svc: &app.Service{PlaybookDir: "pb"}, tunnelExe: "/opt/vmtool/vmtool"}
-	r := httptest.NewRequest("POST", "/v1/hosts/jetfire/vms/web/cmd", nil)
+	r := httptest.NewRequest("POST", "/v1/hosts/jetfire/vms/web/exec", nil)
 	r.Header.Set("Authorization", "Bearer req-token-1")
 	ctx := context.WithValue(r.Context(), requestKey, r)
 	got := h.guestSvc(ctx)

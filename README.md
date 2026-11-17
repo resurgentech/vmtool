@@ -167,6 +167,8 @@ just install        # build, cert, config.yml, systemd unit (vmtool server over 
 ./vmtool create jetfire/web ubuntu.qcow2 --no-wait      # return right after start; no address or SSH wait
 ./vmtool add-disk jetfire/web 50                        # attach a new empty disk (vdb, vdc, …)
 ./vmtool reboot jetfire/web                             # ACPI reboot, stays defined
+./vmtool exec jetfire/web uname -a                      # exact argv, no shell (was `cmd`; API 2.0.0)
+./vmtool exec jetfire/web -- sh -c 'echo hi | wc -c'    # shell features: run a shell; prints 3
 ./vmtool list                                           # every host (5 s each; a dead host is an ERROR row)
 ./vmtool list jetfire                                   # one host
 ./vmtool hosts                                          # reachability, API version, cert days left
@@ -285,7 +287,7 @@ environment or in `.env` there. It uses `%n` because ssh lowercases `%h`.
 
 vmtool can also drive machines its libvirt does not manage: **metal** (physical
 boxes) and **alien** (VMs on another hypervisor or a cloud). They are
-SSH/Ansible targets only — cmd, ssh, playbook, reboot. There is no create,
+SSH/Ansible targets only — exec, ssh, playbook, reboot. There is no create,
 start, power-off, or disk management. Each one is registered in
 `.machines/<name>/machine.yml` (`kind`, `host`) next to its credentials (VM credentials are in `.machines/<vm>.<host>.vmtool/`), and
 shows up in the TUI list with its kind.
@@ -299,7 +301,7 @@ ansible-playbook -i '10.0.0.42,' -u <admin> -K ansible/playbooks/prep_machine.ym
 ./vmtool metal add nuc1 10.0.0.42                         # probe, register, run setup_bot.yml
 ./vmtool metal add cloud1 203.0.113.7 --kind alien --commission  # cloned alien: new identity first
 ./vmtool metal ls                                         # probes each machine over SSH
-./vmtool metal cmd nuc1 uname -a
+./vmtool metal exec nuc1 uname -a
 ./vmtool metal playbook nuc1 vm_upgrade.yml
 ./vmtool metal reboot nuc1
 ./vmtool metal rm nuc1                                    # forget locally; the machine is untouched

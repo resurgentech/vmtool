@@ -48,7 +48,7 @@ func TestMachineRoutes(t *testing.T) {
 		want int
 	}{
 		{"get missing", get("/v1/metal/nuc1"), 404},
-		{"cmd missing", post("/v1/metal/nuc1/cmd", map[string]any{"command": []string{"true"}}), 404},
+		{"exec missing", post("/v1/metal/nuc1/exec", map[string]any{"command": []string{"true"}}), 404},
 		{"reboot missing", post("/v1/metal/nuc1/reboot", nil), 404},
 		{"playbook commission", post("/v1/metal/nuc1/playbook", map[string]any{"playbook": "commission.yml"}), 400},
 		{"add commission metal", post("/v1/metal", map[string]any{"name": "nuc1", "host": "10.0.0.42", "commission": true}), 400},

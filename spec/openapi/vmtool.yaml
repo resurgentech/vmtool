@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: vmtool API
-  version: 1.0.0
+  version: 2.0.0
   description: >
     HTTP surface of `vmtool server`. Spec-first: models, stdlib ServerInterface,
     embedded spec, and a test client are generated from this file. Metal and
@@ -286,30 +286,34 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
-  /v1/hosts/{host}/vms/{name}/cmd:
+  /v1/hosts/{host}/vms/{name}/exec:
     parameters:
       - $ref: '#/components/parameters/HostName'
       - $ref: '#/components/parameters/VMName'
     post:
-      operationId: runVMCommand
+      operationId: execVM
       x-vmtool-workstation-only: true
-      summary: Run a command over SSH
+      summary: Run a program over SSH
       description: >
+        `command` is the exact argument list (argv): vmtool single-quotes every
+        argument before ssh joins them, so the guest receives exactly those
+        arguments and no shell parses them. For shell features run
+        `["sh", "-c", "echo hi | wc -c"]`.
         Returns remote stdout, stderr, and exit_code. 200 even when exit_code is non-zero. 502 if SSH transport fails.
         Served by the workstation only: on a server whose config.yml role is hypervisor this operation answers 403 "served by the workstation" before reading the body.
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/CmdRequest' }
+            schema: { $ref: '#/components/schemas/ExecRequest' }
             example:
-              command: [uname, -a]
+              command: [sh, -c, echo hi | wc -c]
       responses:
         '200':
           description: remote result
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/CmdResult' }
+              schema: { $ref: '#/components/schemas/ExecResult' }
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/WorkstationOnly' }
@@ -1007,29 +1011,29 @@ paths:
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
         '502': { $ref: '#/components/responses/Error' }
-  /v1/metal/{name}/cmd:
+  /v1/metal/{name}/exec:
     parameters:
       - $ref: '#/components/parameters/MachineName'
     post:
-      operationId: runMachineCommand
+      operationId: execMachine
       x-vmtool-workstation-only: true
-      summary: Run a command over SSH
+      summary: Run a program over SSH
       description: >
-        Same contract as runVMCommand. 200 even when exit_code is non-zero. 502 if SSH transport fails.
+        Same contract as execVM: `command` is the exact argv. 200 even when exit_code is non-zero. 502 if SSH transport fails.
         Served by the workstation only: on a server whose config.yml role is hypervisor this operation answers 403 "served by the workstation" before reading the body.
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/CmdRequest' }
+            schema: { $ref: '#/components/schemas/ExecRequest' }
             example:
-              command: [uname, -a]
+              command: [sh, -c, echo hi | wc -c]
       responses:
         '200':
           description: remote result
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/CmdResult' }
+              schema: { $ref: '#/components/schemas/ExecResult' }
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/WorkstationOnly' }
@@ -1290,15 +1294,19 @@ components:
       required: [enabled]
       properties:
         enabled: { type: boolean }
-    CmdRequest:
+    ExecRequest:
       type: object
       required: [command]
       properties:
         command:
           type: array
+          description: >
+            The exact arguments, program first. Each is passed to the guest as
+            one argument, whatever characters it holds; nothing is parsed by a
+            shell unless the program is one (`sh -c`).
           items: { type: string }
           minItems: 1
-    CmdResult:
+    ExecResult:
       type: object
       required: [exit_code, stdout, stderr]
       properties:

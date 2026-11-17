@@ -27,7 +27,7 @@ passwordless sudo; ansible/playbooks/prep_machine.yml sets that up.`,
 		metalInfoCmd(e),
 		metalRmCmd(e),
 		metalSSHCmd(e),
-		metalCmdCmd(e),
+		metalExecCmd(e),
 		metalPlaybookCmd(e),
 		metalRebootCmd(e),
 	)
@@ -164,22 +164,25 @@ func metalSSHCmd(e *env) *cobra.Command {
 	}
 }
 
-func metalCmdCmd(e *env) *cobra.Command {
+func metalExecCmd(e *env) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "cmd <name> <command> [args...]",
-		Short: "Run a command on a machine over SSH",
-		Long: `Run a command and pass through stdin, stdout, stderr, and the remote
-exit code.
+		Use:   "exec <name> [--] <arg>...",
+		Short: "Run a program on a machine over SSH",
+		Long: `Run a program and pass through stdin, stdout, stderr, and the remote
+exit code. The arguments are the exact argv (no shell parsing); for shell
+features, run a shell.
 
-  vmtool metal cmd nuc1 uname -a`,
+  vmtool metal exec nuc1 uname -a
+  vmtool metal exec nuc1 -- sh -c 'echo hi | wc -c'`,
 		Args:          cobra.MinimumNArgs(2),
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := e.service("").MachineSSHCmd(args[0], args[1:]...)
+			c, err := e.service("").MachineRemoteCmd(args[0], args[1:])
 			if err != nil {
 				return err
 			}
+			c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
 			err = c.Run()
 			var ee *exec.ExitError
 			if errors.As(err, &ee) {

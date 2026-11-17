@@ -384,3 +384,22 @@ are appended, never edited in; a hook refuses rewrites.
   Help, README and the setup_bot header say so.
 - Cut-over (copy script re-run, `~/.ssh/config`, checks) is user-run.
 - Commits: the C18 commit on `clone-identity`.
+
+## 2026-11-17 — C7 `cmd` becomes `exec`: exact argv, everywhere (API 2.0.0)
+
+- `vmtool exec host/vm [--] <arg>...` and `vmtool metal exec <name>
+  [--] <arg>...`; `cmd` is gone, no alias. REST:
+  `POST /v1/hosts/{host}/vms/{name}/exec` (`execVM`) and
+  `POST /v1/metal/{name}/exec` (`execMachine`), `ExecRequest.command`
+  an argv with `minItems: 1`; the old `/cmd` paths are 404.
+  Workstation-only (403 on a hypervisor) as before.
+- `RemoteCmd` / `MachineRemoteCmd` single-quote every argument
+  (`'` as `'\''`) so the guest gets exactly the argv; shell features
+  only via `-- sh -c '...'`. `vmtool ssh` (`buildSSH`) is unchanged.
+  `metal exec` now uses the non-interactive, quoted command.
+- The machine probe runs `sh -c <probeScript>`.
+- app: `ExecVM`, `ExecMachine`, `ExecResult` (were `RunCommand`,
+  `RunMachineCommand`, `CmdResult`).
+- `info.version` 2.0.0, so `/version` reports API 2.0.0; C13's
+  createVM change ships under it.
+- Commits: the C7 commit on `clone-identity`.

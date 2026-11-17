@@ -91,7 +91,7 @@ libvirt work only and holds no guest secrets. Every operation the spec marks
 The check runs once, in `internal/server` (`gateWorkstationOnly`), after the
 bearer check and before the body is read, driven by that extension read from
 the spec, so the set cannot drift. The marked operations are `createVM`,
-`runVMCommand`, `runPlaybook`, `resizeDisk` (the workflow form that also grows
+`execVM`, `runPlaybook`, `resizeDisk` (the workflow form that also grows
 the guest and uses credentials), `listPlaybooks` (playbooks live on the
 workstation) and every `/v1/metal` operation. `openVMTunnel` is not marked: a
 hypervisor exists to serve it. `TestWorkstationOnlySet` pins the exact set.

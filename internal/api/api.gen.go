@@ -189,18 +189,6 @@ type CloneVolumeRequest struct {
 	TargetPool *string `json:"target_pool,omitempty"`
 }
 
-// CmdRequest defines model for CmdRequest.
-type CmdRequest struct {
-	Command []string `json:"command"`
-}
-
-// CmdResult defines model for CmdResult.
-type CmdResult struct {
-	ExitCode int    `json:"exit_code"`
-	Stderr   string `json:"stderr"`
-	Stdout   string `json:"stdout"`
-}
-
 // CreatePoolRequest defines model for CreatePoolRequest.
 type CreatePoolRequest struct {
 	Name string `json:"name"`
@@ -329,6 +317,19 @@ type Error struct {
 	// Output ansible combined output when a playbook step failed
 	Output *string `json:"output,omitempty"`
 	Vm     *VMInfo `json:"vm,omitempty"`
+}
+
+// ExecRequest defines model for ExecRequest.
+type ExecRequest struct {
+	// Command The exact arguments, program first. Each is passed to the guest as one argument, whatever characters it holds; nothing is parsed by a shell unless the program is one (`sh -c`).
+	Command []string `json:"command"`
+}
+
+// ExecResult defines model for ExecResult.
+type ExecResult struct {
+	ExitCode int    `json:"exit_code"`
+	Stderr   string `json:"stderr"`
+	Stdout   string `json:"stdout"`
 }
 
 // ExtraVars Ansible extra-vars (`--extra-vars key=value`). vmtool always sets deviceid to the VM name unless this map already contains deviceid.
@@ -579,11 +580,11 @@ type AddDiskJSONRequestBody = AddDiskRequest
 // SetAutostartJSONRequestBody defines body for SetAutostart for application/json ContentType.
 type SetAutostartJSONRequestBody = AutostartRequest
 
-// RunVMCommandJSONRequestBody defines body for RunVMCommand for application/json ContentType.
-type RunVMCommandJSONRequestBody = CmdRequest
-
 // DefineVMJSONRequestBody defines body for DefineVM for application/json ContentType.
 type DefineVMJSONRequestBody = DefineVMRequest
+
+// ExecVMJSONRequestBody defines body for ExecVM for application/json ContentType.
+type ExecVMJSONRequestBody = ExecRequest
 
 // MigrateDiskJSONRequestBody defines body for MigrateDisk for application/json ContentType.
 type MigrateDiskJSONRequestBody = MigrateDiskRequest
@@ -612,8 +613,8 @@ type ResizeVolumeJSONRequestBody = ResizeVolumeRequest
 // AddMachineJSONRequestBody defines body for AddMachine for application/json ContentType.
 type AddMachineJSONRequestBody = AddMachineRequest
 
-// RunMachineCommandJSONRequestBody defines body for RunMachineCommand for application/json ContentType.
-type RunMachineCommandJSONRequestBody = CmdRequest
+// ExecMachineJSONRequestBody defines body for ExecMachine for application/json ContentType.
+type ExecMachineJSONRequestBody = ExecRequest
 
 // RunMachinePlaybookJSONRequestBody defines body for RunMachinePlaybook for application/json ContentType.
 type RunMachinePlaybookJSONRequestBody = PlaybookRequest
@@ -756,11 +757,6 @@ type ClientInterface interface {
 
 	SetAutostart(ctx context.Context, host HostName, name VMName, body SetAutostartJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RunVMCommandWithBody request with any body
-	RunVMCommandWithBody(ctx context.Context, host HostName, name VMName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	RunVMCommand(ctx context.Context, host HostName, name VMName, body RunVMCommandJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// DeleteVMDefinition request
 	DeleteVMDefinition(ctx context.Context, host HostName, name VMName, params *DeleteVMDefinitionParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -768,6 +764,11 @@ type ClientInterface interface {
 	DefineVMWithBody(ctx context.Context, host HostName, name VMName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	DefineVM(ctx context.Context, host HostName, name VMName, body DefineVMJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ExecVMWithBody request with any body
+	ExecVMWithBody(ctx context.Context, host HostName, name VMName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	ExecVM(ctx context.Context, host HostName, name VMName, body ExecVMJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// MigrateDiskWithBody request with any body
 	MigrateDiskWithBody(ctx context.Context, host HostName, name VMName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -841,10 +842,10 @@ type ClientInterface interface {
 	// GetMachine request
 	GetMachine(ctx context.Context, name MachineName, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RunMachineCommandWithBody request with any body
-	RunMachineCommandWithBody(ctx context.Context, name MachineName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// ExecMachineWithBody request with any body
+	ExecMachineWithBody(ctx context.Context, name MachineName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	RunMachineCommand(ctx context.Context, name MachineName, body RunMachineCommandJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ExecMachine(ctx context.Context, name MachineName, body ExecMachineJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RunMachinePlaybookWithBody request with any body
 	RunMachinePlaybookWithBody(ctx context.Context, name MachineName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1137,30 +1138,6 @@ func (c *Client) SetAutostart(ctx context.Context, host HostName, name VMName, b
 	return c.Client.Do(req)
 }
 
-func (c *Client) RunVMCommandWithBody(ctx context.Context, host HostName, name VMName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRunVMCommandRequestWithBody(c.Server, host, name, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) RunVMCommand(ctx context.Context, host HostName, name VMName, body RunVMCommandJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRunVMCommandRequest(c.Server, host, name, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 func (c *Client) DeleteVMDefinition(ctx context.Context, host HostName, name VMName, params *DeleteVMDefinitionParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDeleteVMDefinitionRequest(c.Server, host, name, params)
 	if err != nil {
@@ -1187,6 +1164,30 @@ func (c *Client) DefineVMWithBody(ctx context.Context, host HostName, name VMNam
 
 func (c *Client) DefineVM(ctx context.Context, host HostName, name VMName, body DefineVMJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDefineVMRequest(c.Server, host, name, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ExecVMWithBody(ctx context.Context, host HostName, name VMName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExecVMRequestWithBody(c.Server, host, name, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ExecVM(ctx context.Context, host HostName, name VMName, body ExecVMJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExecVMRequest(c.Server, host, name, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1521,8 +1522,8 @@ func (c *Client) GetMachine(ctx context.Context, name MachineName, reqEditors ..
 	return c.Client.Do(req)
 }
 
-func (c *Client) RunMachineCommandWithBody(ctx context.Context, name MachineName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRunMachineCommandRequestWithBody(c.Server, name, contentType, body)
+func (c *Client) ExecMachineWithBody(ctx context.Context, name MachineName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExecMachineRequestWithBody(c.Server, name, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1533,8 +1534,8 @@ func (c *Client) RunMachineCommandWithBody(ctx context.Context, name MachineName
 	return c.Client.Do(req)
 }
 
-func (c *Client) RunMachineCommand(ctx context.Context, name MachineName, body RunMachineCommandJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRunMachineCommandRequest(c.Server, name, body)
+func (c *Client) ExecMachine(ctx context.Context, name MachineName, body ExecMachineJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExecMachineRequest(c.Server, name, body)
 	if err != nil {
 		return nil, err
 	}
@@ -2390,60 +2391,6 @@ func NewSetAutostartRequestWithBody(server string, host HostName, name VMName, c
 	return req, nil
 }
 
-// NewRunVMCommandRequest calls the generic RunVMCommand builder with application/json body
-func NewRunVMCommandRequest(server string, host HostName, name VMName, body RunVMCommandJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewRunVMCommandRequestWithBody(server, host, name, "application/json", bodyReader)
-}
-
-// NewRunVMCommandRequestWithBody generates requests for RunVMCommand with any type of body
-func NewRunVMCommandRequestWithBody(server string, host HostName, name VMName, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "host", runtime.ParamLocationPath, host)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "name", runtime.ParamLocationPath, name)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/hosts/%s/vms/%s/cmd", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("POST", queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
 // NewDeleteVMDefinitionRequest generates requests for DeleteVMDefinition
 func NewDeleteVMDefinitionRequest(server string, host HostName, name VMName, params *DeleteVMDefinitionParams) (*http.Request, error) {
 	var err error
@@ -2552,6 +2499,60 @@ func NewDefineVMRequestWithBody(server string, host HostName, name VMName, conte
 	}
 
 	req, err := http.NewRequest("PUT", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewExecVMRequest calls the generic ExecVM builder with application/json body
+func NewExecVMRequest(server string, host HostName, name VMName, body ExecVMJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewExecVMRequestWithBody(server, host, name, "application/json", bodyReader)
+}
+
+// NewExecVMRequestWithBody generates requests for ExecVM with any type of body
+func NewExecVMRequestWithBody(server string, host HostName, name VMName, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "host", runtime.ParamLocationPath, host)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "name", runtime.ParamLocationPath, name)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/hosts/%s/vms/%s/exec", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
@@ -3353,19 +3354,19 @@ func NewGetMachineRequest(server string, name MachineName) (*http.Request, error
 	return req, nil
 }
 
-// NewRunMachineCommandRequest calls the generic RunMachineCommand builder with application/json body
-func NewRunMachineCommandRequest(server string, name MachineName, body RunMachineCommandJSONRequestBody) (*http.Request, error) {
+// NewExecMachineRequest calls the generic ExecMachine builder with application/json body
+func NewExecMachineRequest(server string, name MachineName, body ExecMachineJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewRunMachineCommandRequestWithBody(server, name, "application/json", bodyReader)
+	return NewExecMachineRequestWithBody(server, name, "application/json", bodyReader)
 }
 
-// NewRunMachineCommandRequestWithBody generates requests for RunMachineCommand with any type of body
-func NewRunMachineCommandRequestWithBody(server string, name MachineName, contentType string, body io.Reader) (*http.Request, error) {
+// NewExecMachineRequestWithBody generates requests for ExecMachine with any type of body
+func NewExecMachineRequestWithBody(server string, name MachineName, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -3380,7 +3381,7 @@ func NewRunMachineCommandRequestWithBody(server string, name MachineName, conten
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/metal/%s/cmd", pathParam0)
+	operationPath := fmt.Sprintf("/v1/metal/%s/exec", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -3643,11 +3644,6 @@ type ClientWithResponsesInterface interface {
 
 	SetAutostartWithResponse(ctx context.Context, host HostName, name VMName, body SetAutostartJSONRequestBody, reqEditors ...RequestEditorFn) (*SetAutostartResponse, error)
 
-	// RunVMCommandWithBodyWithResponse request with any body
-	RunVMCommandWithBodyWithResponse(ctx context.Context, host HostName, name VMName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RunVMCommandResponse, error)
-
-	RunVMCommandWithResponse(ctx context.Context, host HostName, name VMName, body RunVMCommandJSONRequestBody, reqEditors ...RequestEditorFn) (*RunVMCommandResponse, error)
-
 	// DeleteVMDefinitionWithResponse request
 	DeleteVMDefinitionWithResponse(ctx context.Context, host HostName, name VMName, params *DeleteVMDefinitionParams, reqEditors ...RequestEditorFn) (*DeleteVMDefinitionResponse, error)
 
@@ -3655,6 +3651,11 @@ type ClientWithResponsesInterface interface {
 	DefineVMWithBodyWithResponse(ctx context.Context, host HostName, name VMName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DefineVMResponse, error)
 
 	DefineVMWithResponse(ctx context.Context, host HostName, name VMName, body DefineVMJSONRequestBody, reqEditors ...RequestEditorFn) (*DefineVMResponse, error)
+
+	// ExecVMWithBodyWithResponse request with any body
+	ExecVMWithBodyWithResponse(ctx context.Context, host HostName, name VMName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExecVMResponse, error)
+
+	ExecVMWithResponse(ctx context.Context, host HostName, name VMName, body ExecVMJSONRequestBody, reqEditors ...RequestEditorFn) (*ExecVMResponse, error)
 
 	// MigrateDiskWithBodyWithResponse request with any body
 	MigrateDiskWithBodyWithResponse(ctx context.Context, host HostName, name VMName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MigrateDiskResponse, error)
@@ -3728,10 +3729,10 @@ type ClientWithResponsesInterface interface {
 	// GetMachineWithResponse request
 	GetMachineWithResponse(ctx context.Context, name MachineName, reqEditors ...RequestEditorFn) (*GetMachineResponse, error)
 
-	// RunMachineCommandWithBodyWithResponse request with any body
-	RunMachineCommandWithBodyWithResponse(ctx context.Context, name MachineName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RunMachineCommandResponse, error)
+	// ExecMachineWithBodyWithResponse request with any body
+	ExecMachineWithBodyWithResponse(ctx context.Context, name MachineName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExecMachineResponse, error)
 
-	RunMachineCommandWithResponse(ctx context.Context, name MachineName, body RunMachineCommandJSONRequestBody, reqEditors ...RequestEditorFn) (*RunMachineCommandResponse, error)
+	ExecMachineWithResponse(ctx context.Context, name MachineName, body ExecMachineJSONRequestBody, reqEditors ...RequestEditorFn) (*ExecMachineResponse, error)
 
 	// RunMachinePlaybookWithBodyWithResponse request with any body
 	RunMachinePlaybookWithBodyWithResponse(ctx context.Context, name MachineName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RunMachinePlaybookResponse, error)
@@ -4221,35 +4222,6 @@ func (r SetAutostartResponse) StatusCode() int {
 	return 0
 }
 
-type RunVMCommandResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON200      *CmdResult
-	JSON400      *Error
-	JSON401      *Unauthorized
-	JSON403      *WorkstationOnly
-	JSON404      *Error
-	JSON409      *Error
-	JSON500      *Error
-	JSON502      *Error
-}
-
-// Status returns HTTPResponse.Status
-func (r RunVMCommandResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r RunVMCommandResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
 type DeleteVMDefinitionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -4293,6 +4265,35 @@ func (r DefineVMResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r DefineVMResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ExecVMResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *ExecResult
+	JSON400      *Error
+	JSON401      *Unauthorized
+	JSON403      *WorkstationOnly
+	JSON404      *Error
+	JSON409      *Error
+	JSON500      *Error
+	JSON502      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r ExecVMResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ExecVMResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -4765,10 +4766,10 @@ func (r GetMachineResponse) StatusCode() int {
 	return 0
 }
 
-type RunMachineCommandResponse struct {
+type ExecMachineResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *CmdResult
+	JSON200      *ExecResult
 	JSON400      *Error
 	JSON401      *Unauthorized
 	JSON403      *WorkstationOnly
@@ -4778,7 +4779,7 @@ type RunMachineCommandResponse struct {
 }
 
 // Status returns HTTPResponse.Status
-func (r RunMachineCommandResponse) Status() string {
+func (r ExecMachineResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -4786,7 +4787,7 @@ func (r RunMachineCommandResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r RunMachineCommandResponse) StatusCode() int {
+func (r ExecMachineResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -5097,23 +5098,6 @@ func (c *ClientWithResponses) SetAutostartWithResponse(ctx context.Context, host
 	return ParseSetAutostartResponse(rsp)
 }
 
-// RunVMCommandWithBodyWithResponse request with arbitrary body returning *RunVMCommandResponse
-func (c *ClientWithResponses) RunVMCommandWithBodyWithResponse(ctx context.Context, host HostName, name VMName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RunVMCommandResponse, error) {
-	rsp, err := c.RunVMCommandWithBody(ctx, host, name, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRunVMCommandResponse(rsp)
-}
-
-func (c *ClientWithResponses) RunVMCommandWithResponse(ctx context.Context, host HostName, name VMName, body RunVMCommandJSONRequestBody, reqEditors ...RequestEditorFn) (*RunVMCommandResponse, error) {
-	rsp, err := c.RunVMCommand(ctx, host, name, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRunVMCommandResponse(rsp)
-}
-
 // DeleteVMDefinitionWithResponse request returning *DeleteVMDefinitionResponse
 func (c *ClientWithResponses) DeleteVMDefinitionWithResponse(ctx context.Context, host HostName, name VMName, params *DeleteVMDefinitionParams, reqEditors ...RequestEditorFn) (*DeleteVMDefinitionResponse, error) {
 	rsp, err := c.DeleteVMDefinition(ctx, host, name, params, reqEditors...)
@@ -5138,6 +5122,23 @@ func (c *ClientWithResponses) DefineVMWithResponse(ctx context.Context, host Hos
 		return nil, err
 	}
 	return ParseDefineVMResponse(rsp)
+}
+
+// ExecVMWithBodyWithResponse request with arbitrary body returning *ExecVMResponse
+func (c *ClientWithResponses) ExecVMWithBodyWithResponse(ctx context.Context, host HostName, name VMName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExecVMResponse, error) {
+	rsp, err := c.ExecVMWithBody(ctx, host, name, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExecVMResponse(rsp)
+}
+
+func (c *ClientWithResponses) ExecVMWithResponse(ctx context.Context, host HostName, name VMName, body ExecVMJSONRequestBody, reqEditors ...RequestEditorFn) (*ExecVMResponse, error) {
+	rsp, err := c.ExecVM(ctx, host, name, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExecVMResponse(rsp)
 }
 
 // MigrateDiskWithBodyWithResponse request with arbitrary body returning *MigrateDiskResponse
@@ -5374,21 +5375,21 @@ func (c *ClientWithResponses) GetMachineWithResponse(ctx context.Context, name M
 	return ParseGetMachineResponse(rsp)
 }
 
-// RunMachineCommandWithBodyWithResponse request with arbitrary body returning *RunMachineCommandResponse
-func (c *ClientWithResponses) RunMachineCommandWithBodyWithResponse(ctx context.Context, name MachineName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RunMachineCommandResponse, error) {
-	rsp, err := c.RunMachineCommandWithBody(ctx, name, contentType, body, reqEditors...)
+// ExecMachineWithBodyWithResponse request with arbitrary body returning *ExecMachineResponse
+func (c *ClientWithResponses) ExecMachineWithBodyWithResponse(ctx context.Context, name MachineName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExecMachineResponse, error) {
+	rsp, err := c.ExecMachineWithBody(ctx, name, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseRunMachineCommandResponse(rsp)
+	return ParseExecMachineResponse(rsp)
 }
 
-func (c *ClientWithResponses) RunMachineCommandWithResponse(ctx context.Context, name MachineName, body RunMachineCommandJSONRequestBody, reqEditors ...RequestEditorFn) (*RunMachineCommandResponse, error) {
-	rsp, err := c.RunMachineCommand(ctx, name, body, reqEditors...)
+func (c *ClientWithResponses) ExecMachineWithResponse(ctx context.Context, name MachineName, body ExecMachineJSONRequestBody, reqEditors ...RequestEditorFn) (*ExecMachineResponse, error) {
+	rsp, err := c.ExecMachine(ctx, name, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseRunMachineCommandResponse(rsp)
+	return ParseExecMachineResponse(rsp)
 }
 
 // RunMachinePlaybookWithBodyWithResponse request with arbitrary body returning *RunMachinePlaybookResponse
@@ -6311,81 +6312,6 @@ func ParseSetAutostartResponse(rsp *http.Response) (*SetAutostartResponse, error
 	return response, nil
 }
 
-// ParseRunVMCommandResponse parses an HTTP response from a RunVMCommandWithResponse call
-func ParseRunVMCommandResponse(rsp *http.Response) (*RunVMCommandResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &RunVMCommandResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest CmdResult
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest WorkstationOnly
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON409 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON502 = &dest
-
-	}
-
-	return response, nil
-}
-
 // ParseDeleteVMDefinitionResponse parses an HTTP response from a DeleteVMDefinitionWithResponse call
 func ParseDeleteVMDefinitionResponse(rsp *http.Response) (*DeleteVMDefinitionResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -6467,6 +6393,81 @@ func ParseDefineVMResponse(rsp *http.Response) (*DefineVMResponse, error) {
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseExecVMResponse parses an HTTP response from a ExecVMWithResponse call
+func ParseExecVMResponse(rsp *http.Response) (*ExecVMResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ExecVMResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ExecResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest WorkstationOnly
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON502 = &dest
 
 	}
 
@@ -7431,22 +7432,22 @@ func ParseGetMachineResponse(rsp *http.Response) (*GetMachineResponse, error) {
 	return response, nil
 }
 
-// ParseRunMachineCommandResponse parses an HTTP response from a RunMachineCommandWithResponse call
-func ParseRunMachineCommandResponse(rsp *http.Response) (*RunMachineCommandResponse, error) {
+// ParseExecMachineResponse parses an HTTP response from a ExecMachineWithResponse call
+func ParseExecMachineResponse(rsp *http.Response) (*ExecMachineResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &RunMachineCommandResponse{
+	response := &ExecMachineResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest CmdResult
+		var dest ExecResult
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -7753,15 +7754,15 @@ type ServerInterface interface {
 	// Enable or disable autostart
 	// (PUT /v1/hosts/{host}/vms/{name}/autostart)
 	SetAutostart(w http.ResponseWriter, r *http.Request, host HostName, name VMName)
-	// Run a command over SSH
-	// (POST /v1/hosts/{host}/vms/{name}/cmd)
-	RunVMCommand(w http.ResponseWriter, r *http.Request, host HostName, name VMName)
 	// Force off and undefine a VM (raw)
 	// (DELETE /v1/hosts/{host}/vms/{name}/definition)
 	DeleteVMDefinition(w http.ResponseWriter, r *http.Request, host HostName, name VMName, params DeleteVMDefinitionParams)
 	// Define a VM from a primitive configuration
 	// (PUT /v1/hosts/{host}/vms/{name}/definition)
 	DefineVM(w http.ResponseWriter, r *http.Request, host HostName, name VMName)
+	// Run a program over SSH
+	// (POST /v1/hosts/{host}/vms/{name}/exec)
+	ExecVM(w http.ResponseWriter, r *http.Request, host HostName, name VMName)
 	// Move the VM disk to another pool
 	// (POST /v1/hosts/{host}/vms/{name}/migrate-disk)
 	MigrateDisk(w http.ResponseWriter, r *http.Request, host HostName, name VMName)
@@ -7816,9 +7817,9 @@ type ServerInterface interface {
 	// Show one machine (probes SSH)
 	// (GET /v1/metal/{name})
 	GetMachine(w http.ResponseWriter, r *http.Request, name MachineName)
-	// Run a command over SSH
-	// (POST /v1/metal/{name}/cmd)
-	RunMachineCommand(w http.ResponseWriter, r *http.Request, name MachineName)
+	// Run a program over SSH
+	// (POST /v1/metal/{name}/exec)
+	ExecMachine(w http.ResponseWriter, r *http.Request, name MachineName)
 	// Run an Ansible playbook against the machine
 	// (POST /v1/metal/{name}/playbook)
 	RunMachinePlaybook(w http.ResponseWriter, r *http.Request, name MachineName)
@@ -8491,46 +8492,6 @@ func (siw *ServerInterfaceWrapper) SetAutostart(w http.ResponseWriter, r *http.R
 	handler.ServeHTTP(w, r)
 }
 
-// RunVMCommand operation middleware
-func (siw *ServerInterfaceWrapper) RunVMCommand(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "host" -------------
-	var host HostName
-
-	err = runtime.BindStyledParameterWithOptions("simple", "host", r.PathValue("host"), &host, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "host", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "name" -------------
-	var name VMName
-
-	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.RunVMCommand(w, r, host, name)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
 // DeleteVMDefinition operation middleware
 func (siw *ServerInterfaceWrapper) DeleteVMDefinition(w http.ResponseWriter, r *http.Request) {
 
@@ -8613,6 +8574,46 @@ func (siw *ServerInterfaceWrapper) DefineVM(w http.ResponseWriter, r *http.Reque
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.DefineVM(w, r, host, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ExecVM operation middleware
+func (siw *ServerInterfaceWrapper) ExecVM(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "host" -------------
+	var host HostName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "host", r.PathValue("host"), &host, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "host", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "name" -------------
+	var name VMName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ExecVM(w, r, host, name)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -9257,8 +9258,8 @@ func (siw *ServerInterfaceWrapper) GetMachine(w http.ResponseWriter, r *http.Req
 	handler.ServeHTTP(w, r)
 }
 
-// RunMachineCommand operation middleware
-func (siw *ServerInterfaceWrapper) RunMachineCommand(w http.ResponseWriter, r *http.Request) {
+// ExecMachine operation middleware
+func (siw *ServerInterfaceWrapper) ExecMachine(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 
@@ -9278,7 +9279,7 @@ func (siw *ServerInterfaceWrapper) RunMachineCommand(w http.ResponseWriter, r *h
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.RunMachineCommand(w, r, name)
+		siw.Handler.ExecMachine(w, r, name)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -9523,9 +9524,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("GET "+options.BaseURL+"/v1/hosts/{host}/vms/{name}", wrapper.GetVM)
 	m.HandleFunc("POST "+options.BaseURL+"/v1/hosts/{host}/vms/{name}/add-disk", wrapper.AddDisk)
 	m.HandleFunc("PUT "+options.BaseURL+"/v1/hosts/{host}/vms/{name}/autostart", wrapper.SetAutostart)
-	m.HandleFunc("POST "+options.BaseURL+"/v1/hosts/{host}/vms/{name}/cmd", wrapper.RunVMCommand)
 	m.HandleFunc("DELETE "+options.BaseURL+"/v1/hosts/{host}/vms/{name}/definition", wrapper.DeleteVMDefinition)
 	m.HandleFunc("PUT "+options.BaseURL+"/v1/hosts/{host}/vms/{name}/definition", wrapper.DefineVM)
+	m.HandleFunc("POST "+options.BaseURL+"/v1/hosts/{host}/vms/{name}/exec", wrapper.ExecVM)
 	m.HandleFunc("POST "+options.BaseURL+"/v1/hosts/{host}/vms/{name}/migrate-disk", wrapper.MigrateDisk)
 	m.HandleFunc("POST "+options.BaseURL+"/v1/hosts/{host}/vms/{name}/playbook", wrapper.RunPlaybook)
 	m.HandleFunc("POST "+options.BaseURL+"/v1/hosts/{host}/vms/{name}/poweroff", wrapper.PoweroffVM)
@@ -9544,7 +9545,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("POST "+options.BaseURL+"/v1/metal", wrapper.AddMachine)
 	m.HandleFunc("DELETE "+options.BaseURL+"/v1/metal/{name}", wrapper.RemoveMachine)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/metal/{name}", wrapper.GetMachine)
-	m.HandleFunc("POST "+options.BaseURL+"/v1/metal/{name}/cmd", wrapper.RunMachineCommand)
+	m.HandleFunc("POST "+options.BaseURL+"/v1/metal/{name}/exec", wrapper.ExecMachine)
 	m.HandleFunc("POST "+options.BaseURL+"/v1/metal/{name}/playbook", wrapper.RunMachinePlaybook)
 	m.HandleFunc("POST "+options.BaseURL+"/v1/metal/{name}/reboot", wrapper.RebootMachine)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/playbooks", wrapper.ListPlaybooks)
@@ -10457,89 +10458,6 @@ func (response SetAutostart500JSONResponse) VisitSetAutostartResponse(w http.Res
 	return json.NewEncoder(w).Encode(response)
 }
 
-type RunVMCommandRequestObject struct {
-	Host HostName `json:"host"`
-	Name VMName   `json:"name"`
-	Body *RunVMCommandJSONRequestBody
-}
-
-type RunVMCommandResponseObject interface {
-	VisitRunVMCommandResponse(w http.ResponseWriter) error
-}
-
-type RunVMCommand200JSONResponse CmdResult
-
-func (response RunVMCommand200JSONResponse) VisitRunVMCommandResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type RunVMCommand400JSONResponse struct{ ErrorJSONResponse }
-
-func (response RunVMCommand400JSONResponse) VisitRunVMCommandResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(400)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type RunVMCommand401JSONResponse struct{ UnauthorizedJSONResponse }
-
-func (response RunVMCommand401JSONResponse) VisitRunVMCommandResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
-	w.WriteHeader(401)
-
-	return json.NewEncoder(w).Encode(response.Body)
-}
-
-type RunVMCommand403JSONResponse struct{ WorkstationOnlyJSONResponse }
-
-func (response RunVMCommand403JSONResponse) VisitRunVMCommandResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(403)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type RunVMCommand404JSONResponse Error
-
-func (response RunVMCommand404JSONResponse) VisitRunVMCommandResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(404)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type RunVMCommand409JSONResponse Error
-
-func (response RunVMCommand409JSONResponse) VisitRunVMCommandResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(409)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type RunVMCommand500JSONResponse Error
-
-func (response RunVMCommand500JSONResponse) VisitRunVMCommandResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(500)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
-type RunVMCommand502JSONResponse Error
-
-func (response RunVMCommand502JSONResponse) VisitRunVMCommandResponse(w http.ResponseWriter) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(502)
-
-	return json.NewEncoder(w).Encode(response)
-}
-
 type DeleteVMDefinitionRequestObject struct {
 	Host   HostName `json:"host"`
 	Name   VMName   `json:"name"`
@@ -10637,6 +10555,89 @@ type DefineVM500JSONResponse Error
 func (response DefineVM500JSONResponse) VisitDefineVMResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ExecVMRequestObject struct {
+	Host HostName `json:"host"`
+	Name VMName   `json:"name"`
+	Body *ExecVMJSONRequestBody
+}
+
+type ExecVMResponseObject interface {
+	VisitExecVMResponse(w http.ResponseWriter) error
+}
+
+type ExecVM200JSONResponse ExecResult
+
+func (response ExecVM200JSONResponse) VisitExecVMResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ExecVM400JSONResponse struct{ ErrorJSONResponse }
+
+func (response ExecVM400JSONResponse) VisitExecVMResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ExecVM401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response ExecVM401JSONResponse) VisitExecVMResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
+type ExecVM403JSONResponse struct{ WorkstationOnlyJSONResponse }
+
+func (response ExecVM403JSONResponse) VisitExecVMResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ExecVM404JSONResponse Error
+
+func (response ExecVM404JSONResponse) VisitExecVMResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ExecVM409JSONResponse Error
+
+func (response ExecVM409JSONResponse) VisitExecVMResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ExecVM500JSONResponse Error
+
+func (response ExecVM500JSONResponse) VisitExecVMResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ExecVM502JSONResponse Error
+
+func (response ExecVM502JSONResponse) VisitExecVMResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(502)
 
 	return json.NewEncoder(w).Encode(response)
 }
@@ -11661,36 +11662,36 @@ func (response GetMachine500JSONResponse) VisitGetMachineResponse(w http.Respons
 	return json.NewEncoder(w).Encode(response)
 }
 
-type RunMachineCommandRequestObject struct {
+type ExecMachineRequestObject struct {
 	Name MachineName `json:"name"`
-	Body *RunMachineCommandJSONRequestBody
+	Body *ExecMachineJSONRequestBody
 }
 
-type RunMachineCommandResponseObject interface {
-	VisitRunMachineCommandResponse(w http.ResponseWriter) error
+type ExecMachineResponseObject interface {
+	VisitExecMachineResponse(w http.ResponseWriter) error
 }
 
-type RunMachineCommand200JSONResponse CmdResult
+type ExecMachine200JSONResponse ExecResult
 
-func (response RunMachineCommand200JSONResponse) VisitRunMachineCommandResponse(w http.ResponseWriter) error {
+func (response ExecMachine200JSONResponse) VisitExecMachineResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(200)
 
 	return json.NewEncoder(w).Encode(response)
 }
 
-type RunMachineCommand400JSONResponse struct{ ErrorJSONResponse }
+type ExecMachine400JSONResponse struct{ ErrorJSONResponse }
 
-func (response RunMachineCommand400JSONResponse) VisitRunMachineCommandResponse(w http.ResponseWriter) error {
+func (response ExecMachine400JSONResponse) VisitExecMachineResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(400)
 
 	return json.NewEncoder(w).Encode(response)
 }
 
-type RunMachineCommand401JSONResponse struct{ UnauthorizedJSONResponse }
+type ExecMachine401JSONResponse struct{ UnauthorizedJSONResponse }
 
-func (response RunMachineCommand401JSONResponse) VisitRunMachineCommandResponse(w http.ResponseWriter) error {
+func (response ExecMachine401JSONResponse) VisitExecMachineResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
 	w.WriteHeader(401)
@@ -11698,36 +11699,36 @@ func (response RunMachineCommand401JSONResponse) VisitRunMachineCommandResponse(
 	return json.NewEncoder(w).Encode(response.Body)
 }
 
-type RunMachineCommand403JSONResponse struct{ WorkstationOnlyJSONResponse }
+type ExecMachine403JSONResponse struct{ WorkstationOnlyJSONResponse }
 
-func (response RunMachineCommand403JSONResponse) VisitRunMachineCommandResponse(w http.ResponseWriter) error {
+func (response ExecMachine403JSONResponse) VisitExecMachineResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(403)
 
 	return json.NewEncoder(w).Encode(response)
 }
 
-type RunMachineCommand404JSONResponse Error
+type ExecMachine404JSONResponse Error
 
-func (response RunMachineCommand404JSONResponse) VisitRunMachineCommandResponse(w http.ResponseWriter) error {
+func (response ExecMachine404JSONResponse) VisitExecMachineResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(404)
 
 	return json.NewEncoder(w).Encode(response)
 }
 
-type RunMachineCommand500JSONResponse Error
+type ExecMachine500JSONResponse Error
 
-func (response RunMachineCommand500JSONResponse) VisitRunMachineCommandResponse(w http.ResponseWriter) error {
+func (response ExecMachine500JSONResponse) VisitExecMachineResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(500)
 
 	return json.NewEncoder(w).Encode(response)
 }
 
-type RunMachineCommand502JSONResponse Error
+type ExecMachine502JSONResponse Error
 
-func (response RunMachineCommand502JSONResponse) VisitRunMachineCommandResponse(w http.ResponseWriter) error {
+func (response ExecMachine502JSONResponse) VisitExecMachineResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(502)
 
@@ -11980,15 +11981,15 @@ type StrictServerInterface interface {
 	// Enable or disable autostart
 	// (PUT /v1/hosts/{host}/vms/{name}/autostart)
 	SetAutostart(ctx context.Context, request SetAutostartRequestObject) (SetAutostartResponseObject, error)
-	// Run a command over SSH
-	// (POST /v1/hosts/{host}/vms/{name}/cmd)
-	RunVMCommand(ctx context.Context, request RunVMCommandRequestObject) (RunVMCommandResponseObject, error)
 	// Force off and undefine a VM (raw)
 	// (DELETE /v1/hosts/{host}/vms/{name}/definition)
 	DeleteVMDefinition(ctx context.Context, request DeleteVMDefinitionRequestObject) (DeleteVMDefinitionResponseObject, error)
 	// Define a VM from a primitive configuration
 	// (PUT /v1/hosts/{host}/vms/{name}/definition)
 	DefineVM(ctx context.Context, request DefineVMRequestObject) (DefineVMResponseObject, error)
+	// Run a program over SSH
+	// (POST /v1/hosts/{host}/vms/{name}/exec)
+	ExecVM(ctx context.Context, request ExecVMRequestObject) (ExecVMResponseObject, error)
 	// Move the VM disk to another pool
 	// (POST /v1/hosts/{host}/vms/{name}/migrate-disk)
 	MigrateDisk(ctx context.Context, request MigrateDiskRequestObject) (MigrateDiskResponseObject, error)
@@ -12043,9 +12044,9 @@ type StrictServerInterface interface {
 	// Show one machine (probes SSH)
 	// (GET /v1/metal/{name})
 	GetMachine(ctx context.Context, request GetMachineRequestObject) (GetMachineResponseObject, error)
-	// Run a command over SSH
-	// (POST /v1/metal/{name}/cmd)
-	RunMachineCommand(ctx context.Context, request RunMachineCommandRequestObject) (RunMachineCommandResponseObject, error)
+	// Run a program over SSH
+	// (POST /v1/metal/{name}/exec)
+	ExecMachine(ctx context.Context, request ExecMachineRequestObject) (ExecMachineResponseObject, error)
 	// Run an Ansible playbook against the machine
 	// (POST /v1/metal/{name}/playbook)
 	RunMachinePlaybook(ctx context.Context, request RunMachinePlaybookRequestObject) (RunMachinePlaybookResponseObject, error)
@@ -12616,40 +12617,6 @@ func (sh *strictHandler) SetAutostart(w http.ResponseWriter, r *http.Request, ho
 	}
 }
 
-// RunVMCommand operation middleware
-func (sh *strictHandler) RunVMCommand(w http.ResponseWriter, r *http.Request, host HostName, name VMName) {
-	var request RunVMCommandRequestObject
-
-	request.Host = host
-	request.Name = name
-
-	var body RunVMCommandJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.RunVMCommand(ctx, request.(RunVMCommandRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "RunVMCommand")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(RunVMCommandResponseObject); ok {
-		if err := validResponse.VisitRunVMCommandResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
 // DeleteVMDefinition operation middleware
 func (sh *strictHandler) DeleteVMDefinition(w http.ResponseWriter, r *http.Request, host HostName, name VMName, params DeleteVMDefinitionParams) {
 	var request DeleteVMDefinitionRequestObject
@@ -12705,6 +12672,40 @@ func (sh *strictHandler) DefineVM(w http.ResponseWriter, r *http.Request, host H
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(DefineVMResponseObject); ok {
 		if err := validResponse.VisitDefineVMResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ExecVM operation middleware
+func (sh *strictHandler) ExecVM(w http.ResponseWriter, r *http.Request, host HostName, name VMName) {
+	var request ExecVMRequestObject
+
+	request.Host = host
+	request.Name = name
+
+	var body ExecVMJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ExecVM(ctx, request.(ExecVMRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ExecVM")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ExecVMResponseObject); ok {
+		if err := validResponse.VisitExecVMResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -13250,13 +13251,13 @@ func (sh *strictHandler) GetMachine(w http.ResponseWriter, r *http.Request, name
 	}
 }
 
-// RunMachineCommand operation middleware
-func (sh *strictHandler) RunMachineCommand(w http.ResponseWriter, r *http.Request, name MachineName) {
-	var request RunMachineCommandRequestObject
+// ExecMachine operation middleware
+func (sh *strictHandler) ExecMachine(w http.ResponseWriter, r *http.Request, name MachineName) {
+	var request ExecMachineRequestObject
 
 	request.Name = name
 
-	var body RunMachineCommandJSONRequestBody
+	var body ExecMachineJSONRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
 		return
@@ -13264,18 +13265,18 @@ func (sh *strictHandler) RunMachineCommand(w http.ResponseWriter, r *http.Reques
 	request.Body = &body
 
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.RunMachineCommand(ctx, request.(RunMachineCommandRequestObject))
+		return sh.ssi.ExecMachine(ctx, request.(ExecMachineRequestObject))
 	}
 	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "RunMachineCommand")
+		handler = middleware(handler, "ExecMachine")
 	}
 
 	response, err := handler(r.Context(), w, r, request)
 
 	if err != nil {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(RunMachineCommandResponseObject); ok {
-		if err := validResponse.VisitRunMachineCommandResponse(w); err != nil {
+	} else if validResponse, ok := response.(ExecMachineResponseObject); ok {
+		if err := validResponse.VisitExecMachineResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -13393,175 +13394,178 @@ func (sh *strictHandler) GetVersion(w http.ResponseWriter, r *http.Request) {
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"H4sIAAAAAAAC/+x963Ibt9Lgq3RxvyqLu9ToEidnI1VqS7GdWLuRrYoU5fs29orgDCjiaAjMATCSeVKq",
-	"2qfZB9sn+aq7gbmQQ4qyLo59/McWyRlcGt2NvvefvdRMC6Ol9q6392evEFZMpZeWPr02zr8RU4l/Z9Kl",
-	"VhVeGd3bo19Ai6kE4SBXzssMRjP4+dUpbF3tbE2M8y6BA8A/wE+UAyftlbSQGelAG8+fQTl4vv08ead7",
-	"g57CgQvhJ71BT9OsPXy9N+hZ+Y9SWZn19rwt5aDn0omcClyVnxX4nPNW6Yvezc2gdzgVFzIuumNI+u9u",
-	"Qx6JdKL0Aw96dvSQ493gw64w2kk6uVfWGot/pEZ7qT3+KYoiV6nAE9z6u8Nj/LMx4r9ZOe7t9f7LVo0Q",
-	"W/yr2+LRaJY2Gkj+YdD7TYvST4xV/5TZ4097pJxT+gKMBaWvRK4yGElhpQVvLqVO4ERqD9fKT2D4+++/",
-	"bx6UfiK1x1XIPfiRHh0mcDqRMDLZDLRE1JTpBJHTTyQUVjqpEal5QMLPiRRZIIz5Qdt7Wjicm0Hvd2Mv",
-	"nScovNX57PFhhJtjmnvmwJqcaG0yK6S9Us5YEDpjwjSFtDQzRColUkYwXNeLDjAdybGxEnyEnHJgpcj2",
-	"QRvI1ehKWU9v4Q+Z0RIhh2sLy8XdHGTZS+Uuf5X/KKWj3RcW1+AVo25hTL7IcE68seJCAv4KY2NpCVpe",
-	"w5XJy6ncBzNVHg9M8Qki53jmIJNjUeaeX9sYho9DMBpEc3sDGF5NvTF5+KkGVD+BM5qC2Z1yIPJrMXPw",
-	"59X0ZvNN8o/UXO/Cxhv8Zbda2VhZ50F+8FZAptzlAL/V8M0A/v///X99xqc5NBn0nPpnB6tNRSFS5Weg",
-	"NPz8Y2/QmyqtpuW0t7dTjaG0lxfS9m5umkzjDx7xffWYGf1dph6nqg7BlXnXGSA3WlgJMXP8Ccx4Dv5d",
-	"2/HCXki/OMwFnjsgqigDmbxSaYDtxlU2GsBVljKUusa8mt5GEGdHh3psFiBxNe0NIpMNC1sCl8Dtl+Jn",
-	"aqZT5D9MpQGjentjkTs5T4QiV1KD0fksgV9LDfW7yWyaR2py0pfF+ch4/HKPoIqgZpj8QLDpD2DK69pU",
-	"2YCI9+TkNT0Gl3LmAn5ZOTLGJ/Cbk4SKNL+DNDdaZjC2ZgoCGNFB4UWZwPPtbXp0Kr3IW4g5MiaXQiNY",
-	"cJ7Fgzw8BmPh5ZsTCPfVwnFdKp21oNSjaXqDntSIwX9Un2mlvfcdY+hOASRsgkUQncGBdmqETE5fSe2N",
-	"nVUgTOCodJ5kjtTkucok3wyiYlhnR7zvQngvLY7+f/442PzfYvOf25vfv6//TM433//Xf1vc5xyqBWAQ",
-	"zDpxrPTGeWH9UhSTWoxyvkjnz2Jurvhk1zwv8NSZdy2daSScPO+mdiZs8IbRZx+mCEYrnclRcNMOISnA",
-	"NRhzFwpoeX3efYRFLpSmE9wnbkLTIBv9M75zw9x1OXM5774sHu0uuPXsa3g2dt55ONNsJYcRTDjKy6nr",
-	"kCnoFjjkH+trQFgrZgtrisMtXUb3HSA/KH+emkw2pq/umUHP+Uxa27k05zNT+m6xt4W81QzVO9W4nYu1",
-	"Unh5bEy+FHQR0xbWFHF8LdKlh29bQTfUnmQBZ0dLAYDCxnkq0kkHwb3Ar2FqMhkv8LMjpAvlLl0Cb5lo",
-	"9qDUTozD/cFEOQBtgAYF4b1Vo9JL2CDSqmijJrA+81dt6N0kjncpZeGAL/9rqzyJ2sLTOvjbkcyVvJIO",
-	"hJUwzks3QRrWfMtN5dTY2T4I/pha4SZgLBTmWlrIjXOQCrxhrS0L395dAscqvQRtdNzW2RFcT4yTkAkv",
-	"YEqM3/EtEG8mfLo36NFSRyK9jH/7iTXlBRI4b6zz0qJj6Jbn2jLc9qCDtkhuPMcxbpN25oTp6t0rYd1t",
-	"777CJ8/wwZtBb6zs9FpY2b6t5Vj15mWan+ms4vMJyLGCH+C3Vz8dwsbbs6OfBuBkWlpUEIwHMx7vVxft",
-	"VFzi6UIh7ebZEbw5+/XgCMYqlwOwcmpQ8yDU4cPrJzBSxsEPkMsLkc7gx8O3JwM+QM3iC15DXuQ5CjfG",
-	"0gMJvEGp0ssU17vHEgKNg0+4Mp1Ub7fPm/eKT3aeKL3RzYlFeuVFcT4NvLINLtT2oHS4NZTQtPTnOAIp",
-	"SMrK1CfwMlxMI6uyCwkbZ0cOjCYoOFw9IfybwxeE4E5KkCKdgPETidrJlSwEOKkzBxOhbKE0XCmBm5Qf",
-	"vLRa5OCulU8nCRRWXQmPc5tcIAES3TkWDOtBEyiEcwHP4UJdBa2Yngb5Ic1Lp64k7ioykjeHL9rQ5L30",
-	"Bj1cHnI0nhr/qsfuBDQTegfdqNuUn8Fy7otgd6a0accJvZGeVFaWt7Xw/UE8Cv6KP/QHYGx9Fht8est0",
-	"uXjOi9Np4eGHiiTwn1LkoMMiNiITTeIafuA5+VMSkAZ+gIB2LKMUk5lTqcgXD0ILj2gdj4Nf7xa0zfm1",
-	"UP52reZwDGSPAit9aTVYdTHxIMZesvKbmSlKdiTjuj3QBnDcSLgiy6x0btD6/uTkNWs1RP8V98RnkD+4",
-	"mfNyChfWXPO9E4RT5cB5ledgJT6eRY0KWU+fDTyWLmrSzrd3muxlEG6AsB58onSlyPMZyGnhZwn8RFdF",
-	"uLFazwbtIxWaTZkSNkh4TOvdCXj5+sVxNHvG467Mn7bUBAEeXVxI7RnBBFxJOwOXm2tgZe5XOWb+gWtH",
-	"dY0YSWqmI6Xj10UuZiNjLpcpcOEy7tDh4lniXASZyFhxzJQ5rBQZEjoOgWY3hTxLuct4jRfSOuU8eEMD",
-	"MJ1F/fJYKMtrfPnql1enr+B/hLX8gPOCa71THyvCKJO59DJbtqe458VN/ShsoN1SZxKxjpTDrfiGC5BG",
-	"MSuBA0JcgXdDKp0bl3kFzgbbI0sXAklmSRfB38FsFdRxxHLYYDucbNiKoNQ5ISRb2PEPB+Za9ysZ7RGM",
-	"XEssUm5yjvx6cWNOaqe8upL7wXqam4tlI5ROdisKV2lR0th3MGkFCZmv4xUi8mq9d5VGigwnqKXBuqcc",
-	"iKKQOkPQj2HK5uf1saCpIz+ipXKZTfH8YvRxQI4vd4H5pRwr3dZE5o301hrLe/zZwNnRC6PH6gKmSpcu",
-	"8OBwwSoiL8UiDxJln+4CfjJiEH0VERKZt0onAfcsyS4CMiGnJljrP0otQobmyWIHktgwvgeZVTiLGTdu",
-	"twROrbiSuQP5AW33yuczlqPmDOdxpcFwwsQeTrfGhakU2i3Vsnhf9eWBHMn1H1pd6TYD0b0QjewfZwKq",
-	"rvOAiO0JtoNm2LjW8dk7KEmVFWhh5sYzXYRwy7iuZYFZpUrhbfiSLNm9m2rMYI35F9Wt1qWPfTIyKKk9",
-	"mwOQIujuu5DeIQDupKWx8nB+oW7leCSi4zpuO9ugHjD3mpOlOoSST22Q/Lhbld9pwa/JFWpgdV4FNfav",
-	"6UkKdI4/fixTeXjv0hxIbncWVU729pZl/Hphzab0Rdmx5iCf1jI9P8iCvqilUedlAWOh0OL/kM4xXnHn",
-	"FisbEXqps0zhikV+3NrwIsNv7S66ZoixbqJlCjaGm5uNj5dy9sOVyEs5RHsG61bBy+qkd+EYVRY1jCg4",
-	"BEGZ3NhTUYDI0Rk9g9RoL5SuX2yJt/XuMIqFALJwhkGN6/aB7hXG+koc4Lu5GeNSWDOS2T686+UmFfm7",
-	"XiX5L4TD2FI7MJ2ytyjU+ZW0taOxuQwc7OD4EMID9eBW4uK68SOV1p9nYubOcznuQMPriclxQzMHpfYq",
-	"B3pBG39Ouv0ArClJBs7MtUa5/0KgBgBGp3i6hbLNeRuctj1OhwXGeFbCAkxzKcY0uRpTeEW9vTowgwQj",
-	"gi/9skdaks/dOb5HFx+S+NjYqfC9vV4mvNz0qttNWVHsPDxm9cxoHtAkaKLHrWsUWkzHUaGauz4CNJX2",
-	"ZdasehndsxHfqKYT2l1LK7MQnRUwZg5+kd5Qxux3rsYani/exI0Lqjfo1XdSx73crV3QgBFsXcyHQrmO",
-	"hFZj6fwr7e1skVDHxkp1oVcBQkSxkrBLOeYd8oNyvuGCYDp+hoyEJ6zF7VwhftUPwTWanPAXK4ORxC81",
-	"vNzmD1qka1IBsiC7xXgS3mbYyTMH8XaaH9ZNxO633y0OnKObJBVOwkR+gJPXB5u7335HQ1f7tTI1NnPr",
-	"R6aMZl66ZWNUlKe0/+55b12VM55nFz6EyIxujr2EhokX052JYnMmvVA5o8Ut1LxOyEO8q05OXiMgzOoQ",
-	"iOY4FPYAP9R22xDdkXDIBvzAPioe/5mrpPymxVFostY3xMEBO+zKrJ/Aj8ZPyJF2cvJ6K17BLMw4jkhp",
-	"ydXrx2Es/GA6rsnjX1+dnv7H+ZuDo1cs9W9Jn24Zt2llLhELrzlcZcUBIG/pQLqfcDShcVt80dZqjfMG",
-	"2VxqZSa1VyJ3SbDZkdWStx2M1hzkxr8GvGoDpLm2NqpUQ67N6QgHBjGalTfWieDqwgov1wqPWz0xPdU1",
-	"RVubWRh9tS/LtH1ZbT/Wgzh/lvlo9Jo+mk4XTaf6EHwzd3WTzMGZfu2C87Hwk7tF14mRM3npZYiwCxd4",
-	"fa2upa90LiWoD0tR6iNdxk37+y1Li0+uXl43tNZRp1ZPH57rnNyYfIkGkKJs263kP2CQxyBO1LW6X8mr",
-	"tZIdrBNjcI840eYKuo+nds+do3tOd0MMfzpffpL3C+tcWMLynZwd3eIY+Dh7+SpDeZh49bSPZiahlZGg",
-	"FqTltlB2hz0GdG0M2LXbcE6L5BSDHrvx425hS2T9ZPfZVSb6A4pBZzlDeQf/fvRL7SqrdCF6nh1qFAi0",
-	"In7JWBQORK3bC9I8MxHl3bGSObkBH8T63rYPt4Sd8EvTrY6bdyT0rNz3HTdwW/RL0R36sl6sxvadYjUq",
-	"wS+uzZZas7/NTUpvxmNiniiH9AY9CgSjv9A2gT4p/vtStznBKvvo9toOMc9iTNtc2iP4DBo43kkZrHgv",
-	"IY9Vxh6lxyYJv1ZKrCtk2kXwo1Ll2fKxpiYrc1nZjYyFsxcnYOWVqkdHm74WdkbaZ4Tk2ioSyWNNE0cq",
-	"8pyc2DIf3yrFNAExv5kVMdW/C+UPj5eyV6+m0pT+3MnU6My1HDE7u9uD3lR8YFT45rvt7VvZ4tLpu6/I",
-	"TuKZ27cqOvaFxID+HuVnJ3gP8nCc6oTpR4vAp6yfiUA16Ozo9O3bX85P3/6vV284FCacB6lJQRlCthGN",
-	"ARuU63TOFgRQGlJSEjApgf2xeC0LfJV/c15oDwha1pzoqia+Tgusj3rifcEpSiog/1wy4enpMbjSjtGU",
-	"YsbR2xHWO0zgpJDpJqXU7NE9kLsBOJ/lagQn9Myh9pJeH4CcjmSGRkokEI4pEuCl89HLhOz0QmpphY85",
-	"EYStKEUkcESKOb2Fj0e93MHGFqnI/aU6tZUXynkytCkNSXxx6125vf1NilRBf8mtqOrPpvkg2JdicBAy",
-	"eJfAi18OayC4yZDWc/rbIQz9EOQHmeK3bLzLZ434QaXJxbSz+7dkO9lOdva+f/63b9pnj/85QIifEAYM",
-	"IDemwCsLlE7zMpMhvcRS1JEDbziQi24cU3poYsmgtrjiO/jhUs7auJPAK3Kl13lm8kMqQ4huZlIH1pSe",
-	"IDyALVNILQqVzMQ0b3zEpDhGwpYRM1CQg+FBSD8U7JnkHD9g2NOK6U855FSDyJkmMr3kC5GeeVYTg7jA",
-	"o2jvtr0vRhKyrWIS6w7HTl4rR0FPfsJhzGGlaLDGxNgkSXgbGH8WlNqoyQ6C3xV/JpdggAsO41JTUDZi",
-	"jH/eqNJst/7E/25o6KQNHuWgKEc5hqXpDEpdLWYPRDS+qFz5WbCkkJzAZOIgM4ScpeMcEKb9uB+XQBpC",
-	"0RlbSh31OF7vTKcTa7QpHf0+FTN8hjONhJ5RbIeXbr+abhqTdHBCAW5irCc8hcC8g4VV+VzW+T8Hx4dk",
-	"Zgi3XW8HEZ90Q0ac3l7vm2Q7+SaoW8Q/t/CfTt8hsRHWx+BtITV6WKwcSyt1KmHj5FpcXEgLvx32GVS5",
-	"EZlr4yxTW8zVQvlMsGdPexwZj4SOqPkOGNv+ErGdt1sRzWGGYpX0L03qenPJvrvb23P5pF5+8FsTP81v",
-	"SUydd9XVO2xdPr29P94Peq6cToWdtR4Ljg3l6CTwndYmGpBe2EkA8P88efvm9g2tTpCdvzYX9kVmdTMN",
-	"ojHeDCAc0NSr9hlxIDNpOZXawwa+0m/vE09wjX2esLx2h33Gge9wfov7vOP+/uPg6Jewv8hfllLLMfIM",
-	"x3HjzBZLvPyYPbX4kEFme/rLyQC+BRfpmcJfW2wbOMO6j6OlpbVSe7zeDlq2+sobJwCjgcn4W/9I8crE",
-	"cZR3QAYHvmNF8JvTlSGd7yKvX5Tzr2nL98THtWKGKufzQsTQ4rnSQQygdtlRJouynPLxfHtn2WTVNrZa",
-	"Gfo3N000+IWCd4O70LVkd5T93YCh7CdSWXBe+NK1USReQXyPuaXUgBP9GJ55KBAvsewuh2XDbOw+Enr4",
-	"0vPbX3oVqyN8u7299tOLJ9MI/3dsZKxrdPzRPWr9yFZVw+PmfdeRkcix+sQOp+IBDmxZ8Mi6Bzm4nctP",
-	"RYHqQ1ElBnsTRKrP57DJSsWHAhfWlAWbcnBPj3T2W39Sqi3z91yy6aWNBS/pe8KD3sIaHqQcysq4+YnJ",
-	"M/TgVdkJtZXLWE7WeKyIeNrcP0pJRp6wu2BqXb6b9wuk8nzx9gzJDX91pOSjB9FAzHvh4aDXGQF3UtUd",
-	"qY8gWC+DpWKjdXANxesbDv2J+jKrJUMoC5bOWWVqmXlDNDW5+PJZv1EIJmARbfOZAzJzD8B5K8UUI7qG",
-	"L5jdbf4i9YWfDIGyQhjLYeP5zk6lJSs/qHN1OL59u18XXSHVDkTMeJcfEIvr+NiqcMsOHKkfo8zCa8zV",
-	"FBNwmGpZbRpJjhIM6fSwkUtKaB1Api4USg7PkmcDeHaO/2w+2+cCTF5YcozT5f4sebYPwsPUOA+729u8",
-	"9z7WcArpDvDvm8QBNk9eH5AyjMDfTuDttZbWTVTRCpEx19o1Im/I1jTmgyLobsaQEVSlhxRiw7Dnkg2H",
-	"Y0At0bXYgGiMmHJkMkMhpPNQ4kbrh0ZaQUXoBUdU8PEbtHLGFJzuyB86SvyZUY73/X3YBrzrzdt33vWq",
-	"OMQQY2R0MEQgd+KHENT8HXJO/m4/hpNkKqPZGZURezgzbiHoaDgAd0tVHj8JsQ9VaoOt8qrgbbRYtF6N",
-	"T3oDw2R+d0khrB/eClRMesgljCTOPiELPaISa/U0EZ1YHYck8Oobj5GkiQo6kY2NN15OC2OFnfGBK1cF",
-	"uMeDNHkW8WThbIWVUGpvypTW9DutU+jAL1B+qFEnOB54typyjgEIYEMyHP922n4DMSOcBuJ68zRqPIvD",
-	"8pTPXMeOMECT2UPzlMTyA6EX0OejQWkvKQleZnFXysVDRz7qZtNc6UsgesK/BiGPBpfM5sx+tdgwwgWS",
-	"hJgQVhmNEOPgo8KaVDoXcNVRIgufPUMjgYPAalpsuGLCtCoXsm2W7m7DyosyF5bhY2zcwiCCXgCXAavF",
-	"vf7tOIpbjBQic7TbvdUxC3AejxoQjMyshVbMwMJqKKmPHqs4emsV/f2qfFI88KL0dc5lqE8zETYL58M5",
-	"RKjCOrCCIO8ngjVrcjRG9keUJIpCkg8gK20UnMI5bjzf/n4wj3CBfvr77T2FYL5qrZVtVGeUolPhCLFn",
-	"QvOxlUzrp1UmKWc0RfmseRFXMIkGcBbXpiKTiMrDv5cc8WvlP9wCBx329xuX7RyD/nZ7G4batO+Pd8Fo",
-	"+K7XxZGHXRaB3whoSwTfW4SeuhBhh3gbIFn5s7PZAL57TrGZfGUnUfhkm0gtfbYZ40opu1nPaHvze7E5",
-	"Ptj86f2f3z2/6Spi9J6Hks7/aLJVBepM6qXfZKGoreNV4QXsP+yY5GZ+vTcLsvLOg9XG64gf7tAaOWpw",
-	"DvUlP41i9vYdxOyPlOS/udMUz+/09Pd3eXpn5yl0ClTukGGNhGukm89J6Q3m0W1sammvW/HkllorD2IU",
-	"/GjWmireRFUURZd8mkD0d1V8j6L0hK1qRdaBJt13AvNK4SuOf7sIFeNaQ31VnDqpIsGRobZi/ZdIr43p",
-	"24HwwrcC4Tfm5e2mUH3bWvv7DA8qQheT1lHg61LZQmGh2mKM148Phl08HXfJl5bwlT4fBa+Wy+0bGooD",
-	"CyiJmBNJtWkiT3+JI6XFHO5r3Lo/F0LwfilM56MZw0EHC9hk+YFgQ+dNKvN97RCDu1zftxvPtmL8Xifr",
-	"eckcprCouaNvceNIaHEhbUKToLO4j/VVhU0nlSzs5itHdKu+wVfvS6u5UER39DDWeXyOQqs2tU3NVXkr",
-	"3dRxzEa9R6OMRox0B0UQSP/i1rHXzYqoD2Ujuz9uhsCC1Wb9N/GhT+aJaQb1fx7W+aioVAB+aJM80ubq",
-	"YzumJ57CQVnFxq9xlLzuz+EIm3zV3deUbVzHKdVFInvrqlR345uLdTCfWLFaKIPZgRFsEMqeTJx5Egzi",
-	"jYOoJd8WPnUrKlfT1RR9dvQ09Hx2tC4144o+B1oWeQ5hrQ9AxXMmmjqCLQGM73ULBexI26mq19EnSucW",
-	"GkzBvm4uWUf6YqzQBi9CxJuWaLKG3OiLdqAbGc/8NZfH4/i/uaIpz1wzEHGoCqrcF8ObOV50iLWS2l/H",
-	"4oKws7tNcTv9hKricfWhRo6BclAWg8Zm4Vo4cFLqqvR4lVW+YSza2miqYXjO11WPWDJdWSKwz4ody72B",
-	"YcosVETbQAgOKvANQs5mnw21MkNj4xtTH4qxoA2fCCrQuBnvuNAgBQ2habBRCCeqtmiC26u+Cwb4kE8Q",
-	"IxzRaB9N5aL0ZrPKONgPxmHyFRkbPTfcgaKCzXhpPUHGocWygjF2NuYvLwAwKO9s8uRi7mrcmFK5uUKB",
-	"wwjIYULOimDHjr0NGkHM5B3gPOVYSb7OUj5Z1ieCzN577E0PMUS81Qa+dnSjmOtE0dTx3/WWNqV414vO",
-	"FnSwREs3HmWXWhNrJ9/5VpYfxLTg4gehCmyvHJXal7vYuyaWKI+5MLuVqfZajnrNSqAhyTTkn+zeDO50",
-	"3dal1p74tq9S7z75Hb+GyWK+z8ojW0zvLUnorPKOEWZ+2GQmsNlA802kqXDOSwSMtYN4aJK5y7J9qCpW",
-	"BI3cjT1ZuFK0r1W5dEuiY2J1rCZyz5eTXWhq8CVFzJx4U4R4+wA/OtqbQbcE+LP0gSU9kpVlOfmeHf3l",
-	"YTkx12Tw46U+nkXl7GiFUl7T15bIss1Yl/0JVrNMOH0RvO2C/LIcAUf3ULQR4mqzhRZFLG6B8LAbGxJF",
-	"U6GWHzxZFtnzL7wXZIxUHoSrn4h11ULubbOgWgK/oG3zv8VywFL7KF3UUmWQovabD9XBQfgEpniCGY9Z",
-	"CmZhyUnaqxXXMMpNehnqeu2HV7TxUAjrKb6UgwLZE1kVD26TXCiafx85gNPuv91e+w6fL9S/zhX+cDyg",
-	"3e6pgxXQgYZD/0J1dt1FJzWuIy5V5eV6N7fxgWY6+9MwgrLj8jiRvuom9EjGpoVuRU+MurdfX18Kor6i",
-	"Xk4UoKcc/Vlj2W34mE6zT3wl/Ro1fXbmcj8fStOV1gYFP/b7SSjCVF5Jze7r6gfm5nrzn9KaBL7d3sV7",
-	"ATVjb4V2VHaRYqA+TwX011JjFWzuxnSPy6fqD/VHrwyh9pui9359fbLuPfXExFy3m+qg54A5NjzwVadc",
-	"8+ndj2M32I9QQMAlTtE7OXl9bxV0i5Qe5avqE1EbXdcnznpqP4HfdK4uZbCsoVXOB9sbB+/GXlKNcm+h",
-	"3UOde7+HL+HSwXlTuFqnpazkQSwgG3TWQRWO2uoeFWQFh504CENjyjKlRlPpAGOnXQQfVe6XNUi+Kt+P",
-	"eof+ZCzVkBgvauCwYcV1/4nUyCVpLquwHhfaRxxjC2zLHh8DXaucDeUbWSupsFZRzFfdLMHYqlfCXl0I",
-	"iOmHYz+iapVa6V0CVbHvhi2+UQr/j/cJ/dhdhSr6xduNLoSe1cHVVb7IaaOAc6Plw7qZLMNkOIDhOf6z",
-	"Oex3Ux13pngkgXi+8cVaV2gnRXGxoi9Khn3ZoLfQbrZG9hjyR1C/VaSdcjHMT2NuaWNUoy7nIyFVR+XP",
-	"r3rWI+HokbmS0dNH97s3dTrLKi9+FezXKHz5CTWuhod6f2mBlQSqZliu4ttLumJ9tlpVLD1zH6WqPtRe",
-	"qx93b221ar7O6hMT8Fwd1Q5CDgcOKIy6yVe/3ZMD3lgwFOPrA0GEXh4dipmuOpoXVV2lWJKKTZT3VtSo",
-	"c64Zjz/x5XoclvHVC7ZaqaHj2sTzuu1gOULmE99OBy+oeBa3D1OVisDyfx3+M3OtKBs3MWVOlQYlUFG6",
-	"KgV33OjFOBE6y4OaHuv5YEdKr3QasuidNwVsoDMJm5WANxBqh/ZDfTVGOtgYI3AzyJAozaxTofiVdvEV",
-	"P5dakviURXVYazhQuGHrX8GX+lnKPFVZ7kfSRxYrjz+xNLNQeLyDMoIPL/T+3Ye6yDg4Sc5nZhf4fXXV",
-	"fkEiz0cT7M8IkKYGhCyx0WdZjaGuuXxPKSMQOp/VJyb15ea3Gt2whqY1161+lN5AqPAOP/+4UDZgr+7j",
-	"PNermkrctdqRnLapfjN0JImTxzR5fGScm+uQzp87Q+M12rAv5wqxxP2jcob5OvofawQLtPtlGRgWyCug",
-	"0UY0k+Kp99e5Ij8FySzgVDmVX2Wf5bIPwod6iVNjnDVEnyeOG+k81hNcw9dTXR7DySG5zpuiWPdUTfHJ",
-	"D9UUX890OVcWqcTm/lEpvPVIfam1zJfXvyU3FWbubO0kO6gVaG6MDGVxYUUmYePXn17A9zs72+DCL39L",
-	"/nufC9L+LkcnJr2UQSMOV3XlBauGpcL7wmJ1pBfVDHvwG08RUn3Cp72QQbLJKx9SjxNq+ScyaTmTKF7S",
-	"MCq53nYm01yEhI8a2wbgDIiq9luoU9fWbZ5xCWV068Uiu3VhfaMl7bRVvK6ugcU9Ari8OpCfn12OGP1T",
-	"F4Vv1a4P1uuqd3zorVI5HzcwxT3kaIWuFVxTAptcHA0o3SWW45sIcpceHscUHDYLZBRFcPriGCjWaHcX",
-	"QnfIw+NqGu6wGoviimZJY9jAkKVg1ystunMPY9BCQA8uSKhnXC2+mQCEo1IVGhvCoHgN1ZHEXCAqzC+o",
-	"3pLQYGxGtXb4JCIFLJSFCxi5UOEqgDYqqfKDwJKIMKzQb2d7B06ulU9J3D22xpvU5O7dO/vune5ASP6h",
-	"Gx/5N/6XETeWx9IxDPn0xfHW6S8nTWKK3u1K9H3mGDK7u1ykEK6kHQmvpkDdcfwkZGcqo+MpaQNjK6ZK",
-	"XyTwY9W1MjSEcFJnixlqEW2btJPJXF1RcpQ39XqwiJzUIBWdKHnE09w46QZNEPNXvL56dy5hSt+NSV+R",
-	"dYjGQ+hJj4/FZVHLiee733XpAVjW++zolLnX3G2ws72zyMk6DpiS6jgprgmTgF4RKATF+qhUFaU9oxBA",
-	"K8W0BapnLeLitYexcFU1PrWvpNgIKKBVd1u++GPnmy087Hr/ptZAHuSmjDfQwkV5FDhqNzfHXMolzHwA",
-	"ojp95qWhWb/m0nchpgKB+jQ3cfC4PC64QrTIAr9OaAW73z3+Ct4YX9/GaC6G4DUMJBlTXVcQMIX1eDvj",
-	"KLs42AL63x+DPyp08HHBF9FcX8xzgsjEQ2F+Y+kapeb3yZzsFiAzz2+8uZ3fUJ9YY/1fI38Is3I3VfGX",
-	"tYNhovtPxh4eYwdhTLVxUBYE0nYHLdjYwW+pWxY0ssr36TaFP2+qjufhxz4JlOmtqe8H8c9YxrFRBY3k",
-	"r026YKfSOSwE3nH74RbOjg6PH8n+1e409sRW8VafsSVVxAKD/LJMarjxCqVQ9jcoAeH1V18JS/Q5Dt69",
-	"D8V9BB2FlG2au58Af4y1AENCnhk3rcpKc2GurnpeJACaUPI+Flt94HL3MMS1DRfCMKn+H/60B6tjMVek",
-	"3D+mPbo5xSdKkF9dx+yLLoTTlVS3kg63OED9iakR56SiaUiL+KHl3hGeSpFy9LPS3oQi2OdMkEi28vq8",
-	"SbpNIo3VkRcItTnII9BrveT1Y7JhIxTO5q5swyQZBqMQvZxxT6H+ktDtLgJHYD4ufdcz/DXJG9f3pVF3",
-	"TiXeI30QSYhVsbGBttmb98TE3eyv3U/ggbIU3nS4dJULqUfZCu/rE/hev3peV3jj1D8bmIudk6iMaMBa",
-	"Kme01KB/FHu9NqogzWeUrermmsArTCQPtnJqqVkn1rWa2kXbMffDCBpt3RjPUc9VT8OgxZFs9QIyKbJY",
-	"gglSJMCqY4uAsbwOXSk+0zhurOgWT+BJ6uGFydYtihdR4MmDgu5XI2+6pKHxGpE9ayUeUMW7VsQ8t7+g",
-	"NpTOKaPpO3K8VLXd+usZAxqtVJmli5Q6ByM5kbcqvZR2i/9jkiqEc9fGZpTW6crMxNptIDT8RkW7NhF+",
-	"wlNs9dsT2HBSLqZCbBVWFucN2u4n8LtV2P9/3c7O5NZoAyZ07nHQXPLI+JDfOQNEGLQVbsZIysr64cQ0",
-	"VEinZ0OnZyfGXMOCY0Vc3ebS6JER6Bu66KzzVl+G6BnjhMCzo2asEpmX2xXhAtPiPj1S+8q7hsth117V",
-	"FoUPLRRnWQS8sZALtC4tHFg77d+0hvuMc/8Psizwm/skqXDH/d7ONvX3fo5l5xD2vb0e32x1InCZ7vTu",
-	"UpwmLO4TidgtVrzIegMyfwbhm3/BPP+3DLylxRzXD/Gk9zsrzc2XApmaq9WcErv8xIZcOmvynT7K3lXX",
-	"snQi9AWxszZfoZ4P+4HiqGe4rbr+IiN1XhDB2s+0ViWDsMkxbpfn8Y3sSw1Z/slYMvjeAWsH3VL+54gO",
-	"P0u/FBe2n4oLR8h/oRhW1RqMTGaj4AbnJyev++tJy3cyegRot/2GTRb7cUWd2sMuFeFRDkSksSKlCn+2",
-	"UZvoX7c8UwDe1xpN/3o1mj6TqkstBvHxhQjW5BIPX2GANwlOeheqeKpsXs3DoUia44fPSdv1hoU7RXV9",
-	"SF3k8jRXwrqq4y5SgFDslZkm80YIblFJcfobz7e3+1RA1MprVuzj9IpEUc9Vl1RoP407N5olZ0cJraJS",
-	"mlgxrueiEk6fOw984JoKV9PzGIP6tajC58YUP9syCfdScT86j35N5oqOpDKXDobsX0p9HhLmhySHhh7T",
-	"puQE+tqaGaNDplOZKeFl9Cewz4CHIMPfaSuYPJQPQPByyXnm5LTWz1Vko71+VY3+WiJOLAcQL9S7SzmV",
-	"wLDUV/e5eriOq519srZ7FadE1/Z9e+99CpdWhR3UNnhexlwXy6R1IdGgO7urHOUqhQ1t4CDsmVGDA7bJ",
-	"a4WOLK4zGUaT2R5F6Yt0IkYqRyGSjAgJiEKdh4e4+e/YJPEzteNVDjKTllOp/YB+tlMRekjhyvcrd1lm",
-	"yKdCzhTk7staeJ6FDT5mOiBPsYwrRhDjL06mpVV+1tv7432r5evxIYFwVCpstj8HESbg3s3cCH/2OH0M",
-	"DwYHxEuWH+X7ubR5b6+3hWaV/xwAF8UKs+HOAAA=",
+	"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",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

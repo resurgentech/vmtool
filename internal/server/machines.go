@@ -110,24 +110,24 @@ func (h *handlers) RebootMachine(ctx context.Context, req api.RebootMachineReque
 	return api.RebootMachine200JSONResponse(toAPIMachine(info)), nil
 }
 
-func (h *handlers) RunMachineCommand(ctx context.Context, req api.RunMachineCommandRequestObject) (api.RunMachineCommandResponseObject, error) {
+func (h *handlers) ExecMachine(ctx context.Context, req api.ExecMachineRequestObject) (api.ExecMachineResponseObject, error) {
 	if req.Body == nil || len(req.Body.Command) == 0 {
-		return api.RunMachineCommand400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: "command is required"}}, nil
+		return api.ExecMachine400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: "command is required"}}, nil
 	}
-	res, err := h.svc.RunMachineCommand(ctx, req.Name, req.Body.Command)
+	res, err := h.svc.ExecMachine(ctx, req.Name, req.Body.Command)
 	if err != nil {
 		switch kindOf(err) {
 		case app.KindInvalid:
-			return api.RunMachineCommand400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
+			return api.ExecMachine400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
 		case app.KindNotFound:
-			return api.RunMachineCommand404JSONResponse(apiErr(err)), nil
+			return api.ExecMachine404JSONResponse(apiErr(err)), nil
 		case app.KindBadGateway:
-			return api.RunMachineCommand502JSONResponse(apiErr(err)), nil
+			return api.ExecMachine502JSONResponse(apiErr(err)), nil
 		default:
-			return api.RunMachineCommand500JSONResponse(apiErr(err)), nil
+			return api.ExecMachine500JSONResponse(apiErr(err)), nil
 		}
 	}
-	return api.RunMachineCommand200JSONResponse{ExitCode: res.ExitCode, Stdout: res.Stdout, Stderr: res.Stderr}, nil
+	return api.ExecMachine200JSONResponse{ExitCode: res.ExitCode, Stdout: res.Stdout, Stderr: res.Stderr}, nil
 }
 
 func (h *handlers) RunMachinePlaybook(ctx context.Context, req api.RunMachinePlaybookRequestObject) (api.RunMachinePlaybookResponseObject, error) {

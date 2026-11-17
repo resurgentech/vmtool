@@ -350,29 +350,29 @@ func (h *handlers) SetAutostart(ctx context.Context, req api.SetAutostartRequest
 	return api.SetAutostart200JSONResponse(toAPI(v.(*vmtool.VMInfo))), nil
 }
 
-func (h *handlers) RunVMCommand(ctx context.Context, req api.RunVMCommandRequestObject) (api.RunVMCommandResponseObject, error) {
+func (h *handlers) ExecVM(ctx context.Context, req api.ExecVMRequestObject) (api.ExecVMResponseObject, error) {
 	if req.Body == nil || len(req.Body.Command) == 0 {
-		return api.RunVMCommand400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: "command is required"}}, nil
+		return api.ExecVM400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: "command is required"}}, nil
 	}
 	v, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
-		return h.guestSvc(ctx).RunCommand(ctx, m, app.VMRef{Host: req.Host, Name: req.Name}, req.Body.Command)
+		return h.guestSvc(ctx).ExecVM(ctx, m, app.VMRef{Host: req.Host, Name: req.Name}, req.Body.Command)
 	})
 	if err != nil {
 		switch kindOf(err) {
 		case app.KindInvalid:
-			return api.RunVMCommand400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
+			return api.ExecVM400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
 		case app.KindNotFound:
-			return api.RunVMCommand404JSONResponse(apiErr(err)), nil
+			return api.ExecVM404JSONResponse(apiErr(err)), nil
 		case app.KindConflict:
-			return api.RunVMCommand409JSONResponse(apiErr(err)), nil
+			return api.ExecVM409JSONResponse(apiErr(err)), nil
 		case app.KindBadGateway:
-			return api.RunVMCommand502JSONResponse(apiErr(err)), nil
+			return api.ExecVM502JSONResponse(apiErr(err)), nil
 		default:
-			return api.RunVMCommand500JSONResponse(apiErr(err)), nil
+			return api.ExecVM500JSONResponse(apiErr(err)), nil
 		}
 	}
-	res := v.(*app.CmdResult)
-	return api.RunVMCommand200JSONResponse{ExitCode: res.ExitCode, Stdout: res.Stdout, Stderr: res.Stderr}, nil
+	res := v.(*app.ExecResult)
+	return api.ExecVM200JSONResponse{ExitCode: res.ExitCode, Stdout: res.Stdout, Stderr: res.Stderr}, nil
 }
 
 func (h *handlers) RunPlaybook(ctx context.Context, req api.RunPlaybookRequestObject) (api.RunPlaybookResponseObject, error) {

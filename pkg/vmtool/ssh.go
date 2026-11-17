@@ -162,10 +162,27 @@ func SSHCmd(t Tunnel, host, name string, extraArgs ...string) (*exec.Cmd, error)
 	return cmd, nil
 }
 
-// RemoteCmd builds a non-interactive ssh command that runs argv on VM name on
-// host, through the tunnel.
+// RemoteCmd builds a non-interactive ssh command that runs argv exactly on VM
+// name on host, through the tunnel. Every argument is single-quoted (see
+// quoteArgv), because ssh joins its trailing arguments with spaces and the
+// guest's shell splits that line.
 func RemoteCmd(t Tunnel, host, name string, argv []string) (*exec.Cmd, error) {
-	return vmSSH(t, host, name, argv)
+	return vmSSH(t, host, name, quoteArgv(argv))
+}
+
+// quoteArg POSIX-single-quotes s: the shell reads it back as that one word.
+// A single quote inside s becomes '\'' (close, escaped quote, reopen).
+func quoteArg(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// quoteArgv quotes every argument, with no special case for a single one.
+func quoteArgv(argv []string) []string {
+	out := make([]string, len(argv))
+	for i, a := range argv {
+		out[i] = quoteArg(a)
+	}
+	return out
 }
 
 func vmSSH(t Tunnel, host, name string, remote []string) (*exec.Cmd, error) {

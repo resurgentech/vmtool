@@ -449,9 +449,9 @@ func TestWorkstationOnlySet(t *testing.T) {
 	}
 	sort.Strings(got)
 	want := []string{
-		"addMachine", "createVM", "getMachine", "listMachines", "listPlaybooks",
-		"rebootMachine", "removeMachine", "resizeDisk", "runMachineCommand",
-		"runMachinePlaybook", "runPlaybook", "runVMCommand",
+		"addMachine", "createVM", "execMachine", "execVM", "getMachine",
+		"listMachines", "listPlaybooks", "rebootMachine", "removeMachine",
+		"resizeDisk", "runMachinePlaybook", "runPlaybook",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("workstation-only operations\n got %v\nwant %v", got, want)
@@ -535,7 +535,7 @@ func TestHypervisorRoleOverRealRouter(t *testing.T) {
 	h := s.Handler()
 	for _, tc := range []struct{ method, path string }{
 		{"POST", "/v1/hosts/x/vms"},
-		{"POST", "/v1/hosts/x/vms/y/cmd"},
+		{"POST", "/v1/hosts/x/vms/y/exec"},
 		{"GET", "/v1/metal"},
 		{"GET", "/v1/playbooks"},
 	} {
@@ -549,6 +549,26 @@ func TestHypervisorRoleOverRealRouter(t *testing.T) {
 		h.ServeHTTP(rec, r)
 		if rec.Code != 403 || !strings.Contains(rec.Body.String(), "served by the workstation") {
 			t.Errorf("%s %s: %d %s", tc.method, tc.path, rec.Code, rec.Body)
+		}
+	}
+}
+
+// cmd became exec in API 2.0.0, with no alias: the old paths are not routes,
+// for either role, even with a valid token.
+func TestOldCmdRoutesAreGone(t *testing.T) {
+	t.Chdir(t.TempDir())
+	for _, role := range []string{"", config.RoleHypervisor} {
+		s := authedServer()
+		s.Config.Role = role
+		h := s.Handler()
+		for _, path := range []string{"/v1/hosts/x/vms/y/cmd", "/v1/metal/y/cmd"} {
+			rec := httptest.NewRecorder()
+			r := httptest.NewRequest("POST", path, strings.NewReader(`{"command":["true"]}`))
+			r.Header.Set("Authorization", "Bearer "+testToken)
+			h.ServeHTTP(rec, r)
+			if rec.Code != 404 {
+				t.Errorf("role %q POST %s: %d %s, want 404", role, path, rec.Code, rec.Body)
+			}
 		}
 	}
 }

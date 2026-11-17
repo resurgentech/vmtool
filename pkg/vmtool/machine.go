@@ -199,8 +199,9 @@ func MachineSSHCmd(m Machine, extraArgs ...string) *exec.Cmd {
 	return cmd
 }
 
-// MachineRemoteCmd builds a non-interactive ssh command that runs argv on
-// the machine. connectTimeout (seconds) bounds the TCP connect; 0 means the
+// MachineRemoteCmd builds a non-interactive ssh command that runs argv
+// exactly on the machine: every argument is single-quoted (see quoteArgv),
+// because ssh joins its trailing arguments with spaces. connectTimeout (seconds) bounds the TCP connect; 0 means the
 // ssh default.
 func MachineRemoteCmd(m Machine, connectTimeout int, argv []string) *exec.Cmd {
 	var opts []string
@@ -210,5 +211,5 @@ func MachineRemoteCmd(m Machine, connectTimeout int, argv []string) *exec.Cmd {
 			"-o", "NumberOfPasswordPrompts=1",
 		}
 	}
-	return sshCommandOpts(m.Host, m.Auth(), opts, argv)
+	return sshCommandOpts(m.Host, m.Auth(), opts, quoteArgv(argv))
 }

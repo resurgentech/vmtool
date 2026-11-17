@@ -10,25 +10,27 @@ import (
 	"github.com/jaredeh/vmtool/pkg/vmtool"
 )
 
-func (s *Service) RunCommand(_ context.Context, m Manager, ref VMRef, argv []string) (*CmdResult, error) {
+// ExecVM runs argv, exactly, on VM ref over SSH and returns the result. Every
+// argument reaches the guest as one argument; a shell only when argv is `sh -c`.
+func (s *Service) ExecVM(_ context.Context, m Manager, ref VMRef, argv []string) (*ExecResult, error) {
 	if len(argv) == 0 {
-		return nil, invalid("cmd", fmt.Errorf("command is required"))
+		return nil, invalid("exec", fmt.Errorf("command is required"))
 	}
-	if err := validRef("cmd", ref); err != nil {
+	if err := validRef("exec", ref); err != nil {
 		return nil, err
 	}
 	info, err := m.Info(ref.Name)
 	if err != nil {
-		return nil, wrap("cmd", err)
+		return nil, wrap("exec", err)
 	}
 	if info.IP == "" {
-		return nil, conflict("cmd", fmt.Errorf("VM %q has no IP address", ref.String()))
+		return nil, conflict("exec", fmt.Errorf("VM %q has no IP address", ref.String()))
 	}
 	c, err := vmtool.RemoteCmd(s.Tunnel, ref.Host, ref.Name, argv)
 	if err != nil {
-		return nil, wrap("cmd", err)
+		return nil, wrap("exec", err)
 	}
-	return runRemote("cmd", c, 0)
+	return runRemote("exec", c, 0)
 }
 
 func (s *Service) RunPlaybook(_ context.Context, m Manager, ref VMRef, playbook string, auth vmtool.Auth, extraVars map[string]string) (*PlaybookResult, error) {
@@ -77,15 +79,15 @@ func (s *Service) SSHCmd(ref VMRef, extraArgs ...string) (*exec.Cmd, error) {
 	return c, nil
 }
 
-// RemoteCmd builds a non-interactive ssh command that runs argv on VM ref
-// through the tunnel. Stdio is left unset for the caller.
+// RemoteCmd builds a non-interactive ssh command that runs argv, exactly (each
+// argument quoted), on VM ref through the tunnel. Stdio is left unset for the caller.
 func (s *Service) RemoteCmd(ref VMRef, argv []string) (*exec.Cmd, error) {
-	if err := validRef("cmd", ref); err != nil {
+	if err := validRef("exec", ref); err != nil {
 		return nil, err
 	}
 	c, err := vmtool.RemoteCmd(s.Tunnel, ref.Host, ref.Name, argv)
 	if err != nil {
-		return nil, wrap("cmd", err)
+		return nil, wrap("exec", err)
 	}
 	return c, nil
 }

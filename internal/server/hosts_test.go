@@ -38,7 +38,7 @@ func TestUnknownHost404(t *testing.T) {
 		{"GET", "/v1/hosts/nope/vms/a", ""},
 		{"DELETE", "/v1/hosts/nope/vms/a", ""},
 		{"POST", "/v1/hosts/nope/vms/a/start", ""},
-		{"POST", "/v1/hosts/nope/vms/a/cmd", `{"command":["true"]}`},
+		{"POST", "/v1/hosts/nope/vms/a/exec", `{"command":["true"]}`},
 		{"GET", "/v1/hosts/nope/networks", ""},
 		{"GET", "/v1/hosts/nope/bridges", ""},
 		{"GET", "/v1/hosts/nope/images", ""},
@@ -69,8 +69,8 @@ func TestUnknownHost404(t *testing.T) {
 
 func TestVersion(t *testing.T) {
 	doc := loadSpec(t)
-	if doc.Info.Version != "1.0.0" {
-		t.Fatalf("spec info.version = %q, want 1.0.0", doc.Info.Version)
+	if doc.Info.Version != "2.0.0" {
+		t.Fatalf("spec info.version = %q, want 2.0.0", doc.Info.Version)
 	}
 	h := handlerFor(&handlers{hosts: noLibvirt(t)})
 	rec := httptest.NewRecorder()

@@ -49,7 +49,8 @@ const (
 )
 
 // probeScript prints os-release fields and whether passwordless sudo works.
-// ssh joins argv with spaces, so this is one remote shell line.
+// It is sent as `sh -c <probeScript>`: one explicit argv, not a line for ssh
+// to join.
 const probeScript = `. /etc/os-release 2>/dev/null; echo "ID=$ID"; echo "ID_LIKE=$ID_LIKE"; echo "PRETTY_NAME=$PRETTY_NAME"; sudo -n true 2>/dev/null && echo SUDO=ok`
 
 type probeResult struct {
@@ -94,7 +95,7 @@ func (r probeResult) ubuntuCompatible() bool {
 // runRemote runs c, capturing output. A non-zero remote exit is a result, not
 // an error; failing to run ssh or a timeout is a bad gateway. Exit 255 is
 // left to the caller: it is ssh's own failure, or a remote command's choice.
-func runRemote(op string, c *exec.Cmd, timeout time.Duration) (*CmdResult, error) {
+func runRemote(op string, c *exec.Cmd, timeout time.Duration) (*ExecResult, error) {
 	var stdout, stderr bytes.Buffer
 	c.Stdin = nil
 	c.Stdout = &stdout
@@ -116,7 +117,7 @@ func runRemote(op string, c *exec.Cmd, timeout time.Duration) (*CmdResult, error
 	} else {
 		err = <-done
 	}
-	res := &CmdResult{Stdout: stdout.String(), Stderr: stderr.String()}
+	res := &ExecResult{Stdout: stdout.String(), Stderr: stderr.String()}
 	if err == nil {
 		return res, nil
 	}
@@ -129,7 +130,7 @@ func runRemote(op string, c *exec.Cmd, timeout time.Duration) (*CmdResult, error
 
 // sshFailed turns exit 255 from a command vmtool chose (which never exits
 // 255 itself) into a bad gateway.
-func sshFailed(op string, res *CmdResult) error {
+func sshFailed(op string, res *ExecResult) error {
 	if res.ExitCode != 255 {
 		return nil
 	}
@@ -141,7 +142,7 @@ func sshFailed(op string, res *CmdResult) error {
 }
 
 func probeMachine(m vmtool.Machine) (probeResult, error) {
-	res, err := runRemote("probe", vmtool.MachineRemoteCmd(m, probeConnectTimeout, []string{probeScript}), probeTimeout)
+	res, err := runRemote("probe", vmtool.MachineRemoteCmd(m, probeConnectTimeout, []string{"sh", "-c", probeScript}), probeTimeout)
 	if err == nil {
 		err = sshFailed("probe", res)
 	}
@@ -344,8 +345,9 @@ func (s *Service) RunMachinePlaybook(_ context.Context, name, playbook string, e
 	return &res, err
 }
 
-func (s *Service) RunMachineCommand(_ context.Context, name string, argv []string) (*CmdResult, error) {
-	const op = "machine_cmd"
+// ExecMachine runs argv, exactly, on machine name over SSH.
+func (s *Service) ExecMachine(_ context.Context, name string, argv []string) (*ExecResult, error) {
+	const op = "machine_exec"
 	if len(argv) == 0 {
 		return nil, invalid(op, fmt.Errorf("command is required"))
 	}
@@ -376,6 +378,16 @@ func (s *Service) RebootMachine(_ context.Context, name string) (*MachineInfo, e
 		return nil, internal(op, fmt.Errorf("exit %d: %s", res.ExitCode, strings.TrimSpace(res.Stderr)))
 	}
 	return &MachineInfo{Machine: *m, State: MachineRebooting}, nil
+}
+
+// MachineRemoteCmd builds a non-interactive ssh command that runs argv, exactly
+// (each argument quoted), on machine name. Stdio is left unset for the caller.
+func (s *Service) MachineRemoteCmd(name string, argv []string) (*exec.Cmd, error) {
+	m, err := loadMachine("machine_exec", name)
+	if err != nil {
+		return nil, err
+	}
+	return vmtool.MachineRemoteCmd(*m, 0, argv), nil
 }
 
 // MachineSSHCmd builds an interactive ssh command for CLI, TUI, and console.

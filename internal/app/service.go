@@ -136,7 +136,8 @@ type CreateVMInput struct {
 	OnProgress ProgressFunc
 }
 
-type CmdResult struct {
+// ExecResult is what exec returns: the remote exit code and captured output.
+type ExecResult struct {
 	ExitCode int
 	Stdout   string
 	Stderr   string

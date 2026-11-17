@@ -84,7 +84,7 @@ func TestRemoteCmdTunnelSSHPass(t *testing.T) {
 		"-o", "LogLevel=ERROR",
 		"-o", "ProxyCommand=/opt/vmtool/vmtool tunnel jetfire/web",
 		"-l", "packer",
-		"jetfire/web", "true",
+		"jetfire/web", "'true'",
 	}
 	if !slices.Equal(c.Args, want) {
 		t.Fatalf("argv\n got %q\nwant %q", c.Args, want)

@@ -184,7 +184,7 @@ it checks the bearer token of every request instead.`,
 		sshCmd(e),
 		tunnelCmd(e),
 		sshConfigCmd(e),
-		cmdCmd(e),
+		execCmd(e),
 		rebootCmd(e),
 		autostartCmd(e),
 		interactiveCmd(e),
@@ -619,15 +619,19 @@ checking is disabled.
 	}
 }
 
-func cmdCmd(e *env) *cobra.Command {
+func execCmd(e *env) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "cmd <host/name> <command> [args...]",
-		Short: "Run a command on a VM over SSH",
-		Long: `Run a command on a running VM and pass through stdin, stdout, stderr,
+		Use:   "exec <host/name> [--] <arg>...",
+		Short: "Run a program on a VM over SSH",
+		Long: `Run a program on a running VM and pass through stdin, stdout, stderr,
 and the remote exit code. Uses .machines credentials when present.
 
-  vmtool cmd jetfire/web uname -a
-  vmtool cmd jetfire/web -- sh -c 'echo hi | wc -c'`,
+The arguments are the exact argv: each reaches the VM as one argument, with
+no shell parsing (spaces, quotes, $ and | are plain characters). For shell
+features, run a shell.
+
+  vmtool exec jetfire/web uname -a
+  vmtool exec jetfire/web -- sh -c 'echo hi | wc -c'`,
 		Args:          cobra.MinimumNArgs(2),
 		SilenceErrors: true,
 		SilenceUsage:  true,
@@ -644,7 +648,7 @@ and the remote exit code. Uses .machines credentials when present.
 			if err != nil {
 				return err
 			}
-			// RemoteCmd leaves stdio unset (it is also used for captured runs).
+			// RemoteCmd (exact argv) leaves stdio unset (it is also used for captured runs).
 			c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
 			err = c.Run()
 			if err == nil {

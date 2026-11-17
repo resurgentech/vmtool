@@ -3,6 +3,7 @@ package vmtool
 import (
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -278,4 +279,50 @@ func TestNoOtherCredsPathJoins(t *testing.T) {
 		}
 		return nil
 	})
+}
+
+// awkward arguments: spaces, quotes, $, |, glob, empty, newline.
+var awkwardArgv = []string{"echo", "a b", "it's", "$HOME", "x|y", "*", "", "l1\nl2"}
+
+func wantQuoted() []string {
+	return []string{`'echo'`, `'a b'`, `'it'\''s'`, `'$HOME'`, `'x|y'`, `'*'`, `''`, "'l1\nl2'"}
+}
+
+// RemoteCmd and MachineRemoteCmd POSIX-single-quote every argument, so the
+// ssh-joined line the guest's shell parses gives back exactly the argv.
+func TestRemoteCmdQuotesEveryArgument(t *testing.T) {
+	t.Chdir(t.TempDir())
+	want := wantQuoted()
+	c, err := RemoteCmd(testTunnel(), "jetfire", "web", awkwardArgv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Args[len(c.Args)-len(want):]; !slices.Equal(got, want) {
+		t.Fatalf("RemoteCmd tail %q, want %q", got, want)
+	}
+	mc := MachineRemoteCmd(Machine{Host: "10.0.0.42"}, 0, awkwardArgv)
+	if got := mc.Args[len(mc.Args)-len(want):]; !slices.Equal(got, want) {
+		t.Fatalf("MachineRemoteCmd tail %q, want %q", got, want)
+	}
+	// One argument is quoted too: no single-argument special case.
+	c, err = RemoteCmd(testTunnel(), "jetfire", "web", []string{"uname -a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Args[len(c.Args)-1]; got != `'uname -a'` {
+		t.Fatalf("single arg %q", got)
+	}
+}
+
+// ssh joins the remote arguments with spaces and the guest's shell splits the
+// line: running that line through sh must reproduce the argv.
+func TestQuotedLineRoundTripsThroughSh(t *testing.T) {
+	line := strings.Join(quoteArgv([]string{"printf", "[%s]", "a b", "it's", "$HOME", "x|y", "*", "", "l1\nl2"}), " ")
+	out, err := exec.Command("sh", "-c", line).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "[a b][it's][$HOME][x|y][*][][l1\nl2]"; string(out) != want {
+		t.Fatalf("sh printed %q, want %q", out, want)
+	}
 }

@@ -6,11 +6,38 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/jaredeh/vmtool/internal/testexec"
 	"github.com/jaredeh/vmtool/pkg/vmtool"
 )
+
+// The machine probe hands ssh explicit argv: sh -c <script>, every argument
+// single-quoted, so the remote shell runs exactly that.
+func TestProbeSendsExplicitArgv(t *testing.T) {
+	t.Chdir(t.TempDir())
+	log := filepath.Join(t.TempDir(), "argv.log")
+	testexec.Stub(t, map[string]string{
+		"ssh": "#!/bin/sh\nprintf '%s\\n' \"$@\" > '" + log + "'\necho ID=ubuntu\necho SUDO=ok\n",
+		// A machine with no key goes through sshpass; run what follows it.
+		"sshpass": "#!/bin/sh\nshift\nexec \"$@\"\n",
+	})
+	if _, err := probeMachine(vmtool.Machine{Host: "10.0.0.42"}); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := strings.Split(strings.TrimSuffix(string(b), "\n"), "\n")
+	want := []string{"'sh'", "'-c'", "'" + probeScript + "'"}
+	if got := args[len(args)-3:]; !slices.Equal(got, want) {
+		t.Fatalf("probe argv tail %q, want %q", got, want)
+	}
+}
 
 func TestParseProbe(t *testing.T) {
 	for _, tc := range []struct {
@@ -41,7 +68,7 @@ func TestRunRemoteExitCodes(t *testing.T) {
 	if err != nil || res.ExitCode != 3 || res.Stdout != "out\n" || res.Stderr != "err\n" {
 		t.Fatalf("exit 3: %+v %v", res, err)
 	}
-	// 255 is a result for user commands (VM/machine cmd contract)...
+	// 255 is a result for user commands (VM/machine exec contract)...
 	res, err = runRemote("t", exec.Command("sh", "-c", "echo boom >&2; exit 255"), 0)
 	if err != nil || res.ExitCode != 255 {
 		t.Fatalf("exit 255: %+v %v", res, err)
@@ -50,7 +77,7 @@ func TestRunRemoteExitCodes(t *testing.T) {
 	if ae := asAppErr(t, sshFailed("t", res)); ae.Kind != KindBadGateway {
 		t.Fatalf("sshFailed kind %v", ae.Kind)
 	}
-	if err := sshFailed("t", &CmdResult{ExitCode: 1}); err != nil {
+	if err := sshFailed("t", &ExecResult{ExitCode: 1}); err != nil {
 		t.Fatalf("sshFailed(1) = %v", err)
 	}
 	start := time.Now()
@@ -137,7 +164,7 @@ func TestMachinePlaybookGuards(t *testing.T) {
 		func() error { _, err := s.GetMachine(context.Background(), "nuc1"); return err },
 		func() error { _, err := s.RebootMachine(context.Background(), "nuc1"); return err },
 		func() error {
-			_, err := s.RunMachineCommand(context.Background(), "nuc1", []string{"true"})
+			_, err := s.ExecMachine(context.Background(), "nuc1", []string{"true"})
 			return err
 		},
 		func() error { _, err := s.MachineSSHCmd("nuc1"); return err },

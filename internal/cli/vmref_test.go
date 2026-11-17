@@ -20,7 +20,7 @@ var vmCommands = map[string][]string{
 	"delete":       nil,
 	"info":         nil,
 	"ssh":          nil,
-	"cmd":          {"true"},
+	"exec":         {"true"},
 	"reboot":       nil,
 	"autostart":    {"on"},
 	"playbook":     {"x.yml"},
@@ -80,5 +80,34 @@ func TestMachinesCommandsGone(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "unknown command") {
 			t.Errorf("%v: err = %v, want unknown command", args, err)
 		}
+	}
+}
+
+// `cmd` became `exec` (API 2.0.0), with no alias, for VMs and machines.
+func TestCmdBecameExec(t *testing.T) {
+	t.Setenv("VMTOOL_TOKEN", "")
+	var out, errw bytes.Buffer
+	root, _ := rootFor(t.TempDir(), &out, &errw)
+	root.SetArgs([]string{"cmd", "jetfire/web", "true"})
+	if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "unknown command") {
+		t.Errorf("cmd: err = %v, want unknown command", err)
+	}
+	// metal has no Run of its own: look for the subcommand instead.
+	root, _ = rootFor(t.TempDir(), nil, nil)
+	if mc, _, _ := root.Find([]string{"metal"}); mc != nil {
+		for _, sub := range mc.Commands() {
+			if sub.Name() == "cmd" {
+				t.Error("metal cmd still exists")
+			}
+		}
+	}
+	c, _, err := root.Find([]string{"exec"})
+	if err != nil || !strings.HasPrefix(c.Use, "exec <host/name> [--] <arg>...") ||
+		!strings.Contains(c.Long, `vmtool exec jetfire/web -- sh -c 'echo hi | wc -c'`) {
+		t.Fatalf("exec: %v %q", err, c.Use)
+	}
+	m, _, err := root.Find([]string{"metal", "exec"})
+	if err != nil || !strings.HasPrefix(m.Use, "exec <name> [--] <arg>...") {
+		t.Fatalf("metal exec: %v %q", err, m.Use)
 	}
 }
