@@ -33,9 +33,23 @@ type ImageStore interface {
 	UploadImage(ctx context.Context, name string, r io.Reader, size int64, sha256 string, progress func(sent int64)) error
 }
 
+// ForeignImageHint says how to get past a foreign image.
+const ForeignImageHint = "vmtool never replaces a file it did not create; copy your image under another name (e.g. <name>-vmtool.qcow2) and create from that"
+
 // foreignImageErr is the refusal for an image a host did not create.
 func foreignImageErr(name, host, path string) error {
-	return conflict("create", fmt.Errorf("image %q already exists on %s at %s; vmtool did not create it and will not replace it", name, host, path))
+	return conflict("create", fmt.Errorf("image %q already exists on %s at %s; vmtool did not create it and will not replace it: %s", name, host, path, ForeignImageHint))
+}
+
+// FindLocalImage finds name in m's pools. On the workstation (refresh true)
+// a miss refreshes the active pools once and looks again; a hypervisor
+// daemon (refresh false) never refreshes pools it does not own.
+func FindLocalImage(m Manager, refresh bool, name string) (string, error) {
+	var fn func() error
+	if r, ok := m.(interface{ RefreshPools() error }); ok && refresh {
+		fn = r.RefreshPools
+	}
+	return vmtool.FindImage(name, m.ImagePath, fn)
 }
 
 // uploadStep is how often upload progress is reported: every 1% of the

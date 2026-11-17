@@ -97,7 +97,7 @@ func badImageName(name string) string {
 }
 
 func foreignMsg(name, host, path string) string {
-	return fmt.Sprintf("image %q already exists on %s at %s; vmtool did not create it and will not replace it", name, host, path)
+	return fmt.Sprintf("image %q already exists on %s at %s; vmtool did not create it and will not replace it: %s", name, host, path, app.ForeignImageHint)
 }
 
 // cachePoolDir is the vmtool pool's directory on host. There is no fallback

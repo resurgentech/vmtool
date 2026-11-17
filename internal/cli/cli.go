@@ -291,7 +291,7 @@ func (e *env) localImages(name string) (string, error) {
 		return "", err
 	}
 	defer release()
-	return m.ImagePath(name)
+	return app.FindLocalImage(m, e.cfg == nil || e.cfg.Role != config.RoleHypervisor, name)
 }
 
 // uploadProgress renders create's image-upload events on stderr as one

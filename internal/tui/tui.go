@@ -345,7 +345,8 @@ func (m model) svc() *app.Service {
 	s := &app.Service{PlaybookDir: m.playbookDir, InventoryPath: m.inventoryPath, HostNames: m.hostNames}
 	if local := m.manager; local != nil {
 		// create on a remote host uploads the image from this host's pools.
-		s.LocalImages = local.ImagePath
+		// The TUI is a workstation tool: a miss refreshes the pools once.
+		s.LocalImages = func(name string) (string, error) { return app.FindLocalImage(local, true, name) }
 	}
 	return s.WithTunnel(m.tunnel)
 }

@@ -40,7 +40,7 @@ func (s *Server) Handler() http.Handler {
 			HostNames:   r.AllNames(),
 			// createVM on a remote host uploads the image from this
 			// machine's own pools.
-			LocalImages: localImages(r),
+			LocalImages: localImages(r, s.Config == nil || s.Config.Role != config.RoleHypervisor),
 		},
 		listen: s.Listen,
 		hosts:  r,
@@ -60,14 +60,14 @@ func (s *Server) Handler() http.Handler {
 
 // localImages finds an image in the local host's libvirt pools, opening the
 // local Manager for the lookup only.
-func localImages(r *hosts.Resolver) func(string) (string, error) {
+func localImages(r *hosts.Resolver, workstation bool) func(string) (string, error) {
 	return func(name string) (string, error) {
 		m, done, err := r.Resolve(r.Local())
 		if err != nil {
 			return "", err
 		}
 		defer done()
-		return m.ImagePath(name)
+		return app.FindLocalImage(m, workstation, name)
 	}
 }
 

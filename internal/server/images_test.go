@@ -342,7 +342,7 @@ func TestUploadImageForeignFile(t *testing.T) {
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("PUT: %d %s", rec.Code, rec.Body)
 	}
-	want := fmt.Sprintf("image %q already exists on hv1 at %s; vmtool did not create it and will not replace it", "ubuntu.qcow2", foreign)
+	want := fmt.Sprintf("image %q already exists on hv1 at %s; vmtool did not create it and will not replace it: %s", "ubuntu.qcow2", foreign, app.ForeignImageHint)
 	if got := errText(t, rec); got != want {
 		t.Errorf("error %q\nwant %q", got, want)
 	}
@@ -984,7 +984,7 @@ func TestCreateVMForeignImageStops(t *testing.T) {
 	if !app.AsError(err, &ae) || ae.Kind != app.KindConflict {
 		t.Fatalf("err = %v, want a conflict", err)
 	}
-	want := fmt.Sprintf("image %q already exists on veritech01 at %s; vmtool did not create it and will not replace it", "ubuntu.qcow2", foreign)
+	want := fmt.Sprintf("image %q already exists on veritech01 at %s; vmtool did not create it and will not replace it: %s", "ubuntu.qcow2", foreign, app.ForeignImageHint)
 	if !strings.Contains(err.Error(), want) {
 		t.Errorf("err %q\nwant it to contain %q", err, want)
 	}

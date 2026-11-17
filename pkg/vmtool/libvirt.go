@@ -1056,6 +1056,42 @@ func (m *Manager) ImagePath(name string) (string, error) {
 	return "", fmt.Errorf("image %q not found in any storage pool: %w", name, ErrNotFound)
 }
 
+// FindImage looks an image up with look; when no pool has it, it calls
+// refresh once and looks again, so a file dropped into a pool behind
+// libvirt's back is seen before "not found" is reported. A failed refresh
+// leaves the not-found answer; any other lookup error is returned as is.
+func FindImage(name string, look func(string) (string, error), refresh func() error) (string, error) {
+	p, err := look(name)
+	if err == nil || !IsNotFound(err) || refresh == nil {
+		return p, err
+	}
+	if rerr := refresh(); rerr != nil {
+		return "", err
+	}
+	return look(name)
+}
+
+// RefreshPools rescans every active storage pool. Only the workstation calls
+// it (to find its own images): a hypervisor daemon never refreshes pools it
+// does not own.
+func (m *Manager) RefreshPools() error {
+	pools, err := m.conn.ListAllStoragePools(0)
+	if err != nil {
+		return fmt.Errorf("listing storage pools: %w", err)
+	}
+	var first error
+	for _, pool := range pools {
+		if active, _ := pool.IsActive(); active {
+			if err := pool.Refresh(0); err != nil && first == nil {
+				name, _ := pool.GetName()
+				first = fmt.Errorf("refreshing pool %q: %w", name, err)
+			}
+		}
+		pool.Free()
+	}
+	return first
+}
+
 // PoolInfo holds metadata about a storage pool.
 type PoolInfo struct {
 	Name   string `json:"name"`

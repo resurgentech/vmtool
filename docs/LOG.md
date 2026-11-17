@@ -269,3 +269,14 @@ are appended, never edited in; a hook refuses rewrites.
   went stale on the rolling URL. New shape check
   `check_rolling_url_checksum`. Details in `packer_images/docs/LOG.md`.
 - Commits: the C15 commit on `clone-identity`.
+
+## 2026-11-17 — C8 Image lookup refreshes before "not found"; foreign refusal says how to get past it
+
+- On the workstation (CLI, TUI, workstation `vmtool server`), a create
+  that finds its image in no pool refreshes the active pools once
+  (`Manager.RefreshPools`) and looks again (`vmtool.FindImage`,
+  `app.FindLocalImage`). A hypervisor daemon never refreshes pools it
+  does not own. The foreign-image refusal (app and daemon) now ends
+  with `app.ForeignImageHint`: copy the image under another name
+  (e.g. `<name>-vmtool.qcow2`) and create from that.
+- Commits: the C8 commit on `clone-identity`.
