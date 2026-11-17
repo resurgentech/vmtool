@@ -150,3 +150,20 @@ rewrites.
 - A BIOS image created with the default firmware does not boot (OVMF:
   "No bootable option or device was found"), as expected.
 - Both clones deleted.
+
+## 2026-11-16 — C14 Images ship without the installer's `127.0.1.1` line
+
+- All seven templates' last provisioner now runs
+  `sudo sed -i '/^127[.]0[.]1[.]1[[:space:]]/d' /etc/hosts` as the line
+  just before `cloud-init clean --machine-id --logs` (still last). It
+  drops the installer's `127.0.1.1 <image>` line found in the B0 pilot,
+  so a clone's first boot writes the only `127.0.1.1` line, naming the
+  VM; the localhost and IPv6 lines stay. `ubuntu2404_aws` gets it too
+  (a no-op if its image has no such line).
+- `just check` gains `check_no_installer_hosts_line`: fails a template
+  whose last provisioner lacks that exact line or has it after
+  `cloud-init clean`. Red for all seven before the edit, green after.
+- `CLAUDE.md` "Clean first boot" lists the delete in the last
+  provisioner's order, says why, and names the new check failure.
+- Not built: B (all seven builds) proves it, including the aws image.
+- Commits: the C14 commit on `clone-identity` (vmtool repo).

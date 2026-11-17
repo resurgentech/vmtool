@@ -253,3 +253,11 @@ are appended, never edited in; a hook refuses rewrites.
   Decided by the user: playbook output was never scrubbed, and the
   replacement also hid ordinary words equal to the password.
 - Commits: follow-up commit on `clone-identity`.
+
+## 2026-11-16 — C14 Images ship without the installer's `127.0.1.1` line
+
+- `packer_images`: every template deletes `/etc/hosts`' `127.0.1.1`
+  lines just before `cloud-init clean`, so a clone's `127.0.1.1` line
+  names only the VM, not the image too (B0 finding). New shape check
+  `check_no_installer_hosts_line`. Details in `packer_images/docs/LOG.md`.
+- Commits: the C14 commit on `clone-identity`.

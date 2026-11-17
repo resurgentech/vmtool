@@ -87,6 +87,7 @@ build {
       "if ! sudo test -e /boot/efi/EFI/BOOT/BOOTX64.EFI; then sudo grub-install --target=x86_64-efi --efi-directory=/boot/efi --removable --no-nvram; fi",
       "sudo apt-get clean",
       "sudo rm -f /root/.bash_history",
+      "sudo sed -i '/^127[.]0[.]1[.]1[[:space:]]/d' /etc/hosts",
       "sudo cloud-init clean --machine-id --logs",
     ]
   }

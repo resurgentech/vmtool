@@ -93,6 +93,20 @@ check:
             || fail "$1" "cloud-init clean --machine-id is not the last inline line"
     }
 
+    # C14: the image ships no 127.0.1.1 line. The installer's names the image,
+    # and cloud-init (manage_etc_hosts: localhost) appends its own beside it
+    # instead of replacing it. The delete runs before cloud-init clean.
+    check_no_installer_hosts_line() {
+        local last pre
+        local line="sudo sed -i '/^127[.]0[.]1[.]1[[:space:]]/d' /etc/hosts"
+        last="$(last_provisioner "{{ images }}/$1/template.pkr.hcl")"
+        [[ "$last" == *"\"$line\""* ]] \
+            || { fail "$1" "last provisioner lacks the /etc/hosts 127.0.1.1 delete"; return; }
+        pre="${last%%cloud-init clean*}"
+        [[ "$pre" == *"\"$line\""* ]] \
+            || fail "$1" "the /etc/hosts 127.0.1.1 delete is not before cloud-init clean"
+    }
+
     check_vmtool_cfg() {
         local f="{{ images }}/$1/template.pkr.hcl"
         grep -q 'files/99-vmtool.cfg' "$f" \
@@ -139,7 +153,7 @@ check:
         shape_failures+=("files/99-wildcard.yaml is missing")
     fi
 
-    shape_checks=(check_efi_boot check_fallback_loader check_clean_for_cloud_init check_vmtool_cfg check_cloud_init_not_disabled check_netplan_shared)
+    shape_checks=(check_efi_boot check_fallback_loader check_clean_for_cloud_init check_no_installer_hosts_line check_vmtool_cfg check_cloud_init_not_disabled check_netplan_shared)
 
     for dir in "{{ images }}"/*/; do
         t="$(basename "$dir")"
