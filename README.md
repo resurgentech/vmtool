@@ -169,6 +169,53 @@ just install        # build, cert, config.yml, systemd unit (vmtool server over 
 ./vmtool server                                         # HTTPS REST on 127.0.0.1:9473; GET / is Swagger UI
 ```
 
+### VM identity at create
+
+Every new VM gets a random UUID and an SMBIOS serial
+`ds=nocloud;h=<hostname>;i=<uuid>`, made on the host that defines the domain.
+`<hostname>` is the VM name with `_` turned into `-`, cut to 63 characters.
+A cloud-init guest reads the serial as its NoCloud datasource and instance id,
+so each clone of a base image takes its own name, keys and machine-id.
+
+Images without cloud-init, or with it still disabled (older `packer_images`
+builds whose last step was not `cloud-init clean --machine-id`), ignore the
+serial: nothing changes for them.
+
+`--noclone` gets the same serial. Booting a cleaned base image in place uses up
+its first boot: it takes this VM's name, keys and machine-id, and so would
+every later clone of it. Before shutting the guest down, run
+`sudo cloud-init clean --machine-id` in it to make the image fresh again.
+`--noclone` stays allowed.
+
+### Firmware (UEFI by default)
+
+New VMs boot with UEFI (OVMF, secure boot off): libvirt picks the firmware and
+makes a per-VM NVRAM file, which `delete` removes with the VM. An image that
+was installed for BIOS does not boot under UEFI: create it with
+`vmtool create --firmware bios host/name image` (the TUI create form has a
+Firmware field). There is no detection; you name `bios`. If `create` times out
+waiting for an address on a UEFI VM, the error says so.
+
+A host without OVMF refuses a UEFI create with `UEFI firmware (OVMF) is not
+installed on <host>`: install it (`just prereqs <host>`) or create with
+`--firmware bios`. `GET` VM (`vmtool` API) reports `firmware` (`efi` or
+`bios`). Existing VMs are not changed.
+
+### Disk cache (`unsafe` by default)
+
+A clone that vmtool creates gets `cache='unsafe'` on its disk driver, so guest
+writes are fast. `unsafe` keeps guest writes that the guest believes are
+flushed in host memory; a host crash or power loss can corrupt the VM's disk.
+Pick `none` for a VM whose data matters:
+`vmtool create --disk-cache none host/name image` (modes: `none`, `writeback`,
+`writethrough`, `unsafe`; the TUI create form has a Disk cache field).
+
+`--noclone` gets no cache attribute (the hypervisor's default) unless you name
+a mode: `unsafe` on a base image would risk the image itself. Extra disks, and
+disks added later by `add-disk`, take the mode of the VM's boot disk
+(`vda`); `migrate-disk` keeps it. Existing VMs are not changed. `GET` VM
+reports `disk_cache`; `vmtool list` is unchanged.
+
 ## Metal and alien machines
 
 vmtool can also drive machines its libvirt does not manage: **metal** (physical

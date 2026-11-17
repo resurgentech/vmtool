@@ -265,6 +265,23 @@ func vmConfigFromDefine(name string, b *api.DefineVMRequest) (vmtool.VMConfig, e
 		Noclone:         derefBool(b.Noclone),
 		ExtraDiskSizeGB: uint(derefInt0(b.ExtraDiskSizeGb)),
 		ExtraDiskPool:   derefStr(b.ExtraDiskPool),
+		// A client that omits firmware (an older workstation) gets the
+		// default, efi.
+		Firmware: vmtool.FirmwareEFI,
+	}
+	if b.Firmware != nil {
+		cfg.Firmware = string(*b.Firmware)
+		if cfg.Firmware != vmtool.FirmwareEFI && cfg.Firmware != vmtool.FirmwareBIOS {
+			return zero, fmt.Errorf("firmware %q must be efi or bios", cfg.Firmware)
+		}
+	}
+	if b.DiskCache != nil {
+		// No default here: omitted is no cache attribute (the workstation's
+		// app resolved the default and sends it).
+		cfg.DiskCache = string(*b.DiskCache)
+		if !vmtool.ValidDiskCache(cfg.DiskCache) {
+			return zero, fmt.Errorf("disk_cache %q must be none, writeback, writethrough or unsafe", cfg.DiskCache)
+		}
 	}
 	n := b.Network
 	switch n.Type {

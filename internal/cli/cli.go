@@ -354,6 +354,8 @@ func createCmd(e *env) *cobra.Command {
 		extraDiskSizeGB uint
 		extraDiskPool   string
 		extraVars       []string
+		firmware        string
+		diskCache       string
 	)
 
 	cmd := &cobra.Command{
@@ -364,6 +366,18 @@ func createCmd(e *env) *cobra.Command {
 By default the image is cloned so the original is unchanged.
 Use --noclone to boot directly from the image; any changes (e.g. package
 upgrades) will be written back to the source image.
+
+--noclone gets the same SMBIOS serial as a clone, so a cloud-init image boots
+in place as this VM: it uses up the image's first boot (name, keys and
+machine-id), and every later clone of it would inherit them. Run
+'sudo cloud-init clean --machine-id' in the guest before shutdown to remedy.
+
+A clone gets disk cache mode 'unsafe' unless --disk-cache names another
+(none, writeback, writethrough). unsafe keeps guest writes that the guest
+believes are flushed in host memory; a host crash or power loss can corrupt
+the VM's disk. Pick --disk-cache none for a VM whose data matters. --noclone
+gets no cache attribute unless a mode is named. Extra disks, and disks added
+later by add-disk, take the VM's boot-disk mode.
 
   vmtool create jetfire/web ubuntu-24.04.qcow2`,
 		Args: cobra.ExactArgs(2),
@@ -387,6 +401,8 @@ upgrades) will be written back to the source image.
 				SSHPass:         sshPass,
 				Playbook:        playbook,
 				Noclone:         noclone,
+				Firmware:        firmware,
+				DiskCache:       diskCache,
 				ExtraDiskSizeGB: extraDiskSizeGB,
 				ExtraDiskPool:   extraDiskPool,
 				ExtraVars:       extra,
@@ -423,7 +439,9 @@ upgrades) will be written back to the source image.
 	cmd.Flags().StringVar(&inventory, "inventory", "ansible/inventory.yml", "path to write Ansible inventory file")
 	cmd.Flags().StringVar(&playbook, "playbook", "", "playbook name under ansible/playbooks, or a path")
 	cmd.Flags().StringVar(&pool, "pool", "", "storage pool for the cloned disk (default: the host's default pool: \"default\" on a workstation, \"vmtool\" on a hypervisor)")
-	cmd.Flags().BoolVar(&noclone, "noclone", false, "boot directly from the image without cloning (changes persist to source)")
+	cmd.Flags().BoolVar(&noclone, "noclone", false, "boot directly from the image without cloning (changes persist to source; uses up the image's cloud-init first boot, run 'sudo cloud-init clean --machine-id' in the guest before shutdown)")
+	cmd.Flags().StringVar(&firmware, "firmware", "", "guest firmware: efi (UEFI, default) or bios. An image installed for BIOS needs --firmware bios")
+	cmd.Flags().StringVar(&diskCache, "disk-cache", "", "disk cache mode: none, writeback, writethrough or unsafe (default unsafe for a clone, the hypervisor's default with --noclone). unsafe keeps guest writes the guest believes are flushed in host memory; a host crash or power loss can corrupt the VM's disk. Pick none for a VM whose data matters")
 	cmd.Flags().UintVar(&extraDiskSizeGB, "extra-disk-size", 0, "create a second empty virtio disk (vdb) named <name>-2.qcow2")
 	cmd.Flags().StringVar(&extraDiskPool, "extra-disk-pool", "", "storage pool for the extra disk (default: same as --pool)")
 	cmd.Flags().StringArrayVar(&extraVars, "extra-var", nil, "ansible extra-var key=value for --playbook (repeatable). deviceid defaults to the VM name")

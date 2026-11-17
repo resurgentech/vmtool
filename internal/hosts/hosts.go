@@ -85,7 +85,7 @@ func New(cfg *config.Config, opts ...remote.Option) *Resolver {
 	if role == "" {
 		role = config.RoleWorkstation
 	}
-	r := NewWith(name, role, others, libvirtLocal)
+	r := NewWith(name, role, others, libvirtLocalNamed(name))
 	if cfg != nil && cfg.TLSCert != "" {
 		r = r.WithLocalCert(cfg.Path(cfg.TLSCert))
 	}
@@ -132,12 +132,18 @@ func (r *Resolver) WithToken(token string) *Resolver {
 	return &c
 }
 
-func libvirtLocal() (app.Manager, func(), error) {
-	m, err := vmtool.NewManager()
-	if err != nil {
-		return nil, nil, err
+// libvirtLocalNamed connects to local libvirt; the Manager knows the name
+// this server calls itself, for errors that tell the user what to run on it
+// (no OVMF installed).
+func libvirtLocalNamed(name string) Connector {
+	return func() (app.Manager, func(), error) {
+		m, err := vmtool.NewManager()
+		if err != nil {
+			return nil, nil, err
+		}
+		m.SetHostName(name)
+		return m, func() { m.Close() }, nil
 	}
-	return m, func() { m.Close() }, nil
 }
 
 // Local is the name this server calls itself.

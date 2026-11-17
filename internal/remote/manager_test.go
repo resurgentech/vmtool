@@ -316,12 +316,19 @@ func TestDefineSendsNoCredentials(t *testing.T) {
 	m := f.manager(t)
 	cfg := vmtool.DefaultConfig("web", "/pool/web.qcow2")
 	cfg.SSHUser, cfg.SSHPass = "guest-user-x", "guest-pass-y"
+	cfg.DiskCache = "unsafe"
 	if err := m.Define(cfg); err != nil {
 		t.Fatal(err)
 	}
 	body, _ := got.Load().(string)
+	if !strings.Contains(body, `"disk_cache":"unsafe"`) {
+		t.Errorf("define body %s lacks disk_cache", body)
+	}
 	if !strings.Contains(body, `"disk_path":"/pool/web.qcow2"`) {
 		t.Errorf("define body %s", body)
+	}
+	if !strings.Contains(body, `"firmware":"efi"`) {
+		t.Errorf("define body %s lacks the explicit default firmware", body)
 	}
 	for _, s := range []string{"guest-user-x", "guest-pass-y", "ssh"} {
 		if strings.Contains(body, s) {

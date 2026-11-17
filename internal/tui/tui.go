@@ -79,6 +79,8 @@ const (
 	fSSHPass
 	fPlaybook
 	fNoclone
+	fFirmware
+	fDiskCache
 	numCreateFields
 )
 
@@ -713,6 +715,10 @@ func (m model) enterCreateMode() (tea.Model, tea.Cmd) {
 		{label: "SSH pass", def: "packer", kind: fieldText},
 		{label: "Playbook", kind: fieldSelect, options: pbOptions},
 		{label: "Noclone", kind: fieldSelect, options: []string{"false", "true"}},
+		{label: "Firmware", kind: fieldSelect, options: []string{"efi", "bios"}},
+		// default: unsafe for a clone, none named for --noclone (resolved in app).
+		// unsafe can corrupt the disk on a host crash or power loss.
+		{label: "Disk cache", kind: fieldSelect, options: []string{"default", "none", "writeback", "writethrough", "unsafe"}},
 	}
 
 	values := make([]string, len(fields))
@@ -973,10 +979,20 @@ func (m model) createInput() (in app.CreateVMInput, ok bool, err error) {
 		SSHPass:         strings.TrimSpace(m.formValues[fSSHPass]),
 		Playbook:        playbookName,
 		Noclone:         m.formValues[fNoclone] == "true",
+		Firmware:        m.formValues[fFirmware],
+		DiskCache:       diskCacheChoice(m.formValues[fDiskCache]),
 		ExtraDiskSizeGB: extraDiskSizeGB,
 	}
 
 	return in, true, nil
+}
+
+// diskCacheChoice maps the form's "default" to "" (the app resolves it).
+func diskCacheChoice(v string) string {
+	if v == "default" {
+		return ""
+	}
+	return v
 }
 
 // --- Bridge creation mode ---

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 func extraVarArgs(extraVars map[string]string) []string {
@@ -100,17 +101,65 @@ func ansibleEnv(t Tunnel) []string {
 	))
 }
 
-// growDiskCommand runs in the guest under /bin/sh. resize2fs only handles
-// ext2/3/4; btrfs is resized online through its mount point.
-const growDiskCommand = `growpart /dev/vda 2 && case "$(findmnt -n -o FSTYPE /)" in ` +
+// growDiskCommand runs in the guest under /bin/sh (ansible's shell module,
+// with --become, so as root). It finds the root partition instead of assuming
+// one: the source from `findmnt -n -o SOURCE /` (a btrfs "[/subvol]" suffix
+// stripped), its number from <sysblock>/<part>/partition, its disk from
+// `lsblk -no PKNAME`. If any of that cannot be resolved (LVM, a whole-disk
+// filesystem) it fails with a message rather than guessing.
+//
+// growpart's output is always printed. Exit 1 with NOCHANGE in the output
+// means the partition is already full size (cloud-init got there first) and is
+// success; any other nonzero exit fails. The filesystem step then runs either
+// way: resize2fs only handles ext2/3/4, btrfs is resized online through its
+// mount point, and both are no-ops on a full filesystem.
+//
+// <sysblock> is ${VMTOOL_SYSBLOCK:-/sys/class/block}; the variable exists so
+// tests can point it at a temp dir and is never set in the guest.
+const growDiskCommand = `src=$(findmnt -n -o SOURCE /); src=${src%%\[*}; part=${src##*/}; ` +
+	`sb=${VMTOOL_SYSBLOCK:-/sys/class/block}; ` +
+	`num=$(cat "$sb/$part/partition" 2>/dev/null); ` +
+	`disk=$(lsblk -no PKNAME "$src" 2>/dev/null | head -n 1); ` +
+	`if [ -z "$part" ] || [ -z "$num" ] || [ -z "$disk" ]; then ` +
+	`echo "vmtool grow: cannot find root partition (findmnt source: '$src')" >&2; exit 1; fi; ` +
+	`out=$(growpart "/dev/$disk" "$num" 2>&1); rc=$?; printf '%s\n' "$out"; ` +
+	`if [ "$rc" -ne 0 ]; then case "$out" in ` +
+	`*NOCHANGE*) [ "$rc" -eq 1 ] || exit "$rc" ;; *) exit "$rc" ;; esac; fi; ` +
+	`case "$(findmnt -n -o FSTYPE /)" in ` +
 	`btrfs) btrfs filesystem resize max / ;; ` +
-	`*) resize2fs /dev/vda2 ;; esac`
+	`*) resize2fs "$src" ;; esac`
 
-// GrowDisk expands the root partition and filesystem to fill the disk.
-// Assumes the packer_images layout: root is /dev/vda2, ext4 or btrfs.
-func GrowDisk(t Tunnel, inventoryPath string) error {
-	if _, err := RunCommand(t, inventoryPath, growDiskCommand); err != nil {
-		return fmt.Errorf("growing disk: %w", err)
+// GrowDisk expands the root partition and filesystem to fill the disk. The
+// root partition is found in the guest (see growDiskCommand); ext4 and btrfs
+// are handled, and a partition that is already full size is success.
+// It returns ansible's combined output, on failure too, so the caller can
+// show why. Callers do not retry it blindly.
+func GrowDisk(t Tunnel, inventoryPath string) (string, error) {
+	out, err := RunCommand(t, inventoryPath, growDiskCommand)
+	if err != nil {
+		return out, fmt.Errorf("growing disk: %w", err)
 	}
-	return nil
+	return out, nil
+}
+
+// WaitSSH blocks until ansible can reach the guest over SSH, for at most
+// timeout (`ansible all -m wait_for_connection -a timeout=<seconds>`). It uses
+// the same Tunnel environment and inventory as GrowDisk and returns ansible's
+// combined output, on failure too.
+func WaitSSH(t Tunnel, inventoryPath string, timeout time.Duration) (string, error) {
+	secs := int(timeout / time.Second)
+	if secs < 1 {
+		secs = 1
+	}
+	cmd := exec.Command("ansible", "all",
+		"--inventory", inventoryPath,
+		"--module-name", "wait_for_connection",
+		"--args", fmt.Sprintf("timeout=%d", secs),
+	)
+	cmd.Env = ansibleEnv(t)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return string(out), fmt.Errorf("waiting for SSH: %w", err)
+	}
+	return string(out), nil
 }

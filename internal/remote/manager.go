@@ -257,7 +257,7 @@ func (m *Manager) waitTimeout(wait time.Duration) time.Duration {
 }
 
 func fromAPI(v api.VMInfo) vmtool.VMInfo {
-	return vmtool.VMInfo{
+	out := vmtool.VMInfo{
 		Name:      v.Name,
 		State:     vmtool.VMState(v.State),
 		VCPUs:     uint(max(v.Vcpus, 0)),
@@ -265,6 +265,21 @@ func fromAPI(v api.VMInfo) vmtool.VMInfo {
 		IP:        v.Ip,
 		Autostart: v.Autostart,
 	}
+	if v.Firmware != nil {
+		out.Firmware = string(*v.Firmware)
+	}
+	if v.DiskCache != nil {
+		out.DiskCache = string(*v.DiskCache)
+	}
+	return out
+}
+
+// firmwareOrEFI maps an unset VMConfig.Firmware to the default, efi.
+func firmwareOrEFI(s string) string {
+	if s == "" {
+		return vmtool.FirmwareEFI
+	}
+	return s
 }
 
 func ptr[T any](v T) *T { return &v }
@@ -503,9 +518,14 @@ func (m *Manager) Define(cfg vmtool.VMConfig) error {
 		Network:         api.NetworkConfig{Type: netType, Source: nonEmpty(cfg.Network.Source)},
 		Pool:            nonEmpty(cfg.Pool),
 		Vcpus:           int(cfg.VCPUs),
+		// Always sent: the daemon defines the domain with exactly this.
+		Firmware: ptr(api.DefineVMRequestFirmware(firmwareOrEFI(cfg.Firmware))),
 	}
 	if cfg.Network.MacvtapMode != "" {
 		body.Network.MacvtapMode = ptr(api.NetworkConfigMacvtapMode(cfg.Network.MacvtapMode))
+	}
+	if cfg.DiskCache != "" {
+		body.DiskCache = ptr(api.DefineVMRequestDiskCache(cfg.DiskCache))
 	}
 	if cfg.Noclone {
 		body.Noclone = ptr(true)

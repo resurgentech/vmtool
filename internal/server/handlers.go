@@ -81,7 +81,7 @@ func toAPI(info *vmtool.VMInfo) api.VMInfo {
 	if info == nil {
 		return api.VMInfo{}
 	}
-	return api.VMInfo{
+	out := api.VMInfo{
 		Name:      info.Name,
 		State:     api.VMInfoState(info.State),
 		Vcpus:     int(info.VCPUs),
@@ -89,6 +89,15 @@ func toAPI(info *vmtool.VMInfo) api.VMInfo {
 		Ip:        info.IP,
 		Autostart: info.Autostart,
 	}
+	if info.DiskCache != "" {
+		dc := api.VMInfoDiskCache(info.DiskCache)
+		out.DiskCache = &dc
+	}
+	if info.Firmware != "" {
+		fw := api.VMInfoFirmware(info.Firmware)
+		out.Firmware = &fw
+	}
+	return out
 }
 
 func apiErr(err error) api.Error {
@@ -196,6 +205,12 @@ func (h *handlers) CreateVM(ctx context.Context, req api.CreateVMRequestObject) 
 	in.SSHPass = derefStr(b.SshPass)
 	in.Playbook = derefStr(b.Playbook)
 	in.Noclone = derefBool(b.Noclone)
+	if b.Firmware != nil {
+		in.Firmware = string(*b.Firmware)
+	}
+	if b.DiskCache != nil {
+		in.DiskCache = string(*b.DiskCache)
+	}
 	if b.ExtraDisk != nil {
 		if b.ExtraDisk.Size < 1 {
 			return api.CreateVM400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: "extra_disk.size must be > 0"}}, nil

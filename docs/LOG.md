@@ -180,3 +180,51 @@ are appended, never edited in; a hook refuses rewrites.
   call; one `ssh -t` / one sudo installs everything as `vmtool`; unit runs
   as `vmtool`; `/version` probed without a token.
 - Commits: 75cec3c
+
+## 2026-11-16 — C1 Resolve a VM's address by its own MAC
+
+- `getIP` reads the domain's MACs and its networks' full lease tables;
+  pure `pickIP` (`pkg/vmtool/ipselect.go`): lease, then agent, then ARP,
+  own MACs only, newest expiry wins, an address whose newest lease is a
+  foreign MAC's is never returned. `Info`, `List`, `WaitForIP` use it.
+- Commits: the tranche-1 commit on `clone-identity` (one commit, all six steps).
+
+## 2026-11-16 — C11 UUID and SMBIOS serial for each new VM
+
+- `Define` fills a random v4 UUID (`prepareDefine`), writes `<uuid>`, the
+  serial `ds=nocloud;h=<name, _→->;i=<uuid>` and `<smbios mode='sysinfo'/>`;
+  `osXML` is the only writer of `<os>`; name XML-escaped. Help/README cover
+  `--noclone` and the `cloud-init clean --machine-id` remedy.
+- Commits: the tranche-1 commit on `clone-identity`.
+
+## 2026-11-16 — U1 UEFI guests; `firmware` on every surface
+
+- Spec `firmware` (efi|bios, default efi) on CreateVMRequest,
+  DefineVMRequest, VMInfo; `--firmware`, TUI field; efi `<os>` with
+  secure boot off; domcaps check before an efi define; NVRAM removed on
+  undefine/delete; `GET` VM returns firmware; create's IP timeout on efi
+  hints `--firmware bios`.
+- Commits: the tranche-1 commit on `clone-identity`.
+
+## 2026-11-16 — C10 Disk cache `unsafe` by default
+
+- Spec `disk_cache` (none|writeback|writethrough|unsafe); app resolves
+  `unsafe` for clones, nothing for `--noclone`; extra and added disks take
+  vda's mode; MigrateDisk keeps it; `GET` VM returns it; `--disk-cache`,
+  TUI field. `xmlAttr` now reads libvirt's double-quoted attributes.
+- Commits: the tranche-1 commit on `clone-identity`.
+
+## 2026-11-16 — C5 Wait for SSH before grow and playbook
+
+- `wait_ssh` stage (`ansible -m wait_for_connection`, 120 s) after
+  `wait_ip` when create grows or runs a playbook; wait and grow errors
+  carry ansible's output (password redacted); no grow retry; resize's
+  `grow_error` includes the output.
+- Commits: the tranche-1 commit on `clone-identity`.
+
+## 2026-11-16 — C12 Grow finds the root partition; NOCHANGE is success
+
+- `growDiskCommand` resolves root via findmnt / sysfs / `lsblk PKNAME`
+  (fails clearly on LVM), growpart exit 1 + NOCHANGE is success, fs step
+  always runs (resize2fs or btrfs resize).
+- Commits: the tranche-1 commit on `clone-identity`.

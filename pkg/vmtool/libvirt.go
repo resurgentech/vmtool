@@ -1,6 +1,8 @@
 package vmtool
 
 import (
+	"crypto/rand"
+	"encoding/xml"
 	"fmt"
 	"net"
 	"os"
@@ -13,7 +15,8 @@ import (
 
 // Manager wraps a libvirt connection and provides VM lifecycle operations.
 type Manager struct {
-	conn *libvirt.Connect
+	conn     *libvirt.Connect
+	hostName string // see SetHostName
 }
 
 // NewManager opens a connection to the local libvirt daemon and ensures
@@ -37,19 +40,24 @@ func (m *Manager) Close() error {
 	return err
 }
 
-// diskXML is a single file-backed virtio disk device fragment.
-func diskXML(path, target string) string {
+// diskXML is a single file-backed virtio disk device fragment. An empty
+// cache writes no cache attribute (the hypervisor's default).
+func diskXML(path, target, cache string) string {
+	attr := ""
+	if cache != "" {
+		attr = fmt.Sprintf(" cache='%s'", xmlEscape(cache))
+	}
 	return fmt.Sprintf(`<disk type='file' device='disk'>
-      <driver name='qemu' type='qcow2'/>
+      <driver name='qemu' type='qcow2'%s/>
       <source file='%s'/>
       <target dev='%s' bus='virtio'/>
-    </disk>`, path, target)
+    </disk>`, attr, path, target)
 }
 
 func disksXML(cfg VMConfig) string {
 	var b strings.Builder
 	b.WriteString("    ")
-	b.WriteString(diskXML(cfg.DiskPath, "vda"))
+	b.WriteString(diskXML(cfg.DiskPath, "vda", cfg.DiskCache))
 	for i, d := range cfg.ExtraDisks {
 		if d.Path == "" {
 			continue
@@ -59,8 +67,69 @@ func disksXML(cfg VMConfig) string {
 			target = fmt.Sprintf("vd%c", 'b'+i)
 		}
 		b.WriteString("\n    ")
-		b.WriteString(diskXML(d.Path, target))
+		b.WriteString(diskXML(d.Path, target, cfg.DiskCache))
 	}
+	return b.String()
+}
+
+// xmlEscape escapes s for use as XML text or inside an attribute value.
+func xmlEscape(s string) string {
+	var b strings.Builder
+	_ = xml.EscapeText(&b, []byte(s))
+	return b.String()
+}
+
+// hostnameFromName turns a VM name into a hostname: "_" becomes "-" (names
+// allowed by ValidMachineName may hold "_", a hostname may not), cut to 63.
+func hostnameFromName(name string) string {
+	h := strings.ReplaceAll(name, "_", "-")
+	if len(h) > 63 {
+		h = h[:63]
+	}
+	return h
+}
+
+// newUUID returns a random (version 4) UUID.
+func newUUID() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	b[6] = b[6]&0x0f | 0x40
+	b[8] = b[8]&0x3f | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:]), nil
+}
+
+// identityXML is the <uuid> and <sysinfo> elements; empty without a UUID.
+// The SMBIOS serial is the cloud-init NoCloud datasource hint.
+func identityXML(cfg VMConfig) string {
+	if cfg.UUID == "" {
+		return ""
+	}
+	return fmt.Sprintf("  <uuid>%s</uuid>\n  <sysinfo type='smbios'><system><entry name='serial'>ds=nocloud;h=%s;i=%s</entry></system></sysinfo>\n",
+		xmlEscape(cfg.UUID), xmlEscape(hostnameFromName(cfg.Name)), xmlEscape(cfg.UUID))
+}
+
+// osXML is the one place the <os> block is written. Order: <type>, <firmware>
+// (efi only), <smbios>, <boot>. With efi libvirt picks OVMF from its firmware
+// descriptors and creates the per-VM NVRAM; secure boot is off.
+func osXML(cfg VMConfig) string {
+	var b strings.Builder
+	efi := firmwareOrDefault(cfg.Firmware) == FirmwareEFI
+	if efi {
+		b.WriteString("  <os firmware='efi'>\n")
+	} else {
+		b.WriteString("  <os>\n")
+	}
+	b.WriteString("    <type arch='x86_64' machine='q35'>hvm</type>\n")
+	if efi {
+		b.WriteString("    <firmware><feature enabled='no' name='secure-boot'/><feature enabled='no' name='enrolled-keys'/></firmware>\n")
+	}
+	if cfg.UUID != "" {
+		b.WriteString("    <smbios mode='sysinfo'/>\n")
+	}
+	b.WriteString("    <boot dev='hd'/>\n")
+	b.WriteString("  </os>\n")
 	return b.String()
 }
 
@@ -68,13 +137,9 @@ func disksXML(cfg VMConfig) string {
 func domainXML(cfg VMConfig) string {
 	return fmt.Sprintf(`<domain type='kvm'>
   <name>%s</name>
-  <memory unit='GiB'>%d</memory>
+%s  <memory unit='GiB'>%d</memory>
   <vcpu>%d</vcpu>
-  <os>
-    <type arch='x86_64' machine='q35'>hvm</type>
-    <boot dev='hd'/>
-  </os>
-  <features>
+%s  <features>
     <acpi/>
     <apic/>
   </features>
@@ -102,13 +167,32 @@ func domainXML(cfg VMConfig) string {
       <backend model='random'>/dev/urandom</backend>
     </rng>
   </devices>
-</domain>`, cfg.Name, cfg.Memory, cfg.VCPUs, disksXML(cfg), networkXML(cfg.Network))
+</domain>`, xmlEscape(cfg.Name), identityXML(cfg), cfg.Memory, cfg.VCPUs, osXML(cfg), disksXML(cfg), networkXML(cfg.Network))
 }
 
-// Define registers a VM with libvirt without starting it.
+// prepareDefine fills a missing UUID and returns the domain XML with the
+// config it was built from. It does not touch libvirt.
+func prepareDefine(cfg VMConfig) (string, VMConfig) {
+	if cfg.UUID == "" {
+		u, err := newUUID()
+		if err != nil {
+			panic(fmt.Sprintf("generating uuid: %v", err)) // crypto/rand failure is unrecoverable
+		}
+		cfg.UUID = u
+	}
+	return domainXML(cfg), cfg
+}
+
+// Define registers a VM with libvirt without starting it. A config with no
+// UUID gets a fresh one, made here, on the host that defines the domain.
 func (m *Manager) Define(cfg VMConfig) error {
-	xml := domainXML(cfg)
-	dom, err := m.conn.DomainDefineXML(xml)
+	if firmwareOrDefault(cfg.Firmware) == FirmwareEFI {
+		if err := m.requireUEFI(); err != nil {
+			return err
+		}
+	}
+	domXML, _ := prepareDefine(cfg)
+	dom, err := m.conn.DomainDefineXML(domXML)
 	if err != nil {
 		return fmt.Errorf("defining domain: %w", err)
 	}
@@ -168,14 +252,15 @@ func (m *Manager) Destroy(name string) error {
 	return dom.Destroy()
 }
 
-// Undefine removes the VM definition from libvirt.
+// Undefine removes the VM definition from libvirt, and its NVRAM file when it
+// has one (a UEFI guest; the flag is harmless for BIOS domains).
 func (m *Manager) Undefine(name string) error {
 	dom, err := m.conn.LookupDomainByName(name)
 	if err != nil {
 		return fmt.Errorf("looking up domain %q: %w", name, err)
 	}
 	defer dom.Free()
-	return dom.Undefine()
+	return dom.UndefineFlags(libvirt.DOMAIN_UNDEFINE_NVRAM)
 }
 
 // CloneImage clones basePath into targetPool under newName.qcow2 and returns the new volume path.
@@ -295,7 +380,7 @@ func (m *Manager) Delete(name string, noclone bool) error {
 		}
 	}
 
-	if err := dom.Undefine(); err != nil {
+	if err := dom.UndefineFlags(libvirt.DOMAIN_UNDEFINE_NVRAM); err != nil {
 		return fmt.Errorf("undefining domain: %w", err)
 	}
 
@@ -357,6 +442,10 @@ func (m *Manager) Info(name string) (*VMInfo, error) {
 	if state == libvirt.DOMAIN_RUNNING {
 		vi.IP, _ = m.getIP(dom)
 	}
+	if xmlDesc, err := dom.GetXMLDesc(0); err == nil {
+		vi.Firmware = domainFirmware(xmlDesc)
+		vi.DiskCache = diskCacheOf(xmlDesc, "vda")
+	}
 
 	return vi, nil
 }
@@ -403,30 +492,61 @@ func (m *Manager) List() ([]VMInfo, error) {
 	return vms, nil
 }
 
-// getIP attempts to retrieve the IP address from a running domain.
-// It tries DHCP leases first (works for libvirt-managed networks), then
-// falls back to ARP (works for bridge/direct-attached interfaces).
+// getIP retrieves the IPv4 address of a running domain by the domain's own
+// MAC address(es), read from its XML. Only an interface or lease row whose
+// MAC is one of the domain's counts. Order: LEASE (the lease tables of the
+// domain's libvirt networks; when a MAC has several rows, as after a
+// machine-id change, the newest expiry wins), then the guest AGENT, then
+// ARP. An address that the lease table assigns to a different MAC is
+// unknown: no address is returned for this domain, whatever the agent or
+// ARP report. The choice is made by pickIP.
 func (m *Manager) getIP(dom *libvirt.Domain) (string, error) {
-	sources := []libvirt.DomainInterfaceAddressesSource{
-		libvirt.DOMAIN_INTERFACE_ADDRESSES_SRC_AGENT,
-		libvirt.DOMAIN_INTERFACE_ADDRESSES_SRC_ARP,
-		libvirt.DOMAIN_INTERFACE_ADDRESSES_SRC_LEASE,
+	domXML, err := dom.GetXMLDesc(0)
+	if err != nil {
+		return "", fmt.Errorf("reading domain XML: %w", err)
 	}
-	for _, src := range sources {
-		ifaces, err := dom.ListAllInterfaceAddresses(src)
+	macs, networks, err := parseDomainNICs(domXML)
+	if err != nil {
+		return "", fmt.Errorf("parsing domain XML: %w", err)
+	}
+
+	var src IPSources
+	for _, name := range networks {
+		n, err := m.conn.LookupNetworkByName(name)
 		if err != nil {
 			continue
 		}
+		leases, err := n.GetDHCPLeases()
+		n.Free()
+		if err != nil {
+			continue
+		}
+		for _, l := range leases {
+			src.Leases = append(src.Leases, LeaseRow{MAC: l.Mac, IP: l.IPaddr, Expiry: l.ExpiryTime})
+		}
+	}
+	collect := func(s libvirt.DomainInterfaceAddressesSource) []IfaceAddr {
+		ifaces, err := dom.ListAllInterfaceAddresses(s)
+		if err != nil {
+			return nil
+		}
+		var out []IfaceAddr
 		for _, iface := range ifaces {
-			if iface.Name == "lo" {
-				continue
-			}
-			for _, addr := range iface.Addrs {
-				if addr.Type == libvirt.IP_ADDR_TYPE_IPV4 && !net.ParseIP(addr.Addr).IsLoopback() {
-					return addr.Addr, nil
+			ia := IfaceAddr{MAC: iface.Hwaddr}
+			for _, a := range iface.Addrs {
+				if a.Type == libvirt.IP_ADDR_TYPE_IPV4 {
+					ia.IPs = append(ia.IPs, a.Addr)
 				}
 			}
+			out = append(out, ia)
 		}
+		return out
+	}
+	src.Agent = collect(libvirt.DOMAIN_INTERFACE_ADDRESSES_SRC_AGENT)
+	src.ARP = collect(libvirt.DOMAIN_INTERFACE_ADDRESSES_SRC_ARP)
+
+	if ip := pickIP(macs, src); ip != "" {
+		return ip, nil
 	}
 	return "", fmt.Errorf("no IPv4 address found")
 }
@@ -619,7 +739,31 @@ func parseFileDisks(xml string) []DiskDevice {
 	return out
 }
 
-// xmlAttr returns attr='…' from the first tag that starts with tagPrefix.
+// diskCacheOf returns the cache mode on the <driver> of the disk with target
+// dev, or "" when the disk is absent or names none.
+func diskCacheOf(domXML, target string) string {
+	rest := domXML
+	for {
+		start := strings.Index(rest, "<disk")
+		if start == -1 {
+			return ""
+		}
+		rest = rest[start:]
+		end := strings.Index(rest, "</disk>")
+		if end == -1 {
+			return ""
+		}
+		block := rest[:end]
+		rest = rest[end+len("</disk>"):]
+		if xmlAttr(block, "<target", "dev") == target {
+			return xmlAttr(block, "<driver", "cache")
+		}
+	}
+}
+
+// xmlAttr returns the value of attr from the first tag that starts with
+// tagPrefix. Both quote styles are accepted: vmtool writes attr='…', but
+// libvirt's GetXMLDesc returns attr="…".
 func xmlAttr(block, tagPrefix, attr string) string {
 	ti := strings.Index(block, tagPrefix)
 	if ti == -1 {
@@ -629,17 +773,20 @@ func xmlAttr(block, tagPrefix, attr string) string {
 	if gt := strings.Index(tag, ">"); gt != -1 {
 		tag = tag[:gt]
 	}
-	marker := attr + "='"
-	si := strings.Index(tag, marker)
-	if si == -1 {
-		return ""
+	for _, q := range []string{"'", `"`} {
+		marker := " " + attr + "=" + q
+		si := strings.Index(tag, marker)
+		if si == -1 {
+			continue
+		}
+		si += len(marker)
+		ei := strings.Index(tag[si:], q)
+		if ei == -1 {
+			return ""
+		}
+		return tag[si : si+ei]
 	}
-	si += len(marker)
-	ei := strings.Index(tag[si:], "'")
-	if ei == -1 {
-		return ""
-	}
-	return tag[si : si+ei]
+	return ""
 }
 
 func nextVirtioTarget(used []string) (string, error) {
@@ -753,6 +900,7 @@ func (m *Manager) AddDisk(name string, sizeGB uint, pool string) (*DiskDevice, e
 	if err != nil {
 		return nil, fmt.Errorf("getting domain XML: %w", err)
 	}
+	cache := diskCacheOf(xmlDesc, "vda") // the new disk takes the boot disk's mode
 	var used []string
 	for _, d := range parseFileDisks(xmlDesc) {
 		used = append(used, d.Target)
@@ -773,7 +921,7 @@ func (m *Manager) AddDisk(name string, sizeGB uint, pool string) (*DiskDevice, e
 		flags |= libvirt.DOMAIN_DEVICE_MODIFY_LIVE
 	}
 
-	if err := dom.AttachDeviceFlags(diskXML(disk.Path, disk.Target), flags); err != nil {
+	if err := dom.AttachDeviceFlags(diskXML(disk.Path, disk.Target, cache), flags); err != nil {
 		_ = m.deleteVolumeByPath(disk.Path)
 		return nil, fmt.Errorf("attaching disk: %w", err)
 	}
@@ -1023,8 +1171,18 @@ func (m *Manager) ResizeDisk(name string, sizeGB uint) error {
 	return nil
 }
 
+// redefineDiskPath swaps the boot disk's source path in domain XML and
+// touches nothing else, so the driver's cache mode carries over.
+func redefineDiskPath(xmlDesc, oldPath, newPath string) string {
+	return strings.Replace(xmlDesc, oldPath, newPath, 1)
+}
+
 // MigrateDisk copies a VM's disk to targetPool, redefines the domain with the new path,
 // and restarts the VM if it was running. The VM is force-stopped during the copy.
+//
+// It redefines in place from GetXMLDesc, so firmware and the NVRAM path carry
+// over. It must never undefine first: that would delete the NVRAM file
+// (UNDEFINE_NVRAM) and a UEFI guest would lose its variables.
 func (m *Manager) MigrateDisk(vmName, targetPool string) error {
 	dom, err := m.conn.LookupDomainByName(vmName)
 	if err != nil {
@@ -1093,7 +1251,7 @@ func (m *Manager) MigrateDisk(vmName, targetPool string) error {
 		return fmt.Errorf("getting new volume path: %w", err)
 	}
 
-	newXML := strings.Replace(xmlDesc, oldPath, newPath, 1)
+	newXML := redefineDiskPath(xmlDesc, oldPath, newPath)
 	if _, err := m.conn.DomainDefineXML(newXML); err != nil {
 		return fmt.Errorf("redefining domain: %w", err)
 	}

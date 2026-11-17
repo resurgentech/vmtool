@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/jaredeh/vmtool/pkg/vmtool"
 )
@@ -127,6 +128,12 @@ func (s *Service) CreateVM(ctx context.Context, m Manager, in CreateVMInput) (*v
 	if in.NetType != "" && in.NetType != "nat" && in.NetType != "bridge" && in.NetType != "direct" {
 		return nil, invalid("create", fmt.Errorf("invalid net_type %q", in.NetType))
 	}
+	if !vmtool.ValidFirmware(in.Firmware) {
+		return nil, invalid("create", fmt.Errorf("invalid firmware %q: want efi or bios", in.Firmware))
+	}
+	if !vmtool.ValidDiskCache(in.DiskCache) {
+		return nil, invalid("create", fmt.Errorf("invalid disk cache %q: want none, writeback, writethrough or unsafe", in.DiskCache))
+	}
 	if vmtool.IsMachine(in.Name) {
 		return nil, conflict("create", fmt.Errorf("%q is registered as a metal/alien machine", in.Name))
 	}
@@ -169,6 +176,15 @@ func (s *Service) CreateVM(ctx context.Context, m Manager, in CreateVMInput) (*v
 		cfg.SSHPass = in.SSHPass
 	}
 	cfg.Noclone = in.Noclone
+	if in.Firmware != "" {
+		cfg.Firmware = in.Firmware // else DefaultConfig's efi
+	}
+	// Resolved here and sent explicitly to Define, so the host never guesses.
+	// unsafe on a --noclone base image would risk the image itself.
+	cfg.DiskCache = in.DiskCache
+	if cfg.DiskCache == "" && !in.Noclone {
+		cfg.DiskCache = vmtool.DiskCacheUnsafe
+	}
 	cfg.ExtraDiskSizeGB = in.ExtraDiskSizeGB
 	cfg.ExtraDiskPool = in.ExtraDiskPool
 
@@ -230,6 +246,9 @@ func (s *Service) CreateVM(ctx context.Context, m Manager, in CreateVMInput) (*v
 		return nil, wrap("create", infoErr)
 	}
 	if ipErr != nil {
+		if cfg.Firmware == vmtool.FirmwareEFI {
+			ipErr = fmt.Errorf("%w; %s", ipErr, vmtool.UEFIHint)
+		}
 		emit(in, "wait_ip", "error", ipErr.Error(), "")
 		if in.DiskSizeGB > 0 || in.Playbook != "" {
 			return info, internal("create", fmt.Errorf("no IP: %w", ipErr))
@@ -252,6 +271,27 @@ func (s *Service) CreateVM(ctx context.Context, m Manager, in CreateVMInput) (*v
 		emit(in, "write_inventory", "done", "inventory written", "")
 	}
 
+	if in.DiskSizeGB > 0 || in.Playbook != "" {
+		// An IP is not sshd: wait for the guest to accept SSH before the
+		// grow and the playbook, which would otherwise fail on a booting VM.
+		emit(in, "wait_ssh", "start", "waiting for SSH", "")
+		invPath, cleanup, err := vmtool.TempVMInventory(s.Tunnel, ref.Host, ref.Name, auth, credsDir)
+		if err != nil {
+			emit(in, "wait_ssh", "error", err.Error(), "")
+			return info, wrap("create", err)
+		}
+		timeout := s.sshTimeout()
+		out, err := vmtool.WaitSSH(s.Tunnel, invPath, timeout)
+		cleanup()
+		out = redact(out, auth.Password)
+		if err != nil {
+			err = fmt.Errorf("%s did not accept SSH within %s: %w", cfg.Name, timeout, err)
+			emit(in, "wait_ssh", "error", err.Error(), out)
+			return info, &Error{Kind: KindInternal, Op: "wait_ssh", Err: err, Output: out}
+		}
+		emit(in, "wait_ssh", "done", "SSH is up", "")
+	}
+
 	if in.DiskSizeGB > 0 {
 		emit(in, "grow_disk", "start", "growing filesystem", "")
 		invPath, cleanup, err := vmtool.TempVMInventory(s.Tunnel, ref.Host, ref.Name, auth, credsDir)
@@ -259,11 +299,12 @@ func (s *Service) CreateVM(ctx context.Context, m Manager, in CreateVMInput) (*v
 			emit(in, "grow_disk", "error", err.Error(), "")
 			return info, wrap("create", err)
 		}
-		err = vmtool.GrowDisk(s.Tunnel, invPath)
+		out, err := vmtool.GrowDisk(s.Tunnel, invPath) // once: no blind retry
 		cleanup()
+		out = redact(out, auth.Password)
 		if err != nil {
-			emit(in, "grow_disk", "error", err.Error(), "")
-			return info, wrap("create", err)
+			emit(in, "grow_disk", "error", err.Error(), out)
+			return info, &Error{Kind: KindInternal, Op: "grow_disk", Err: err, Output: out}
 		}
 		emit(in, "grow_disk", "done", "filesystem grown", "")
 	}
@@ -300,4 +341,14 @@ func (s *Service) CreateVM(ctx context.Context, m Manager, in CreateVMInput) (*v
 		return nil, wrap("create", err)
 	}
 	return info, nil
+}
+
+// redact removes secret from ansible output before it reaches an error or a
+// progress event (rule 3). Ansible does not print vars, but a module's own
+// message could echo one.
+func redact(out, secret string) string {
+	if secret == "" {
+		return out
+	}
+	return strings.ReplaceAll(out, secret, "***")
 }

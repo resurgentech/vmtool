@@ -1145,6 +1145,14 @@ components:
         memory: { type: integer, minimum: 0, description: GiB }
         ip: { type: string }
         autostart: { type: boolean }
+        firmware:
+          type: string
+          enum: [efi, bios]
+          description: Firmware the domain boots with, read from its XML. Omitted by a daemon that predates the field.
+        disk_cache:
+          type: string
+          enum: [none, writeback, writethrough, unsafe]
+          description: Cache mode of the boot disk (vda), read from its XML. Omitted when the disk names none (the hypervisor's default) or by a daemon that predates the field.
     CreateVMRequest:
       type: object
       required: [name, image]
@@ -1153,6 +1161,24 @@ components:
         image: { type: string }
         vcpus: { type: integer, minimum: 1 }
         memory: { type: integer, minimum: 1, description: GiB }
+        firmware:
+          type: string
+          enum: [efi, bios]
+          default: efi
+          description: >
+            Guest firmware. efi = UEFI (OVMF, secure boot off; libvirt makes a
+            per-VM NVRAM file, removed with the VM). bios = legacy BIOS, for
+            an image installed for BIOS. No detection: name bios for such an
+            image.
+        disk_cache:
+          type: string
+          enum: [none, writeback, writethrough, unsafe]
+          description: >
+            Cache mode of the VM's disks. Omitted: unsafe for a clone, no
+            cache attribute (the hypervisor's default) with noclone. unsafe
+            keeps guest writes that the guest believes are flushed in host
+            memory; a host crash or power loss can corrupt the VM's disk. Pick
+            none for a VM whose data matters.
         disk_size: { type: integer, minimum: 0, description: GB }
         pool:
           type: string
@@ -1446,6 +1472,24 @@ components:
         extra_disks:
           type: array
           items: { $ref: '#/components/schemas/DiskDevice' }
+        firmware:
+          type: string
+          enum: [efi, bios]
+          default: efi
+          description: >
+            Guest firmware. efi = UEFI (OVMF, secure boot off; libvirt makes a
+            per-VM NVRAM file, removed with the VM). bios = legacy BIOS, for
+            an image installed for BIOS. No detection: name bios for such an
+            image.
+            Travels explicitly from the workstation; a client that omits it
+            gets efi.
+        disk_cache:
+          type: string
+          enum: [none, writeback, writethrough, unsafe]
+          description: >
+            Cache mode written on every disk driver of the domain. Travels
+            explicitly from the workstation, which resolved the default;
+            omitted means no cache attribute (the daemon does not guess).
     WaitIPRequest:
       type: object
       properties:

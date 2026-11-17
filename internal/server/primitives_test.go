@@ -250,7 +250,7 @@ func TestPrimitiveRoutes(t *testing.T) {
 	extra := filepath.Join(pool, "web-2.qcow2")
 	body := `{"vcpus":2,"memory_gib":4,"disk_path":"` + base + `","disk_size_gb":20,"pool":"default",
 	  "network":{"type":"direct","source":"eth0","macvtap_mode":"vepa"},"noclone":true,
-	  "extra_disk_size_gb":10,"extra_disk_pool":"fast","extra_disks":[{"path":"` + extra + `","target":"vdb"}]}`
+	  "disk_cache":"none","extra_disk_size_gb":10,"extra_disk_pool":"fast","extra_disks":[{"path":"` + extra + `","target":"vdb"}]}`
 	rec = do(h, "PUT", "/v1/hosts/box/vms/web/definition", body)
 	if rec.Code != 204 {
 		t.Fatalf("defineVM: %d %s", rec.Code, rec.Body)
@@ -260,6 +260,8 @@ func TestPrimitiveRoutes(t *testing.T) {
 		Network: vmtool.NetworkConfig{Type: vmtool.NetworkDirect, Source: "eth0", MacvtapMode: vmtool.MacvtapVEPA},
 		Noclone: true, ExtraDiskSizeGB: 10, ExtraDiskPool: "fast",
 		ExtraDisks: []vmtool.DiskDevice{{Path: extra, Target: "vdb"}},
+		Firmware:   vmtool.FirmwareEFI, // omitted in the body: the default
+		DiskCache:  "none",
 	}
 	if !reflect.DeepEqual(fm.defined, want) {
 		t.Errorf("Define got %+v\nwant %+v", fm.defined, want)

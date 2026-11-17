@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/jaredeh/vmtool/pkg/vmtool"
 )
@@ -51,8 +52,14 @@ func (s *Service) ResizeDisk(_ context.Context, m Manager, ref VMRef, sizeGB uin
 		return res, nil
 	}
 	defer cleanup()
-	if err := vmtool.GrowDisk(s.Tunnel, invPath); err != nil {
+	// No wait_ssh here: the VM is already running with an IP, so sshd is
+	// normally up, and a wait would delay the failure report by up to 120s.
+	out, err := vmtool.GrowDisk(s.Tunnel, invPath) // once: no blind retry
+	if err != nil {
 		res.GrowError = err.Error()
+		if out = strings.TrimSpace(redact(out, resolved.Password)); out != "" {
+			res.GrowError += "\n" + out
+		}
 		return res, nil
 	}
 	res.FilesystemGrown = true

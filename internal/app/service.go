@@ -41,6 +41,8 @@ type Service struct {
 	PlaybookDir   string
 	InventoryPath string
 	IPTimeout     time.Duration
+	// SSHTimeout bounds create's wait_ssh stage; zero means 120s.
+	SSHTimeout time.Duration
 	// HostNames are the local host and the configured hosts. Their
 	// .machines/<name>/ directories hold VM credentials, so AddMachine
 	// refuses them as machine names and migration leaves them alone.
@@ -85,6 +87,13 @@ func (s *Service) ipTimeout() time.Duration {
 	return s.IPTimeout
 }
 
+func (s *Service) sshTimeout() time.Duration {
+	if s.SSHTimeout <= 0 {
+		return 120 * time.Second
+	}
+	return s.SSHTimeout
+}
+
 type ProgressFunc func(ProgressEvent)
 
 type ProgressEvent struct {
@@ -99,20 +108,25 @@ type ProgressEvent struct {
 type CreateVMInput struct {
 	// Host is the vmtool host the VM is created on; credentials are kept
 	// under .machines/<Host>/<Name>/. The Manager only sees Name.
-	Host            string
-	Name            string
-	Image           string
-	VCPUs           uint
-	Memory          uint // GiB
-	DiskSizeGB      uint
-	Pool            string
-	NetType         string
-	NetSource       string
-	MacvtapMode     string
-	SSHUser         string
-	SSHPass         string
-	Playbook        string
-	Noclone         bool
+	Host        string
+	Name        string
+	Image       string
+	VCPUs       uint
+	Memory      uint // GiB
+	DiskSizeGB  uint
+	Pool        string
+	NetType     string
+	NetSource   string
+	MacvtapMode string
+	SSHUser     string
+	SSHPass     string
+	Playbook    string
+	Noclone     bool
+	// Firmware is "efi" or "bios"; empty is efi (vmtool.DefaultConfig).
+	Firmware string
+	// DiskCache is "none", "writeback", "writethrough" or "unsafe". Empty:
+	// unsafe for a clone, no cache attribute with Noclone.
+	DiskCache       string
 	ExtraDiskSizeGB uint
 	ExtraDiskPool   string
 	ExtraVars       map[string]string

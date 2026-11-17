@@ -310,6 +310,8 @@ func TestRemoteManagerEveryMethod(t *testing.T) {
 		Network: vmtool.NetworkConfig{Type: vmtool.NetworkDirect, Source: "eno1", MacvtapMode: vmtool.MacvtapMode("vepa")},
 		SSHUser: "secret-user", SSHPass: "secret-pass",
 		Noclone:         true,
+		Firmware:        vmtool.FirmwareBIOS, // travels explicitly to the daemon
+		DiskCache:       "writeback",         // so does the disk cache
 		ExtraDiskSizeGB: 6, ExtraDiskPool: "fast",
 		ExtraDisks: []vmtool.DiskDevice{{Path: filepath.Join(fm.pool, "web-2.qcow2"), Target: "vdb"}},
 	}
@@ -387,6 +389,12 @@ func TestCreateVMOverRemote(t *testing.T) {
 	fm.mu.Lock()
 	d := fm.defined
 	fm.mu.Unlock()
+	if d.DiskCache != "unsafe" {
+		t.Errorf("the daemon defined disk cache %q, want the clone default unsafe sent explicitly", d.DiskCache)
+	}
+	if d.Firmware != vmtool.FirmwareEFI {
+		t.Errorf("the daemon defined firmware %q, want the default efi sent explicitly", d.Firmware)
+	}
 	if d.DiskPath != vol || d.VCPUs != 4 || d.Memory != 8 || d.SSHUser != "" || d.SSHPass != "" ||
 		len(d.ExtraDisks) != 1 || d.ExtraDisks[0] != (vmtool.DiskDevice{Path: filepath.Join(fm.pool, "web-2.qcow2"), Target: "vdb"}) {
 		t.Errorf("defined %+v", d)

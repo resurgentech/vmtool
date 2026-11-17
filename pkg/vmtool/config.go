@@ -47,6 +47,9 @@ type VMConfig struct {
 	SSHUser         string
 	SSHPass         string
 	Noclone         bool
+	UUID            string       // empty: Define generates a v4 UUID on the defining host
+	Firmware        string       // FirmwareEFI or FirmwareBIOS; empty is efi
+	DiskCache       string       // see ValidDiskCache; empty writes no cache attribute (the hypervisor's default)
 	ExtraDiskSizeGB uint         // 0 means no second disk
 	ExtraDiskPool   string       // empty uses Pool
 	ExtraDisks      []DiskDevice // extra disks included in domain XML
@@ -75,8 +78,9 @@ func DefaultConfig(name, diskPath string) VMConfig {
 			Type:   NetworkNAT,
 			Source: "default",
 		},
-		SSHUser: "packer",
-		SSHPass: "packer",
+		SSHUser:  "packer",
+		SSHPass:  "packer",
+		Firmware: FirmwareEFI,
 	}
 }
 
@@ -100,4 +104,9 @@ type VMInfo struct {
 	Memory    uint    `json:"memory"` // GiB
 	IP        string  `json:"ip"`
 	Autostart bool    `json:"autostart"`
+	// Firmware is efi or bios, read from the domain XML by Info; List leaves it empty.
+	Firmware string `json:"firmware,omitempty"`
+	// DiskCache is the cache mode on vda's driver, read from the domain XML by
+	// Info; empty when the disk names none. List leaves it empty.
+	DiskCache string `json:"disk_cache,omitempty"`
 }
