@@ -167,3 +167,39 @@ rewrites.
   provisioner's order, says why, and names the new check failure.
 - Not built: B (all seven builds) proves it, including the aws image.
 - Commits: the C14 commit on `clone-identity` (vmtool repo).
+
+## 2026-11-16 — B, jetfire part: six of seven images rebuilt and checked
+
+- Built with `just generate`: `ubuntu2404` 8 min, `ubuntu2404_gui` 22 min,
+  `ubuntu2604` 7.5 min, `ubuntu2604_btrfs` 9.5 min,
+  `ubuntu2604_btrfs_gui` 24.5 min, `ubuntu2604_gui` 15 min. All include
+  the `/etc/hosts` delete. `boot_wait = "10s"` worked for every one.
+- `ubuntu2404_aws` did not build: the pinned `iso_checksum` no longer
+  matches the rolling `noble/current` cloud image (failed in 17 s,
+  before boot). Its build and checks are still open.
+- Per image, two clones made by vmtool (branch `clone-identity`,
+  defaults; the second with `--disk-size` 20, or 30 for the 20G GUI
+  images): all twelve boot under UEFI with cache `unsafe`; hostname is
+  the VM name; machine-id and instance-id are the domain UUID; host keys
+  and addresses differ; DHCP client id is `01:<mac>`; no `ubuntu` user;
+  packer password login works; the larger disk is filled (ext4 and
+  btrfs) and vmtool's grow step reports success; `/etc/hosts` has
+  exactly one `127.0.1.1` line and it names the VM. After a reboot of
+  one clone per image: identity unchanged, an added `/etc/hosts` line
+  survives, still one `127.0.1.1` line, one lease row per MAC.
+- cloud-init is 25.2 on the 24.04 images and 26.1 on the 26.04 images;
+  both behave the same here.
+- The three GUI images reach the GNOME desktop with the `packer` user
+  logged in (gdm active, screenshot checked).
+- Offline inspection was done for `ubuntu2404` and `ubuntu2604` only
+  (ESP p1, root p2, `BOOTX64.EFI`, machine-id `uninitialized`, no
+  disable marker, no `127.0.1.1` line, empty grub command line); for
+  the other four the clone results stand in for it.
+- create took 23 to 66 s; the btrfs clones are the slow ones (create 46
+  to 66 s, reboot about 41 s against 11 to 24 s for ext4). Not looked
+  into.
+- BIOS image: `ubuntu2604-bios.qcow2` with the default firmware does not
+  boot (B0); with `--firmware bios` it boots under BIOS and keeps the
+  old behaviour (image hostname, shared machine-id).
+- Every VM made here is deleted. Still open in B: `ubuntu2404_aws`,
+  veritech04, the cache measurement.
