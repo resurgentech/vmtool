@@ -130,7 +130,10 @@ type CreateVMInput struct {
 	ExtraDiskSizeGB uint
 	ExtraDiskPool   string
 	ExtraVars       map[string]string
-	OnProgress      ProgressFunc
+	// NoWait returns right after start: no address wait, no SSH wait, no
+	// filesystem grow. Refused together with Playbook.
+	NoWait     bool
+	OnProgress ProgressFunc
 }
 
 type CmdResult struct {

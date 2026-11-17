@@ -22,6 +22,7 @@ import (
 	"github.com/jaredeh/vmtool/internal/config"
 	"github.com/jaredeh/vmtool/internal/hosts"
 	"github.com/jaredeh/vmtool/internal/remote"
+	"github.com/jaredeh/vmtool/internal/testexec"
 	"github.com/jaredeh/vmtool/pkg/vmtool"
 )
 
@@ -340,9 +341,10 @@ func TestRemoteManagerEveryMethod(t *testing.T) {
 
 // app.Service.CreateVM on the workstation drives a remote hypervisor end to
 // end through remote.Manager, with the base image already in the
-// hypervisor's pool. No disk resize or playbook, so no guest SSH runs.
+// hypervisor's pool. The guest SSH wait runs against the stub ansible.
 func TestCreateVMOverRemote(t *testing.T) {
 	t.Chdir(t.TempDir())
+	testexec.Ansible(t)
 	fm := newRTMgr(t)
 	seedCached(t, fm.pool, "ubuntu.qcow2")
 	srv, pool, _ := hypervisor(t, fm, testToken)
@@ -350,7 +352,7 @@ func TestCreateVMOverRemote(t *testing.T) {
 
 	// No LocalImages: the workstation has no copy, so the hypervisor's
 	// cached one is used as it is.
-	svc := &app.Service{IPTimeout: 7 * time.Second}
+	svc := &app.Service{IPTimeout: 7 * time.Second, Tunnel: vmtool.Tunnel{Exe: stubTunnelExe}}
 	var stages []string
 	info, err := svc.CreateVM(context.Background(), m, app.CreateVMInput{
 		Host: "veritech01", Name: "web", Image: "ubuntu.qcow2",
@@ -380,7 +382,7 @@ func TestCreateVMOverRemote(t *testing.T) {
 	if got := fm.got(); !reflect.DeepEqual(got, want) {
 		t.Errorf("hypervisor calls\n%q\nwant\n%q", got, want)
 	}
-	if strings.Join(stages, ",") != "upload,clone,extra_disk,start,wait_ip" {
+	if strings.Join(stages, ",") != "upload,clone,extra_disk,start,wait_ip,wait_ssh" {
 		t.Errorf("stages = %v", stages)
 	}
 	if info == nil || info.Name != "web" || info.IP != "192.0.2.44" || info.VCPUs != 3 {
@@ -432,7 +434,8 @@ func TestWorkstationForwardsBearer(t *testing.T) {
 	fm := newRTMgr(t)
 	seedCached(t, fm.pool, "ubuntu.qcow2")
 	hv, pool, hvLog := hypervisor(t, fm, callerToken)
-	ws := workstation(t, hv.URL, pool, callerToken, &handlers{})
+	testexec.Ansible(t)
+	ws := workstation(t, hv.URL, pool, callerToken, &handlers{tunnelExe: stubTunnelExe})
 
 	req := func(method, path, body string) *httptest.ResponseRecorder {
 		var r *http.Request

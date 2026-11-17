@@ -147,6 +147,9 @@ func (s *Service) CreateVM(ctx context.Context, m Manager, in CreateVMInput) (*v
 	if !vmtool.ValidDiskCache(in.DiskCache) {
 		return nil, invalid("create", fmt.Errorf("invalid disk cache %q: want none, writeback, writethrough or unsafe", in.DiskCache))
 	}
+	if in.NoWait && in.Playbook != "" {
+		return nil, invalid("create", fmt.Errorf("--no-wait cannot be combined with --playbook: a playbook needs a guest vmtool can reach"))
+	}
 	if vmtool.IsMachine(in.Name) {
 		return nil, conflict("create", fmt.Errorf("%q is registered as a metal/alien machine", in.Name))
 	}
@@ -252,21 +255,45 @@ func (s *Service) CreateVM(ctx context.Context, m Manager, in CreateVMInput) (*v
 	}
 	emit(in, "start", "done", "started", "")
 
+	// The inventory needs no address (ansible_host is host/vm through the
+	// tunnel), so it exists in every outcome where the VM is running.
+	if s.InventoryPath != "" {
+		emit(in, "write_inventory", "start", "writing inventory", "")
+		if err := s.WriteInventory(ref, s.InventoryPath, vmtool.Auth{User: cfg.SSHUser, Password: cfg.SSHPass}); err != nil {
+			emit(in, "write_inventory", "error", err.Error(), "")
+			info, _ := m.Info(cfg.Name) // best effort: the domain exists
+			return info, wrap("create", err)
+		}
+		emit(in, "write_inventory", "done", "inventory written", "")
+	}
+
+	if in.NoWait {
+		// No address, no SSH: nothing here can grow the filesystem.
+		if in.DiskSizeGB > 0 {
+			emit(in, "grow_disk", "done", "not growing the filesystem (--no-wait); cloud-init grows it at first boot on images built since C3", "")
+		}
+		info, err := m.Info(cfg.Name)
+		if err != nil {
+			return nil, wrap("create", err)
+		}
+		return info, nil
+	}
+
 	emit(in, "wait_ip", "start", "waiting for IP", "")
-	ip, ipErr := m.WaitForIP(cfg.Name, s.ipTimeout())
+	ipTimeout := s.ipTimeout()
+	ip, ipErr := m.WaitForIP(cfg.Name, ipTimeout)
 	info, infoErr := m.Info(cfg.Name)
 	if infoErr != nil {
 		return nil, wrap("create", infoErr)
 	}
 	if ipErr != nil {
+		// The VM stays defined and running; the caller decides.
+		err := fmt.Errorf("%s got no address within %s (%w); the VM exists and is running: delete it, or create with --no-wait for a guest whose address vmtool cannot see", ref, ipTimeout, ipErr)
 		if cfg.Firmware == vmtool.FirmwareEFI {
-			ipErr = fmt.Errorf("%w; %s", ipErr, vmtool.UEFIHint)
+			err = fmt.Errorf("%w; %s", err, vmtool.UEFIHint)
 		}
-		emit(in, "wait_ip", "error", ipErr.Error(), "")
-		if in.DiskSizeGB > 0 || in.Playbook != "" {
-			return info, internal("create", fmt.Errorf("no IP: %w", ipErr))
-		}
-		return info, nil
+		emit(in, "wait_ip", "error", err.Error(), "")
+		return info, &Error{Kind: KindInternal, Op: "wait_ip", Err: err}
 	}
 	emit(in, "wait_ip", "done", "IP "+ip, "")
 
@@ -275,34 +302,24 @@ func (s *Service) CreateVM(ctx context.Context, m Manager, in CreateVMInput) (*v
 	if err != nil {
 		return info, wrap("create", err)
 	}
-	if s.InventoryPath != "" {
-		emit(in, "write_inventory", "start", "writing inventory", "")
-		if err := s.WriteInventory(ref, s.InventoryPath, vmtool.Auth{User: cfg.SSHUser, Password: cfg.SSHPass}); err != nil {
-			emit(in, "write_inventory", "error", err.Error(), "")
-			return info, wrap("create", err)
-		}
-		emit(in, "write_inventory", "done", "inventory written", "")
-	}
 
-	if in.DiskSizeGB > 0 || in.Playbook != "" {
-		// An IP is not sshd: wait for the guest to accept SSH before the
-		// grow and the playbook, which would otherwise fail on a booting VM.
-		emit(in, "wait_ssh", "start", "waiting for SSH", "")
-		invPath, cleanup, err := vmtool.TempVMInventory(s.Tunnel, ref.Host, ref.Name, auth, credsDir)
-		if err != nil {
-			emit(in, "wait_ssh", "error", err.Error(), "")
-			return info, wrap("create", err)
-		}
-		timeout := s.sshTimeout()
-		out, err := vmtool.WaitSSH(s.Tunnel, invPath, timeout)
-		cleanup()
-		if err != nil {
-			err = fmt.Errorf("%s did not accept SSH within %s: %w", cfg.Name, timeout, err)
-			emit(in, "wait_ssh", "error", err.Error(), out)
-			return info, &Error{Kind: KindInternal, Op: "wait_ssh", Err: err, Output: out}
-		}
-		emit(in, "wait_ssh", "done", "SSH is up", "")
+	// An address is not sshd: wait for the guest to accept SSH, on every
+	// create. The grow and the playbook then run without a second wait.
+	emit(in, "wait_ssh", "start", "waiting for SSH", "")
+	invPath, cleanup, err := vmtool.TempVMInventory(s.Tunnel, ref.Host, ref.Name, auth, credsDir)
+	if err != nil {
+		emit(in, "wait_ssh", "error", err.Error(), "")
+		return info, wrap("create", err)
 	}
+	sshTimeout := s.sshTimeout()
+	out, err := vmtool.WaitSSH(s.Tunnel, invPath, sshTimeout)
+	cleanup()
+	if err != nil {
+		err = fmt.Errorf("%s did not accept SSH within %s (%w); the VM exists and is running: delete it, or create with --no-wait for a guest vmtool cannot reach by SSH", ref, sshTimeout, err)
+		emit(in, "wait_ssh", "error", err.Error(), out)
+		return info, &Error{Kind: KindInternal, Op: "wait_ssh", Err: err, Output: out}
+	}
+	emit(in, "wait_ssh", "done", "SSH is up", "")
 
 	if in.DiskSizeGB > 0 {
 		emit(in, "grow_disk", "start", "growing filesystem", "")

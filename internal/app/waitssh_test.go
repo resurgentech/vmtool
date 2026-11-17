@@ -18,6 +18,14 @@ func sshStub(t *testing.T) string {
 	return testexec.Ansible(t)
 }
 
+// stubSvc installs the stub ansible (testexec) and gives svc the stub tunnel,
+// for a test whose create reaches wait_ssh.
+func stubSvc(t *testing.T, svc *Service) *Service {
+	t.Helper()
+	sshStub(t)
+	return svc.WithTunnel(appTunnel())
+}
+
 type sshVMs struct{ createVMs }
 
 func (f *sshVMs) ResizeVolume(string, uint64) error { return nil }
@@ -122,16 +130,18 @@ func TestCreateGrowFailureCarriesOutput(t *testing.T) {
 	}
 }
 
-func TestCreateWithoutGrowOrPlaybookSkipsWaitSSH(t *testing.T) {
+// A plain create waits for SSH too (C13): an address is not sshd.
+func TestCreateWithoutGrowOrPlaybookWaitsForSSH(t *testing.T) {
 	log := sshStub(t)
 	err, evs := sshCreate(t, &Service{}, CreateVMInput{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b, _ := os.ReadFile(log); len(b) != 0 {
-		t.Errorf("ansible ran: %q", b)
+	b, _ := os.ReadFile(log)
+	if lines := strings.Split(strings.TrimSpace(string(b)), "\n"); len(lines) != 1 || !strings.HasPrefix(lines[0], "wait ") {
+		t.Errorf("calls = %q", lines)
 	}
-	if strings.Contains(stageSeq(evs), "wait_ssh") {
+	if !strings.Contains(stageSeq(evs), "wait_ip,wait_ssh") {
 		t.Errorf("stages = %s", stageSeq(evs))
 	}
 }

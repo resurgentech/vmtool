@@ -38,7 +38,7 @@ func TestCreateVMPassesEmptyPool(t *testing.T) {
 	} {
 		t.Chdir(t.TempDir())
 		m := &poolVMs{createVMs: createVMs{ip: "10.0.0.5"}}
-		if _, err := (&Service{}).CreateVM(context.Background(), m, CreateVMInput{
+		if _, err := stubSvc(t, &Service{}).CreateVM(context.Background(), m, CreateVMInput{
 			Host: "jetfire", Name: "web", Image: "u.qcow2",
 			Pool: tc.pool, ExtraDiskPool: tc.extra, ExtraDiskSizeGB: 3,
 		}); err != nil {

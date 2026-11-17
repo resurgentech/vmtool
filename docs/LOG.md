@@ -317,3 +317,26 @@ are appended, never edited in; a hook refuses rewrites.
   `systemd-run --user` is unavailable. `just test` takes package args.
 - AGENTS.md hard rule 6 (Tests) and a "Test stubs" row.
 - Commits: the C19 commit on `clone-identity`.
+
+## 2026-11-17 — C13 `create` fails without an address or SSH; `--no-wait`; both waits in config.yml
+
+- Every create now waits for the address and then for SSH (one
+  `wait_ssh`, before the grow and the playbook). Either failure returns
+  the VM info plus an `*app.Error` (Op `wait_ip` / `wait_ssh`) saying the
+  VM exists and is running and naming `--no-wait`; the VM is left
+  defined and running. `wait_ip` keeps the underlying text and, for efi,
+  `UEFIHint`.
+- `--no-wait` (spec `no_wait`, TUI "Wait for address" yes/no) returns
+  right after `start`; refused with `--playbook` before anything is
+  cloned; with `--disk-size` the volume is resized and the filesystem
+  grow is skipped with a `grow_disk` event.
+- The inventory is written right after `start`.
+- config.yml `ip_wait_seconds` / `ssh_wait_seconds` (0 or absent = 120,
+  else 1..3600) feed the CLI, TUI and workstation server Service.
+- CLI: after any failure once the domain exists it prints
+  `VM "<ref>" exists and is running, but create did not finish:` and
+  the error, non-zero; the success and `IP:` lines only on success.
+  REST: 500 with `vm`; `no_wait`+`playbook` 400.
+- Every create test in app, server, CLI and TUI installs
+  `testexec.Ansible` and a stub tunnel `Exe`.
+- Commits: the C13 commit on `clone-identity`.

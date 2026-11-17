@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -81,6 +82,7 @@ const (
 	fNoclone
 	fFirmware
 	fDiskCache
+	fWait
 	numCreateFields
 )
 
@@ -207,6 +209,9 @@ type model struct {
 
 	playbookDir   string
 	inventoryPath string
+	// ipTimeout and sshTimeout are create's waits from config.yml; zero
+	// means the app's default.
+	ipTimeout, sshTimeout time.Duration
 	// tunnel is how guest SSH and ansible reach VMs (see app.Service.Tunnel);
 	// the CLI passes it, with the verified token, when it starts the TUI.
 	tunnel vmtool.Tunnel
@@ -342,7 +347,8 @@ func (m *model) addLog(title string) int {
 }
 
 func (m model) svc() *app.Service {
-	s := &app.Service{PlaybookDir: m.playbookDir, InventoryPath: m.inventoryPath, HostNames: m.hostNames}
+	s := &app.Service{PlaybookDir: m.playbookDir, InventoryPath: m.inventoryPath, HostNames: m.hostNames,
+		IPTimeout: m.ipTimeout, SSHTimeout: m.sshTimeout}
 	if local := m.manager; local != nil {
 		// create on a remote host uploads the image from this host's pools.
 		// The TUI is a workstation tool: a miss refreshes the pools once.
@@ -720,6 +726,9 @@ func (m model) enterCreateMode() (tea.Model, tea.Cmd) {
 		// default: unsafe for a clone, none named for --noclone (resolved in app).
 		// unsafe can corrupt the disk on a host crash or power loss.
 		{label: "Disk cache", kind: fieldSelect, options: []string{"default", "none", "writeback", "writethrough", "unsafe"}},
+		// no: create returns right after start (NoWait); a guest whose address
+		// vmtool cannot see. Refused with a playbook.
+		{label: "Wait for address", kind: fieldSelect, options: []string{"yes", "no"}},
 	}
 
 	values := make([]string, len(fields))
@@ -982,6 +991,7 @@ func (m model) createInput() (in app.CreateVMInput, ok bool, err error) {
 		Noclone:         m.formValues[fNoclone] == "true",
 		Firmware:        m.formValues[fFirmware],
 		DiskCache:       diskCacheChoice(m.formValues[fDiskCache]),
+		NoWait:          m.formValues[fWait] == "no",
 		ExtraDiskSizeGB: extraDiskSizeGB,
 	}
 
@@ -1623,7 +1633,7 @@ func flatImages(mgr app.Manager) []string {
 // local libvirt connection is reused; another host gets a remote client
 // carrying the resolver's token). Machine names may not take any host name.
 // tunnel is how guests are reached (the CLI's own executable and token).
-func Run(r *hosts.Resolver, tunnel vmtool.Tunnel) error {
+func Run(r *hosts.Resolver, tunnel vmtool.Tunnel, ipWait, sshWait time.Duration) error {
 	host := r.Local()
 	mgr, release, err := r.Resolve(host)
 	if err != nil {
@@ -1646,6 +1656,7 @@ func Run(r *hosts.Resolver, tunnel vmtool.Tunnel) error {
 		return app.ListAll(ctx, m.hostNames, m.resolve, app.ListTimeout)
 	}
 	m.tunnel = tunnel
+	m.ipTimeout, m.sshTimeout = ipWait, sshWait
 	m.send = &msgSender{}
 	p := tea.NewProgram(m)
 	m.send.fn = p.Send

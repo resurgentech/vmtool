@@ -7,5 +7,10 @@ listen: 127.0.0.1:9473        # default
 token_sha256: ""              # 64 lowercase hex; set by `vmtool config write`
 tls_cert: tls/jetfire.labtwo.crt
 tls_key: tls/jetfire.labtwo.key
+ip_wait_seconds: 120          # create's wait for a VM's address; 0 or absent = 120, else 1..3600
+ssh_wait_seconds: 120         # create's wait for SSH, after the address; same bounds
+# Both apply on the workstation only: create runs there (CLI, TUI or its own
+# `vmtool server`), and for a VM on a remote host the workstation sends its
+# ip_wait_seconds to that host's daemon. A hypervisor accepts and ignores them.
 hosts:                        # workstation only
   veritech01: { address: veritech01.labtwo, ssh_user: ubuntu }   # port defaults to 9473

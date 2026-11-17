@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/jaredeh/vmtool/pkg/vmtool"
 	"gopkg.in/yaml.v3"
@@ -35,6 +36,11 @@ const (
 
 	// DefaultListen is used when listen is not set.
 	DefaultListen = "127.0.0.1:9473"
+	// DefaultWait is create's address and SSH wait when config.yml sets none.
+	DefaultWait = 120 * time.Second
+	// MaxWaitSeconds is the longest wait config.yml may ask for: the
+	// daemon's waitVMIP limit.
+	MaxWaitSeconds = 3600
 	// DefaultPort is a host's daemon port when not set.
 	DefaultPort = 9473
 )
@@ -62,6 +68,12 @@ type Config struct {
 	TLSCert     string          `yaml:"tls_cert"`
 	TLSKey      string          `yaml:"tls_key"`
 	Hosts       map[string]Host `yaml:"hosts"`
+	// IPWaitSeconds and SSHWaitSeconds bound create's wait for an address and
+	// for SSH. 0 or absent is DefaultWait; otherwise 1..MaxWaitSeconds.
+	// Create runs on the workstation, so only its config.yml governs; a
+	// hypervisor accepts and ignores them.
+	IPWaitSeconds  int `yaml:"ip_wait_seconds"`
+	SSHWaitSeconds int `yaml:"ssh_wait_seconds"`
 	// Dir is the directory config.yml was loaded from.
 	Dir string `yaml:"-"`
 }
@@ -71,6 +83,29 @@ type Host struct {
 	Address string `yaml:"address"`
 	SSHUser string `yaml:"ssh_user"`
 	Port    int    `yaml:"port"`
+}
+
+// IPWait is how long create waits for an address.
+func (c *Config) IPWait() time.Duration {
+	if c == nil {
+		return DefaultWait
+	}
+	return waitOf(c.IPWaitSeconds)
+}
+
+// SSHWait is how long create waits for SSH.
+func (c *Config) SSHWait() time.Duration {
+	if c == nil {
+		return DefaultWait
+	}
+	return waitOf(c.SSHWaitSeconds)
+}
+
+func waitOf(sec int) time.Duration {
+	if sec <= 0 {
+		return DefaultWait
+	}
+	return time.Duration(sec) * time.Second
 }
 
 // Path resolves p against the config directory unless it is absolute or empty.
@@ -157,6 +192,14 @@ func (c *Config) finish() error {
 	}
 	if c.Listen == "" {
 		c.Listen = DefaultListen
+	}
+	for _, w := range []struct {
+		key string
+		v   int
+	}{{"ip_wait_seconds", c.IPWaitSeconds}, {"ssh_wait_seconds", c.SSHWaitSeconds}} {
+		if w.v < 0 || w.v > MaxWaitSeconds {
+			return fmt.Errorf("%s must be 0 (default 120) or from 1 to %d seconds", w.key, MaxWaitSeconds)
+		}
 	}
 	if c.TokenSHA256 != "" && !hashRE.MatchString(c.TokenSHA256) {
 		return errors.New("token_sha256 must be 64 lowercase hex characters")

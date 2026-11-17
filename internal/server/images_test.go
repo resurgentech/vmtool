@@ -27,6 +27,7 @@ import (
 	"github.com/jaredeh/vmtool/internal/config"
 	"github.com/jaredeh/vmtool/internal/hosts"
 	"github.com/jaredeh/vmtool/internal/remote"
+	"github.com/jaredeh/vmtool/internal/testexec"
 	"github.com/jaredeh/vmtool/pkg/vmtool"
 )
 
@@ -885,8 +886,10 @@ func newE2E(t *testing.T, image []byte) *e2e {
 	if err := os.WriteFile(local, image, 0o644); err != nil {
 		t.Fatal(err)
 	}
+	testexec.Ansible(t)
 	svc := &app.Service{
 		IPTimeout:      time.Second,
+		Tunnel:         vmtool.Tunnel{Exe: stubTunnelExe},
 		ImageCachePath: filepath.Join(wsDir, vmtool.ImageManifestFile),
 		LocalImages: func(name string) (string, error) {
 			p := filepath.Join(wsDir, "pool", name)

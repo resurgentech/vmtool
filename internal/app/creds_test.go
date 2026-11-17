@@ -48,7 +48,7 @@ func TestCreateVMForgetsByHostAndName(t *testing.T) {
 	mkCreds(t, filepath.Join(".machines", "10.0.0.5"), "ip")
 
 	m := &createVMs{ip: "10.0.0.5"}
-	info, err := (&Service{}).CreateVM(context.Background(), m, CreateVMInput{Host: "jetfire", Name: "web", Image: "u.qcow2"})
+	info, err := stubSvc(t, &Service{}).CreateVM(context.Background(), m, CreateVMInput{Host: "jetfire", Name: "web", Image: "u.qcow2"})
 	if err != nil || info == nil || info.IP != "10.0.0.5" {
 		t.Fatalf("create: %+v, %v", info, err)
 	}

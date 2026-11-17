@@ -11,6 +11,7 @@ import (
 	"github.com/jaredeh/vmtool/internal/app"
 	"github.com/jaredeh/vmtool/internal/config"
 	"github.com/jaredeh/vmtool/internal/hosts"
+	"github.com/jaredeh/vmtool/internal/testexec"
 	"github.com/jaredeh/vmtool/pkg/vmtool"
 )
 
@@ -29,7 +30,8 @@ func TestCreateVMRemoteHostDefaultPool(t *testing.T) {
 			seedCached(t, fm.pool, "ubuntu.qcow2")
 			srv, cas, _ := hypervisor(t, fm, testToken)
 			m := remoteFor(t, srv, cas, testToken)
-			svc := &app.Service{IPTimeout: time.Second}
+			testexec.Ansible(t)
+			svc := &app.Service{IPTimeout: time.Second, Tunnel: vmtool.Tunnel{Exe: stubTunnelExe}}
 			if _, err := svc.CreateVM(context.Background(), m, app.CreateVMInput{
 				Host: "veritech01", Name: "web", Image: "ubuntu.qcow2",
 				Pool: tc.pool, ExtraDiskSizeGB: 5,

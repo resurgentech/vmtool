@@ -164,6 +164,7 @@ just install        # build, cert, config.yml, systemd unit (vmtool server over 
 ./vmtool create jetfire/web ubuntu.qcow2 --net-type direct --net-source eth0 --macvtap-mode bridge
 ./vmtool create jetfire/scratch ubuntu.qcow2 --noclone  # boot the image in place
 ./vmtool create jetfire/web ubuntu.qcow2 --extra-disk-size 50   # second empty disk as vdb
+./vmtool create jetfire/web ubuntu.qcow2 --no-wait      # return right after start; no address or SSH wait
 ./vmtool add-disk jetfire/web 50                        # attach a new empty disk (vdb, vdc, …)
 ./vmtool reboot jetfire/web                             # ACPI reboot, stays defined
 ./vmtool list                                           # every host (5 s each; a dead host is an ERROR row)
@@ -173,6 +174,42 @@ just install        # build, cert, config.yml, systemd unit (vmtool server over 
 ./vmtool delete jetfire/scratch --noclone               # undefine only, keep the disk
 ./vmtool server                                         # HTTPS REST on 127.0.0.1:9473; GET / is Swagger UI
 ```
+
+### Waits at create (`--no-wait`)
+
+`create` returns when the VM is usable: it waits for the guest's address, then
+for SSH (sshd often answers some seconds after the address appears), and only
+then runs the grow and the playbook, if asked. Each wait is 120 s unless
+`config.yml` says otherwise:
+
+```yaml
+ip_wait_seconds: 300     # address wait; 0 or absent = 120, otherwise 1 to 3600
+ssh_wait_seconds: 180    # SSH wait; same bounds
+```
+
+`create` runs on the workstation (the CLI, the TUI, or its own `vmtool
+server`; a hypervisor answers createVM 403), so the workstation's
+`config.yml` governs every create, including one on a remote host: it sends
+its `ip_wait_seconds` to that host's daemon. The keys in a hypervisor's
+`config.yml` are accepted and unused. A value below 0 or above 3600 is a
+config load error naming the key.
+
+If no address arrives, or SSH does not answer, in time, `create` fails (exit
+non-zero, REST 500 with the VM in the body) but leaves the VM defined and
+running: delete it, or fix the guest and use it. The CLI says `VM "<ref>"
+exists and is running, but create did not finish:` and then the error. The same
+holds for any failure after the domain exists (grow, playbook, reboot).
+
+`--no-wait` (REST `no_wait`; the TUI form's "Wait for address" set to `no`)
+returns right after the VM starts, with no address and no SSH wait; the result
+is success and the address is usually empty. Use it for a guest whose address
+vmtool cannot see (a static address, a DHCP server libvirt does not run and no
+guest agent), a VM with no network, or a very slow boot. `--inventory` is still
+written, right after the start. `--no-wait` cannot be combined with
+`--playbook`: a playbook needs a guest vmtool can reach (refused before
+anything is cloned). With `--disk-size` the volume is still resized before boot,
+but the filesystem grow, which needs SSH, is skipped; cloud-init grows it at
+first boot on images built since C3.
 
 ### VM identity at create
 
@@ -198,8 +235,8 @@ New VMs boot with UEFI (OVMF, secure boot off): libvirt picks the firmware and
 makes a per-VM NVRAM file, which `delete` removes with the VM. An image that
 was installed for BIOS does not boot under UEFI: create it with
 `vmtool create --firmware bios host/name image` (the TUI create form has a
-Firmware field). There is no detection; you name `bios`. If `create` times out
-waiting for an address on a UEFI VM, the error says so.
+Firmware field). There is no detection; you name `bios`. If `create` fails
+waiting for an address on a UEFI VM (the VM is left running), the error says so.
 
 A host without OVMF refuses a UEFI create with `UEFI firmware (OVMF) is not
 installed on <host>`: install it (`just prereqs <host>`) or create with
@@ -271,7 +308,8 @@ differs.
 
 ### A new VM never gets an IP
 
-`create` prints `timed out waiting for IP`. Two independent causes, both of
+`create` fails with `timed out waiting for IP` (the whole message says the VM
+exists and is running and names `--no-wait`; the VM is not removed). Two independent causes, both of
 which a fresh Omarchy host hits:
 
 **The host firewall drops the guest's DHCP request.** ufw defaults to deny

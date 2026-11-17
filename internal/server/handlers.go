@@ -214,6 +214,7 @@ func (h *handlers) CreateVM(ctx context.Context, req api.CreateVMRequestObject) 
 	in.SSHPass = derefStr(b.SshPass)
 	in.Playbook = derefStr(b.Playbook)
 	in.Noclone = derefBool(b.Noclone)
+	in.NoWait = derefBool(b.NoWait)
 	if b.Firmware != nil {
 		in.Firmware = string(*b.Firmware)
 	}

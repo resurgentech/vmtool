@@ -10,7 +10,6 @@ func createCache(t *testing.T, in CreateVMInput) (*uefiVMs, error) {
 	t.Chdir(t.TempDir())
 	m := &uefiVMs{}
 	in.Host, in.Name, in.Image = "jetfire", "web", "u.qcow2"
-	in.DiskSizeGB = 20 // a no-IP create is then an error; Define was still called
 	_, err := (&Service{}).CreateVM(context.Background(), m, in)
 	return m, err
 }

@@ -30,9 +30,9 @@ func createWith(t *testing.T, firmware string) (*uefiVMs, error, []ProgressEvent
 	t.Chdir(t.TempDir())
 	m := &uefiVMs{}
 	var evs []ProgressEvent
-	// DiskSizeGB > 0 makes a no-IP create an error (not a silent success).
+	// uefiVMs gets no address, so create fails at wait_ip; Define was called.
 	_, err := (&Service{}).CreateVM(context.Background(), m, CreateVMInput{
-		Host: "jetfire", Name: "web", Image: "u.qcow2", DiskSizeGB: 20, Firmware: firmware,
+		Host: "jetfire", Name: "web", Image: "u.qcow2", Firmware: firmware,
 		OnProgress: func(ev ProgressEvent) { evs = append(evs, ev) },
 	})
 	return m, err, evs

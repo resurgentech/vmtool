@@ -114,12 +114,18 @@ paths:
       x-vmtool-workstation-only: true
       summary: Create and start a VM
       description: >
-        Synchronous. May wait up to 120s for an IP and then run an optional
-        playbook. Clients need a long HTTP timeout. 201 means the domain is up
-        and every requested extra (grow, playbook, reboot) succeeded. Empty IP
-        is a valid 201 when no grow/playbook was requested. Failures after the
-        domain exists are 500; the VM is never auto-undefined. 409 if the
-        name is registered as a metal or alien machine.
+        Synchronous. Waits for an address, then for SSH, then runs an optional
+        grow and playbook. Clients need a long HTTP timeout. The two waits are
+        the workstation's config.yml `ip_wait_seconds` and `ssh_wait_seconds`
+        (default 120 each). 201 means the domain is up, an address was seen
+        and SSH answered (or `no_wait` was set, which returns right after the
+        domain starts), and every requested extra (grow, playbook, reboot)
+        succeeded. No address, or no SSH, within its wait is a 500 with the VM
+        in the body: the VM is left defined and running, never
+        auto-undefined; delete it, or create with `no_wait` for a guest whose
+        address or SSH vmtool cannot see. Every failure after the domain
+        exists is 500. 400 if `no_wait` is combined with `playbook`. 409 if
+        the name is registered as a metal or alien machine.
         Served by the workstation only: on a server whose config.yml role is hypervisor this operation answers 403 "served by the workstation" before reading the body.
       requestBody:
         required: true
@@ -1222,6 +1228,17 @@ components:
         extra_vars:
           $ref: '#/components/schemas/ExtraVars'
           description: Ansible extra-vars for the optional create-time playbook.
+        no_wait:
+          type: boolean
+          default: false
+          description: >
+            If true, return right after the domain starts: no wait for an
+            address, no wait for SSH, and with disk_size no filesystem grow
+            (the volume is still resized before boot). The result is 201 with
+            the VM, whose address is usually empty. For a guest whose address
+            vmtool cannot see (static address, a DHCP server libvirt does not
+            run, no guest agent), or a very slow boot. Refused with 400 when
+            combined with playbook.
     MachineInfo:
       type: object
       required: [name, kind, host, state]

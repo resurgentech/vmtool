@@ -282,6 +282,9 @@ func (e *env) service(inventory string) *app.Service {
 		InventoryPath: inventory,
 		HostNames:     e.resolver().AllNames(),
 		LocalImages:   e.localImages,
+		// create's waits come from the workstation's config.yml (nil: 120s).
+		IPTimeout:  e.cfg.IPWait(),
+		SSHTimeout: e.cfg.SSHWait(),
 	}).WithTunnel(t)
 }
 
@@ -358,6 +361,7 @@ func createCmd(e *env) *cobra.Command {
 		inventory       string
 		playbook        string
 		noclone         bool
+		noWait          bool
 		extraDiskSizeGB uint
 		extraDiskPool   string
 		extraVars       []string
@@ -386,6 +390,16 @@ the VM's disk. Pick --disk-cache none for a VM whose data matters. --noclone
 gets no cache attribute unless a mode is named. Extra disks, and disks added
 later by add-disk, take the VM's boot-disk mode.
 
+create waits for the VM's address, then for SSH, because a VM without either
+is not usable: the waits are ip_wait_seconds and ssh_wait_seconds in
+config.yml (default 120 each). If either runs out the VM is left defined and
+running, create exits non-zero and says so; delete the VM, or create it again
+with --no-wait for a guest whose address or SSH vmtool cannot see. --no-wait
+returns right after the VM starts (the inventory is still written) and cannot
+be combined with --playbook; with --disk-size the volume is still resized
+before boot, but the filesystem grow, which needs SSH, is skipped (cloud-init
+grows it at first boot on images built with it).
+
   vmtool create jetfire/web ubuntu-24.04.qcow2`,
 		Args: cobra.ExactArgs(2),
 		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
@@ -408,6 +422,7 @@ later by add-disk, take the VM's boot-disk mode.
 				SSHPass:         sshPass,
 				Playbook:        playbook,
 				Noclone:         noclone,
+				NoWait:          noWait,
 				Firmware:        firmware,
 				DiskCache:       diskCache,
 				ExtraDiskSizeGB: extraDiskSizeGB,
@@ -425,13 +440,19 @@ later by add-disk, take the VM's boot-disk mode.
 					}
 				},
 			})
-			if info != nil {
-				fmt.Printf("VM %q created and started\n", ref.String())
-				if info.IP != "" {
-					fmt.Printf("IP: %s\n", info.IP)
+			out := cmd.OutOrStdout()
+			if err != nil {
+				// info is set once the domain exists: it is left running.
+				if info != nil {
+					fmt.Fprintf(out, "VM %q exists and is running, but create did not finish:\n", ref.String())
 				}
+				return printAppErr(err)
 			}
-			return printAppErr(err)
+			fmt.Fprintf(out, "VM %q created and started\n", ref.String())
+			if info != nil && info.IP != "" {
+				fmt.Fprintf(out, "IP: %s\n", info.IP)
+			}
+			return nil
 		}),
 	}
 
@@ -447,6 +468,7 @@ later by add-disk, take the VM's boot-disk mode.
 	cmd.Flags().StringVar(&playbook, "playbook", "", "playbook name under ansible/playbooks, or a path")
 	cmd.Flags().StringVar(&pool, "pool", "", "storage pool for the cloned disk (default: the host's default pool: \"default\" on a workstation, \"vmtool\" on a hypervisor)")
 	cmd.Flags().BoolVar(&noclone, "noclone", false, "boot directly from the image without cloning (changes persist to source; uses up the image's cloud-init first boot, run 'sudo cloud-init clean --machine-id' in the guest before shutdown)")
+	cmd.Flags().BoolVar(&noWait, "no-wait", false, "return right after the VM starts: no wait for an address, none for SSH, and --disk-size does not grow the filesystem. For a guest whose address vmtool cannot see (static address, foreign DHCP without a guest agent) or a very slow boot. Cannot be combined with --playbook")
 	cmd.Flags().StringVar(&firmware, "firmware", "", "guest firmware: efi (UEFI, default) or bios. An image installed for BIOS needs --firmware bios")
 	cmd.Flags().StringVar(&diskCache, "disk-cache", "", "disk cache mode: none, writeback, writethrough or unsafe (default unsafe for a clone, the hypervisor's default with --noclone). unsafe keeps guest writes the guest believes are flushed in host memory; a host crash or power loss can corrupt the VM's disk. Pick none for a VM whose data matters")
 	cmd.Flags().UintVar(&extraDiskSizeGB, "extra-disk-size", 0, "create a second empty virtio disk (vdb) named <name>-2.qcow2")
@@ -697,7 +719,7 @@ func interactiveCmd(e *env) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return tui.Run(e.resolver(), t)
+			return tui.Run(e.resolver(), t, e.cfg.IPWait(), e.cfg.SSHWait())
 		},
 	}
 }

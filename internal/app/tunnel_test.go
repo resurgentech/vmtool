@@ -74,6 +74,7 @@ func TestCreateVMInventoryUsesTunnel(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := filepath.Join("ansible", "inventory.yml")
+	sshStub(t)
 	s := (&Service{InventoryPath: p}).WithTunnel(appTunnel())
 	m := &createVMs{ip: "10.0.0.5"}
 	if _, err := s.CreateVM(context.Background(), m, CreateVMInput{Host: "jetfire", Name: "web", Image: "u.qcow2"}); err != nil {

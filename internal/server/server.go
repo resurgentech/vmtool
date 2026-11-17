@@ -43,6 +43,9 @@ func (s *Server) Handler() http.Handler {
 		svc: &app.Service{
 			PlaybookDir: s.PlaybookDir,
 			HostNames:   r.AllNames(),
+			// create's waits are the workstation's config.yml (nil: 120s).
+			IPTimeout:  s.Config.IPWait(),
+			SSHTimeout: s.Config.SSHWait(),
 			// createVM on a remote host uploads the image from this
 			// machine's own pools.
 			LocalImages: localImages(r, s.Config == nil || s.Config.Role != config.RoleHypervisor),

@@ -40,7 +40,7 @@ func (s *storeVMs) ImagePath(name string) (string, error) {
 
 func createOn(t *testing.T, svc *Service, m Manager) error {
 	t.Helper()
-	_, err := svc.CreateVM(context.Background(), m, CreateVMInput{Host: "veritech01", Name: "web", Image: "u.qcow2"})
+	_, err := stubSvc(t, svc).CreateVM(context.Background(), m, CreateVMInput{Host: "veritech01", Name: "web", Image: "u.qcow2"})
 	return err
 }
 
