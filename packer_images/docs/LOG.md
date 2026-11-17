@@ -222,3 +222,24 @@ rewrites.
 - Not built: `packer validate` downloads nothing, so only B's aws build
   proves packer 1.16.1 reads Ubuntu's `<hash> *<file>` sums lines.
 - Commits: the C15 commit on `clone-identity` (vmtool repo).
+
+## 2026-11-16 — B, jetfire part: `ubuntu2404_aws` built and checked
+
+- Built in 55 s. packer 1.16.1 accepts
+  `iso_checksum = "file:…/noble/current/SHA256SUMS"` and verified the
+  rolling cloud image against it. `cloud-init status --wait` returned
+  `done` in the build VM (the ISO templates report `disabled` there).
+- Two clones by vmtool (defaults; the second `--disk-size 20`): UEFI
+  boot, cache `unsafe`, hostname = VM name, machine-id = domain UUID,
+  different host keys and addresses, DHCP client id `01:<mac>` (the
+  shared netplan takes over from the cloud image's own config), no
+  `ubuntu` user, root (vda1) fills the 20G disk and vmtool's grow
+  reports success, exactly one `127.0.1.1` line naming the VM; all
+  unchanged after a reboot, with an added `/etc/hosts` line kept.
+  create took 13 s and 19 s. cloud-init here is 26.1 (the ISO-built
+  24.04 images have 25.2).
+- One clone with `--firmware bios`: boots under BIOS with the same
+  identity behaviour, so the image boots both ways.
+- All seven images are now rebuilt and checked on jetfire; every VM made
+  here is deleted. Still open in B: veritech04 and the cache
+  measurement.
