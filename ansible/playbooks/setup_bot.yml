@@ -235,16 +235,64 @@
         - name: Reset SSH connection as bot
           meta: reset_connection
 
-    - name: Disable SSH password authentication
-      copy:
-        dest: /etc/ssh/sshd_config.d/99-disable-password-auth.conf
-        mode: "0644"
-        content: |
-          PasswordAuthentication no
-          KbdInteractiveAuthentication no
-          PubkeyAuthentication yes
-      notify: Restart ssh
+    # VMs: password login off for every user. sshd keeps the first value it
+    # reads, and Include sshd_config.d/*.conf reads the files in lexical
+    # order, so this drop-in must sort before cloud-init's 50-cloud-init.conf
+    # (ssh_pwauth: true writes "PasswordAuthentication yes" there; images need
+    # it for vmtool's first login as packer). cloud-init's file is left alone:
+    # the order alone decides. Checked here, before packer is removed, so a
+    # failed run leaves packer in place and can be re-run. No rollback: password
+    # login on is the state the VM was already in.
+    - name: Disable SSH password authentication on a VM
       when: vmtool_kind == 'vm'
+      block:
+        - name: Write VM no-password drop-in
+          copy:
+            dest: /etc/ssh/sshd_config.d/01-vmtool-no-password.conf
+            mode: "0644"
+            content: |
+              # Managed by vmtool setup_bot.yml. Sorts before 50-cloud-init.conf.
+              PasswordAuthentication no
+              KbdInteractiveAuthentication no
+              PubkeyAuthentication yes
+          notify: Restart ssh
+
+        # Written by earlier versions of this playbook; it sorted after
+        # 50-cloud-init.conf and so never took effect.
+        - name: Remove old VM drop-in
+          file:
+            path: /etc/ssh/sshd_config.d/99-disable-password-auth.conf
+            state: absent
+          notify: Restart ssh
+
+        - name: Validate full sshd config on the VM
+          command: sshd -t
+          changed_when: false
+
+        # bot and root: the setting must be global on a VM.
+        - name: Read effective sshd policy on the VM
+          command: sshd -T -C user={{ item }},host=localhost,addr=127.0.0.1
+          loop:
+            - "{{ dest_user }}"
+            - root
+          register: sshd_vm
+          changed_when: false
+
+        - name: Find sshd files that still allow password login
+          shell: grep -il '^passwordauthentication yes' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf || true
+          register: sshd_pw_yes
+          changed_when: false
+
+        # Keyword case varies by OpenSSH version.
+        - name: Check password login is disabled on the VM
+          assert:
+            that:
+              - item.stdout is search('(?im)^passwordauthentication no$')
+              - item.stdout is search('(?im)^kbdinteractiveauthentication no$')
+            fail_msg: "sshd still allows password login for {{ item.item }}; still says yes: {{ sshd_pw_yes.stdout_lines | join(', ') | default('none found', true) }}"
+          loop: "{{ sshd_vm.results }}"
+          loop_control:
+            label: "{{ item.item }}"
 
     # Metal/alien machines have owners with their own accounts: only bot
     # loses password login, everyone else keeps the machine's sshd policy.

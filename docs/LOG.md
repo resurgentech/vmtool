@@ -353,3 +353,18 @@ are appended, never edited in; a hook refuses rewrites.
   `ansible-playbook --syntax-check` subtest runs only with
   `VMTOOL_TEST_ANSIBLE_SYNTAX=1`, never in the gate.
 - Commits: the C16 commit on `clone-identity`.
+
+## 2026-11-17 — C17 `setup_bot.yml` really disables SSH password login on VMs
+
+- The VM drop-in is now `/etc/ssh/sshd_config.d/01-vmtool-no-password.conf`,
+  which sorts before cloud-init's `50-cloud-init.conf` (sshd keeps the
+  first value). The old `99-disable-password-auth.conf` is removed, so a
+  re-run fixes older VMs. cloud-init's file is left alone.
+- On VMs the playbook now runs `sshd -t` and `sshd -T` for bot and root
+  and asserts password and keyboard-interactive login are off, naming
+  any file that still says yes; this runs before packer is removed. The
+  metal/alien path is unchanged.
+- `scripts/setup_bot_test.go`: sort order, the old file's removal, and
+  that the VM check runs for VMs before "Remove packer user". README
+  says what setup_bot does on a VM.
+- Commits: the C17 commit on `clone-identity`.

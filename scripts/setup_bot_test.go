@@ -100,6 +100,108 @@ func TestSetupBotReconnectKeepsSSHArgs(t *testing.T) {
 	}
 }
 
+// excludesVM reports whether a `when` condition keeps a task off VMs.
+func excludesVM(w string) bool {
+	s := strings.Join(strings.Fields(w), " ")
+	return strings.Contains(s, "vmtool_kind != 'vm'") || strings.Contains(s, `vmtool_kind != "vm"`)
+}
+
+func onlyForVM(whens []string) bool {
+	for _, w := range whens {
+		s := strings.Join(strings.Fields(w), " ")
+		if strings.Contains(s, "vmtool_kind == 'vm'") || strings.Contains(s, `vmtool_kind == "vm"`) {
+			return true
+		}
+	}
+	return false
+}
+
+func runsForVM(whens []string) bool {
+	for _, w := range whens {
+		if excludesVM(w) {
+			return false
+		}
+	}
+	return true
+}
+
+// C17: sshd keeps the first value it reads and reads sshd_config.d/*.conf in
+// lexical order, so the VM drop-in must sort before cloud-init's
+// 50-cloud-init.conf (which says PasswordAuthentication yes for ssh_pwauth).
+func TestSetupBotVMDropInSortsFirst(t *testing.T) {
+	var dests []string
+	for _, task := range setupBotTasks(t) {
+		cp, ok := task.body["copy"].(map[string]any)
+		if !ok || !onlyForVM(task.whens) || !runsForVM(task.whens) {
+			continue
+		}
+		content, _ := cp["content"].(string)
+		if !regexp.MustCompile(`(?im)^\s*PasswordAuthentication no\s*$`).MatchString(content) {
+			continue
+		}
+		dest, _ := cp["dest"].(string)
+		dests = append(dests, dest)
+	}
+	if len(dests) != 1 {
+		t.Fatalf("want one VM sshd drop-in that sets PasswordAuthentication no, got %q", dests)
+	}
+	base := dests[0][strings.LastIndex(dests[0], "/")+1:]
+	if !strings.HasPrefix(dests[0], "/etc/ssh/sshd_config.d/") || !(base < "50-cloud-init.conf") {
+		t.Errorf("VM drop-in %q must be in /etc/ssh/sshd_config.d/ and sort before 50-cloud-init.conf", dests[0])
+	}
+}
+
+// C17: the old VM drop-in, which sorted after cloud-init's, is removed so a
+// re-run fixes VMs set up before.
+func TestSetupBotRemovesOldVMDropIn(t *testing.T) {
+	for _, task := range setupBotTasks(t) {
+		f, ok := task.body["file"].(map[string]any)
+		if ok && f["path"] == "/etc/ssh/sshd_config.d/99-disable-password-auth.conf" && f["state"] == "absent" && runsForVM(task.whens) {
+			return
+		}
+	}
+	t.Fatal("no task removes /etc/ssh/sshd_config.d/99-disable-password-auth.conf on VMs")
+}
+
+// C17: on a VM the effective sshd policy is checked (password login off),
+// before packer, the way back in, is removed.
+func TestSetupBotChecksVMPasswordLoginBeforeRemovingPacker(t *testing.T) {
+	tasks := setupBotTasks(t)
+	removePacker := -1
+	for _, task := range tasks {
+		if task.name == "Remove packer user" {
+			removePacker = task.index
+		}
+	}
+	if removePacker < 0 {
+		t.Fatal(`no task "Remove packer user"`)
+	}
+	check := -1
+	for _, task := range tasks {
+		a, ok := task.body["assert"].(map[string]any)
+		if !ok || !runsForVM(task.whens) {
+			continue
+		}
+		that, _ := a["that"].([]any)
+		var pw, kbd bool
+		for _, c := range that {
+			s, _ := c.(string)
+			pw = pw || strings.Contains(strings.ToLower(s), "passwordauthentication no")
+			kbd = kbd || strings.Contains(strings.ToLower(s), "kbdinteractiveauthentication no")
+		}
+		if pw && kbd {
+			check = task.index
+			break
+		}
+	}
+	if check < 0 {
+		t.Fatal("no assert of passwordauthentication no and kbdinteractiveauthentication no runs for vmtool_kind == 'vm'")
+	}
+	if check > removePacker {
+		t.Errorf("the VM password-login check (task %d) must come before Remove packer user (task %d)", check, removePacker)
+	}
+}
+
 // ansible-playbook --syntax-check, only when asked for. The gate must never
 // start a real ansible (C19); set VMTOOL_TEST_ANSIBLE_SYNTAX=1 to run it by
 // hand. It contacts no host.

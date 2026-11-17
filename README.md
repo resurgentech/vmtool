@@ -285,7 +285,11 @@ ansible-playbook -i '10.0.0.42,' -u <admin> -K ansible/playbooks/prep_machine.ym
 Onboarding runs `setup_bot.yml` with `vmtool_kind=<kind>`: it replaces packer
 with `bot` and key auth, but on machines it disables password login for `bot`
 only and leaves display-manager autologin alone, since the machine has an
-owner. `commission.yml` is refused for machines except through
+owner. On a VM it disables password login for every user with
+`/etc/ssh/sshd_config.d/01-vmtool-no-password.conf`, which sorts before
+cloud-init's `50-cloud-init.conf` (sshd keeps the first value it reads),
+and checks the effective policy with `sshd -T` before it removes packer.
+Re-running it fixes a VM set up by an older version. `commission.yml` is refused for machines except through
 `add --kind alien --commission`. A VM delete or create never touches a
 registered machine's `.machines` entry, and VM and machine names cannot collide.
 
