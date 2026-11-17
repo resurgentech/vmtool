@@ -37,6 +37,7 @@ type tunnelMux struct {
 }
 
 func (t tunnelMux) OpenVMTunnel(w http.ResponseWriter, r *http.Request, host api.HostName, name api.VMName) {
+	setNote(r.Context(), "openVMTunnel", r)
 	t.h.openTunnel(w, r, host, name)
 }
 

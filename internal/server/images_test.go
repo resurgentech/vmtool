@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -999,5 +1000,77 @@ func TestCreateVMForeignImageStops(t *testing.T) {
 	}
 	if _, err := os.Stat(e.manifest); !os.IsNotExist(err) {
 		t.Errorf("daemon manifest written: %v", err)
+	}
+}
+
+// A listed image is answered from the manifest and one Lstat: once the
+// daemon has its vmtool pool's directory, no libvirt connection is opened.
+func TestGetImageManifestListedTouchesNoLibvirt(t *testing.T) {
+	f := newImgFixture(t, config.RoleHypervisor)
+	dir := f.pm.dirs[vmtool.HypervisorPool]
+	data := []byte("cached image")
+	if err := os.WriteFile(filepath.Join(dir, "u.qcow2"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f.seedManifest(t, map[string]vmtool.ImageEntry{"u.qcow2": {SHA256: hexSum(data), Size: int64(len(data))}})
+	// The first request may resolve the pool directory (as the daemon's
+	// start does); it is then kept.
+	if e := getManifest(t, f.srv, "hv1", "u.qcow2"); e.Sha256 == nil || *e.Sha256 != hexSum(data) {
+		t.Fatalf("warm-up entry %+v", e)
+	}
+	var conns atomic.Int32
+	f.h.hosts = hosts.NewWith("hv1", config.RoleHypervisor, nil, func() (app.Manager, func(), error) {
+		conns.Add(1)
+		return nil, nil, fmt.Errorf("libvirt is busy")
+	})
+	e := getManifest(t, f.srv, "hv1", "u.qcow2")
+	if e.Sha256 == nil || *e.Sha256 != hexSum(data) || e.Size == nil || *e.Size != int64(len(data)) ||
+		e.Path == nil || *e.Path != filepath.Join(dir, "u.qcow2") || e.Foreign {
+		t.Errorf("entry %+v", e)
+	}
+	if n := conns.Load(); n != 0 {
+		t.Errorf("libvirt was connected to %d times, want 0", n)
+	}
+}
+
+// A request slower than the threshold is logged with its operation id, host,
+// name, status and duration, and with nothing secret.
+func TestSlowRequestLogged(t *testing.T) {
+	var buf bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(old) })
+
+	f := newImgFixture(t, config.RoleHypervisor)
+	pm := f.pm
+	f.h.hosts = hosts.NewWith("hv1", config.RoleHypervisor, nil, func() (app.Manager, func(), error) {
+		time.Sleep(60 * time.Millisecond)
+		return pm, func() {}, nil
+	})
+	f.h.slowAfter = 20 * time.Millisecond
+	r := httptest.NewRequest(http.MethodGet, "/v1/hosts/hv1/images/u.qcow2/manifest?token=querysecret", nil)
+	r.Header.Set("Authorization", "Bearer hunter2secret")
+	rec := httptest.NewRecorder()
+	f.srv.ServeHTTP(rec, r)
+	if rec.Code != 200 {
+		t.Fatalf("status %d %s", rec.Code, rec.Body)
+	}
+	out := buf.String()
+	for _, want := range []string{"slow request", "operation=getImageManifest", "host=hv1", "name=u.qcow2", "status=200", "duration="} {
+		if !strings.Contains(out, want) {
+			t.Errorf("log lacks %q:\n%s", want, out)
+		}
+	}
+	for _, secret := range []string{"hunter2secret", "querysecret", "Bearer"} {
+		if strings.Contains(out, secret) {
+			t.Errorf("log carries %q:\n%s", secret, out)
+		}
+	}
+
+	buf.Reset()
+	f.h.slowAfter = time.Hour
+	do(f.srv, http.MethodGet, "/v1/hosts/hv1/images/u.qcow2/manifest", "")
+	if strings.Contains(buf.String(), "slow request") {
+		t.Errorf("a fast request was logged as slow:\n%s", buf.String())
 	}
 }

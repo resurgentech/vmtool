@@ -280,3 +280,16 @@ are appended, never edited in; a hook refuses rewrites.
   with `app.ForeignImageHint`: copy the image under another name
   (e.g. `<name>-vmtool.qcow2`) and create from that.
 - Commits: the C8 commit on `clone-identity`.
+
+## 2026-11-17 — C9 `getImageManifest` stays fast when the hypervisor is busy
+
+- The daemon resolves its `vmtool` pool directory once (warmed at start,
+  kept for its life) and answers a listed image from the manifest plus
+  one `Lstat`, with no libvirt connection. Unlisted names and a cold
+  cache still resolve the Manager.
+- The daemon logs `slow request` (Warn) for any request over 5 s:
+  operation id, host, name, status, duration; never a body, header or
+  query. Tunnel sessions (101) are exempt.
+- The remote client retries `getImageManifest` once on a timeout only
+  (typed `timeoutError`); no other call retries.
+- Commits: the C9 commit on `clone-identity`.

@@ -195,9 +195,20 @@ func (m *Manager) statusErr(status int, body []byte) error {
 // the cause, never the request headers, so the token cannot leak here.
 func (m *Manager) transportErr(op string, timeout time.Duration, err error) error {
 	if errors.Is(err, context.DeadlineExceeded) {
-		return fail(app.KindBadGateway, fmt.Errorf("%s: %s timed out after %s", m.name, op, timeout))
+		return fail(app.KindBadGateway, &timeoutError{msg: fmt.Sprintf("%s: %s timed out after %s", m.name, op, timeout)})
 	}
 	return fail(app.KindBadGateway, fmt.Errorf("%s: %s: %w", m.name, op, err))
+}
+
+// timeoutError is a call that got no answer within its timeout; the one
+// retried call (ImageManifest) tells it from other failures with it.
+type timeoutError struct{ msg string }
+
+func (e *timeoutError) Error() string { return e.msg }
+
+func isTimeout(err error) bool {
+	var te *timeoutError
+	return errors.As(err, &te)
 }
 
 // sanitize strips control characters and bounds a daemon's message.
@@ -552,11 +563,21 @@ var _ app.ImageStore = (*Manager)(nil)
 const minUploadRate = 1 << 20
 
 // ImageManifest is the daemon's image-cache entry for name (getImageManifest).
+// It is a read, so one timeout is retried once (a busy hypervisor can stall
+// one answer); no other call is retried, and an error status never is.
 func (m *Manager) ImageManifest(name string) (app.RemoteImage, error) {
 	var v api.ImageManifestEntry
-	if err := m.call("getImageManifest", m.timeout, &v, func(ctx context.Context) (*http.Response, error) {
-		return m.client.GetImageManifest(ctx, m.name, name)
-	}); err != nil {
+	do := func() error {
+		v = api.ImageManifestEntry{}
+		return m.call("getImageManifest", m.timeout, &v, func(ctx context.Context) (*http.Response, error) {
+			return m.client.GetImageManifest(ctx, m.name, name)
+		})
+	}
+	err := do()
+	if err != nil && isTimeout(err) {
+		err = do()
+	}
+	if err != nil {
 		return app.RemoteImage{}, err
 	}
 	out := app.RemoteImage{Name: name, Foreign: v.Foreign}

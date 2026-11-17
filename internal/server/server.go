@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jaredeh/vmtool/internal/api"
@@ -25,6 +26,10 @@ type Server struct {
 	// bearer token whose SHA-256 is Config.TokenSHA256. A nil Config or an
 	// empty hash authenticates nothing, and ListenAndServe refuses both.
 	Config *config.Config
+
+	// h is the handlers Handler last built (ListenAndServe warms its pool
+	// directory).
+	h *handlers
 }
 
 // Handler returns the generated mux wrapped around StrictServerInterface,
@@ -48,6 +53,7 @@ func (s *Server) Handler() http.Handler {
 	if s.Config != nil {
 		h.role = s.Config.Role
 	}
+	s.h = h
 	var hash string
 	if s.Config != nil {
 		hash = s.Config.TokenSHA256
@@ -85,7 +91,7 @@ func chain(h *handlers, auth func(http.Handler) http.Handler) http.Handler {
 	}
 	// tunnelMux serves openVMTunnel itself (it takes over the connection);
 	// every other operation goes to the strict adapter.
-	mux := tunnelMux{ServerInterface: api.NewStrictHandler(h, nil), h: h}
+	mux := tunnelMux{ServerInterface: api.NewStrictHandler(h, []api.StrictMiddlewareFunc{noteOperation}), h: h}
 	var next http.Handler = withMaxBytes(withRequest(api.HandlerFromMux(mux, http.NewServeMux())))
 	// A hypervisor refuses the workstation-only operations here, after auth
 	// and before the body is read or any handler runs.
@@ -93,7 +99,7 @@ func chain(h *handlers, auth func(http.Handler) http.Handler) http.Handler {
 	if auth != nil {
 		next = auth(next)
 	}
-	return slogRequests(next)
+	return slogRequests(h, next)
 }
 
 // addr is the listen address: the Listen field (flag), else config.yml
@@ -172,6 +178,11 @@ func (s *Server) ListenAndServe() error {
 	// After binding: holding the port means no other daemon on it is
 	// mid-upload, so its temporary files are stale.
 	startCleanup(s.Config.Role, hosts.New(s.Config))
+	if s.Config.Role == config.RoleHypervisor {
+		if s.h != nil {
+			s.h.warmPoolDir()
+		}
+	}
 	slog.Info("vmtool API listening", "url", "https://"+srv.Addr+"/")
 	return serve(srv, ln)
 }
@@ -221,16 +232,62 @@ func withRequest(next http.Handler) http.Handler {
 	})
 }
 
-func slogRequests(next http.Handler) http.Handler {
+// slowRequest is how long a request may take before it is logged as slow.
+const slowRequest = 5 * time.Second
+
+// reqNote is what a request's handler tells the request log: the operation
+// id and the path's host and name (a VM or an image). Nothing else about the
+// request is kept: never the body, a header or the query string.
+type reqNote struct{ op, host, name string }
+
+type noteKeyType struct{}
+
+var noteKey noteKeyType
+
+// noteOperation is the strict handler's middleware: it records the
+// operation id and path parameters for the request log.
+func noteOperation(f api.StrictHandlerFunc, operationID string) api.StrictHandlerFunc {
+	return func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error) {
+		// The generated name is the spec's operationId, capitalised.
+		setNote(ctx, strings.ToLower(operationID[:1])+operationID[1:], r)
+		return f(ctx, w, r, request)
+	}
+}
+
+// setNote fills the request's note, if it has one (slogRequests made it).
+func setNote(ctx context.Context, op string, r *http.Request) {
+	if n, ok := ctx.Value(noteKey).(*reqNote); ok && n != nil {
+		n.op, n.host, n.name = op, r.PathValue("host"), r.PathValue("name")
+	}
+}
+
+func slogRequests(h *handlers, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		sw := &statusWriter{ResponseWriter: w, code: 200}
-		next.ServeHTTP(sw, r)
+		note := &reqNote{}
+		next.ServeHTTP(sw, r.WithContext(context.WithValue(r.Context(), noteKey, note)))
+		d := time.Since(start)
 		slog.Info("http",
 			"method", r.Method,
 			"path", r.URL.Path,
 			"status", sw.code,
-			"duration", time.Since(start),
+			"duration", d,
 		)
+		limit := h.slowAfter
+		if limit <= 0 {
+			limit = slowRequest
+		}
+		// A tunnel session (101) lasts as long as the user's ssh does; that
+		// is not a slow request.
+		if d > limit && sw.code != http.StatusSwitchingProtocols {
+			slog.Warn("slow request",
+				"operation", note.op,
+				"host", note.host,
+				"name", note.name,
+				"status", sw.code,
+				"duration", d,
+			)
+		}
 	})
 }

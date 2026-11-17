@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/jaredeh/vmtool/internal/api"
@@ -37,6 +38,13 @@ type handlers struct {
 	// beforeCommit, when set, runs in uploadImage after the body is verified
 	// and before the new file is put in place (tests inject races here).
 	beforeCommit func(name string)
+	// slowAfter is the duration past which a request is logged as slow; zero
+	// means slowRequest (server.go). Tests shorten it.
+	slowAfter time.Duration
+	// poolDir is the vmtool pool's directory, resolved once and kept
+	// (poolDirOf in images.go); poolMu guards it.
+	poolMu  sync.Mutex
+	poolDir string
 }
 
 // guestSvc is h.svc with a Tunnel for this request: the running vmtool as

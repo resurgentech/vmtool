@@ -158,17 +158,28 @@ func (h *handlers) GetImageManifest(ctx context.Context, req api.GetImageManifes
 		return api.GetImageManifest403JSONResponse{Error: fmt.Sprintf(
 			"image manifests are kept by hypervisor daemons; %s is the workstation and keeps no image cache", req.Host)}, nil
 	}
-	v, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
-		if h.role != config.RoleHypervisor {
-			// A workstation asks the configured host's daemon.
-			st, ok := m.(app.ImageStore)
-			if !ok {
-				return nil, fmt.Errorf("host %s keeps no image cache", req.Host)
+	var v any
+	var err error
+	if h.role == config.RoleHypervisor && req.Host == h.hosts.Local() {
+		// The hot path: a listed image is answered without libvirt. The
+		// Manager is resolved only when the manifest cannot answer.
+		rs := h.hosts.WithToken(requestToken(ctx))
+		v, err = h.imageState(req.Host, req.Name, func() (app.Manager, func(), error) { return rs.Resolve(req.Host) })
+	} else {
+		v, err = h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
+			if h.role != config.RoleHypervisor {
+				// A workstation asks the configured host's daemon.
+				st, ok := m.(app.ImageStore)
+				if !ok {
+					return nil, fmt.Errorf("host %s keeps no image cache", req.Host)
+				}
+				return st.ImageManifest(req.Name)
 			}
-			return st.ImageManifest(req.Name)
-		}
-		return h.imageState(m, req.Host, req.Name)
-	})
+			// A hypervisor serves only itself: Resolve refused anything else
+			// before, and the manager is the one for req.Host.
+			return h.imageState(req.Host, req.Name, func() (app.Manager, func(), error) { return m, func() {}, nil })
+		})
+	}
 	if err != nil {
 		switch kindOf(err) {
 		case app.KindNotFound:
@@ -192,14 +203,36 @@ func (h *handlers) GetImageManifest(ctx context.Context, req api.GetImageManifes
 
 // imageState is this daemon's entry for name. A listed image reports its
 // digest only while its file is in place with the listed size, so a client
-// re-uploads a missing or truncated one.
-func (h *handlers) imageState(m app.Manager, host, name string) (app.RemoteImage, error) {
+// re-uploads a missing or truncated one. A listed image is answered from the
+// manifest and one Lstat; resolve (a libvirt connection) is called only when
+// the pool's directory is not yet known or the name is not listed.
+func (h *handlers) imageState(host, name string, resolve func() (app.Manager, func(), error)) (app.RemoteImage, error) {
 	out := app.RemoteImage{Name: name}
-	dir, err := cachePoolDir(m, host)
+	e, listed, err := h.manifest().Get(name)
 	if err != nil {
 		return out, err
 	}
-	e, listed, err := h.manifest().Get(name)
+	var m app.Manager
+	var done func()
+	open := func() error {
+		if m != nil {
+			return nil
+		}
+		var err error
+		m, done, err = resolve()
+		return err
+	}
+	defer func() {
+		if done != nil {
+			done()
+		}
+	}()
+	dir, err := h.poolDirOf(host, func() (string, error) {
+		if err := open(); err != nil {
+			return "", err
+		}
+		return cachePoolDir(m, host)
+	})
 	if err != nil {
 		return out, err
 	}
@@ -210,12 +243,49 @@ func (h *handlers) imageState(m app.Manager, host, name string) (app.RemoteImage
 		}
 		return out, nil
 	}
+	if err := open(); err != nil {
+		return out, err
+	}
 	p, exists, err := existingVolume(m, name, dir)
 	if err != nil {
 		return out, err
 	}
 	out.Foreign, out.Path = exists, p
 	return out, nil
+}
+
+// poolDirOf is the vmtool pool's directory: found by find once, then kept
+// for the life of the daemon (a failure is not kept). The pool is made by
+// `just prereqs <host>` and does not move; a daemon restart picks up a
+// redefined one.
+func (h *handlers) poolDirOf(host string, find func() (string, error)) (string, error) {
+	h.poolMu.Lock()
+	defer h.poolMu.Unlock()
+	if h.poolDir != "" {
+		return h.poolDir, nil
+	}
+	dir, err := find()
+	if err != nil {
+		return "", err
+	}
+	h.poolDir = dir
+	return dir, nil
+}
+
+// warmPoolDir resolves and keeps the pool directory at daemon start, so the
+// first getImageManifest does not need libvirt either. A failure is logged;
+// the first request that needs the directory tries again.
+func (h *handlers) warmPoolDir() {
+	host := h.hosts.Local()
+	m, done, err := h.hosts.Resolve(host)
+	if err != nil {
+		slog.Warn("image cache: pool directory not resolved at start", "err", err)
+		return
+	}
+	defer done()
+	if _, err := h.poolDirOf(host, func() (string, error) { return cachePoolDir(m, host) }); err != nil {
+		slog.Warn("image cache: pool directory not resolved at start", "err", err)
+	}
 }
 
 // --- uploadImage ---
@@ -227,6 +297,7 @@ func (h *handlers) UploadImage(_ context.Context, _ api.UploadImageRequestObject
 }
 
 func (t tunnelMux) UploadImage(w http.ResponseWriter, r *http.Request, host api.HostName, name api.ImageName, params api.UploadImageParams) {
+	setNote(r.Context(), "uploadImage", r)
 	t.h.uploadImage(w, r, host, name, params.XImageSHA256)
 }
 
@@ -293,7 +364,7 @@ func (h *handlers) storeImage(w http.ResponseWriter, r *http.Request, host, name
 		return fail(http.StatusInternalServerError, "%v", err)
 	}
 	defer done()
-	dir, err := cachePoolDir(m, host)
+	dir, err := h.poolDirOf(host, func() (string, error) { return cachePoolDir(m, host) })
 	if err != nil {
 		return fail(http.StatusInternalServerError, "%v", err)
 	}

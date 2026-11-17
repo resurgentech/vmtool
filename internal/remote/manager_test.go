@@ -336,3 +336,80 @@ func TestDefineSendsNoCredentials(t *testing.T) {
 		}
 	}
 }
+
+// getImageManifest is a read: one timeout is retried once. A stall that
+// clears answers; two stalls fail; an error status is not retried.
+func TestImageManifestRetriesOneTimeout(t *testing.T) {
+	var calls atomic.Int32
+	f := newFakeAPI(t, "1", func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			select { // stall until the client gives up
+			case <-r.Context().Done():
+			case <-time.After(5 * time.Second):
+			}
+			return
+		}
+		sum := strings.Repeat("a", 64)
+		jsonReply(w, 200, api.ImageManifestEntry{Name: "u.qcow2", Sha256: &sum, Size: ptr(int64(7))})
+	})
+	m := f.manager(t, WithTimeouts(150*time.Millisecond, 0))
+	got, err := m.ImageManifest("u.qcow2")
+	if err != nil {
+		t.Fatalf("ImageManifest after one stall: %v", err)
+	}
+	if got.Size != 7 || calls.Load() != 2 {
+		t.Errorf("got %+v after %d calls, want size 7 after 2", got, calls.Load())
+	}
+}
+
+func TestImageManifestRetriesOnlyOnce(t *testing.T) {
+	var calls atomic.Int32
+	f := newFakeAPI(t, "1", func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		select {
+		case <-r.Context().Done():
+		case <-time.After(5 * time.Second):
+		}
+	})
+	m := f.manager(t, WithTimeouts(100*time.Millisecond, 0))
+	if _, err := m.ImageManifest("u.qcow2"); err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("err = %v, want a timeout", err)
+	}
+	if calls.Load() != 2 {
+		t.Errorf("calls = %d, want 2 (one try, one retry)", calls.Load())
+	}
+}
+
+func TestImageManifestDoesNotRetryAnError(t *testing.T) {
+	var calls atomic.Int32
+	f := newFakeAPI(t, "1", func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		jsonReply(w, 500, api.Error{Error: "boom"})
+	})
+	m := f.manager(t)
+	if _, err := m.ImageManifest("u.qcow2"); err == nil {
+		t.Fatal("want an error")
+	}
+	if calls.Load() != 1 {
+		t.Errorf("calls = %d, want 1", calls.Load())
+	}
+}
+
+// Nothing else gains a retry: a stalled list is tried once.
+func TestOtherReadsAreNotRetried(t *testing.T) {
+	var calls atomic.Int32
+	f := newFakeAPI(t, "1", func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		select {
+		case <-r.Context().Done():
+		case <-time.After(5 * time.Second):
+		}
+	})
+	m := f.manager(t, WithTimeouts(100*time.Millisecond, 0))
+	if _, err := m.List(); err == nil {
+		t.Fatal("want a timeout")
+	}
+	if calls.Load() != 1 {
+		t.Errorf("calls = %d, want 1", calls.Load())
+	}
+}
