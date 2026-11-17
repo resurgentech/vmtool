@@ -261,3 +261,11 @@ are appended, never edited in; a hook refuses rewrites.
   names only the VM, not the image too (B0 finding). New shape check
   `check_no_installer_hosts_line`. Details in `packer_images/docs/LOG.md`.
 - Commits: the C14 commit on `clone-identity`.
+
+## 2026-11-16 — C15 `ubuntu2404_aws` takes its checksum from Canonical's SHA256SUMS
+
+- `packer_images`: the aws template's `iso_checksum` reads
+  `noble/current/SHA256SUMS` (`file:` form) instead of a pinned sum that
+  went stale on the rolling URL. New shape check
+  `check_rolling_url_checksum`. Details in `packer_images/docs/LOG.md`.
+- Commits: the C15 commit on `clone-identity`.

@@ -203,3 +203,22 @@ rewrites.
   old behaviour (image hostname, shared machine-id).
 - Every VM made here is deleted. Still open in B: `ubuntu2404_aws`,
   veritech04, the cache measurement.
+
+## 2026-11-16 — C15 `ubuntu2404_aws` takes its checksum from Canonical's SHA256SUMS
+
+- `qemu_images/ubuntu2404_aws/template.pkr.hcl:12`: `iso_checksum` is now
+  `file:https://cloud-images.ubuntu.com/noble/current/SHA256SUMS` instead
+  of a pinned bare hex sum, which went stale when Canonical republished
+  `noble/current/` (B's aws build failed in 17 s). `iso_url` stays the
+  rolling URL; each build gets the newest image, verified against the
+  sums file fetched over HTTPS (no gpg check).
+- New shape check `check_rolling_url_checksum`, run for every template:
+  an `iso_url` containing `/current/` needs an `iso_checksum` starting
+  with `file:`. Before the template change `check` failed for
+  `ubuntu2404_aws` only. On a scratch copy, bare hex, `sha256:` and
+  `md5:` sums fail on the rolling URL; a dated URL passes with any sum.
+- `CLAUDE.md`: the aws table row and a "Checksums" note under the table;
+  "Adding a new distro" says which checksum form a URL takes.
+- Not built: `packer validate` downloads nothing, so only B's aws build
+  proves packer 1.16.1 reads Ubuntu's `<hash> *<file>` sums lines.
+- Commits: the C15 commit on `clone-identity` (vmtool repo).

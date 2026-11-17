@@ -10,13 +10,15 @@ Packer-based QEMU/KVM VM image builder. Builds qcow2 images and installs them in
 |----------|--------|-------|
 | `ubuntu2404` | 24.04 live-server ISO, subiquity autoinstall | 10G disk; default template |
 | `ubuntu2404_gui` | 24.04 live-server ISO | 20G disk; ansible runs `../ansible/playbooks/install_gui.yml` (GNOME, gdm3 autologin, chromium) |
-| `ubuntu2404_aws` | 24.04 (noble) cloud image, cloud-init via `cd_files` | 10G disk |
+| `ubuntu2404_aws` | 24.04 (noble) cloud image, cloud-init via `cd_files` | 10G disk; rolling image URL (`noble/current/`), checksum read from `noble/current/SHA256SUMS` (see below) |
 | `ubuntu2604` | 26.04.1 live-server ISO, subiquity autoinstall | 10G disk |
 | `ubuntu2604_btrfs` | 26.04.1 live-server ISO, explicit `storage: config:` | 10G disk; ESP on partition 1, flat btrfs root on partition 2, no swap file |
 | `ubuntu2604_btrfs_gui` | 26.04.1 live-server ISO, explicit `storage: config:` | 20G disk; `ubuntu2604_btrfs` storage (ESP p1, btrfs root p2) plus the `install_gui.yml` playbook |
 | `ubuntu2604_gui` | 26.04.1 live-server ISO | 20G disk; same shared `install_gui.yml` playbook |
 
 `just templates` lists them.
+
+**Checksums.** The ISO templates pin a point-release ISO with a `sha256:` sum. `ubuntu2404_aws` downloads the rolling `https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img`, which Canonical republishes in place, so a pinned sum goes stale (it did on 2026-11-16). Its `iso_checksum` is `file:https://cloud-images.ubuntu.com/noble/current/SHA256SUMS`: packer fetches Canonical's sums file and takes the line for the downloaded file's name. Each build gets the newest image, still verified (over HTTPS; the `SHA256SUMS.gpg` signature is not checked). `just check` (`check_rolling_url_checksum`) fails any template whose `iso_url` contains `/current/` and whose `iso_checksum` does not start with `file:`; a URL without `/current/` may pin any sum.
 
 ## UEFI
 
@@ -106,6 +108,6 @@ Set in `justfile` / `run`, exported as `PKR_VAR_*` for Packer:
 ## Adding a new distro
 
 1. Create `qemu_images/<distro>/` mirroring an existing template (e.g. `ubuntu2604`), including its `.gitignore`
-2. Update ISO url/checksum in `template.pkr.hcl`
+2. Update ISO url/checksum in `template.pkr.hcl` (a pinned URL takes `sha256:<hex>`; a rolling `/current/` URL takes `file:<url of its SHA256SUMS>`, which `just check` enforces)
 3. Adjust boot commands if distro installer differs
 4. `just validate <distro>` and `just check`; no script change is needed, templates are picked up by directory name

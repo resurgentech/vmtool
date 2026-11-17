@@ -9,7 +9,7 @@ packer {
 
 source "qemu" "ubuntu" {
   iso_url          = "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img"
-  iso_checksum     = "53fdde898feed8b027d94baa9cfe8229867f330a1d9c49dc7d84465ee7f229f7"
+  iso_checksum     = "file:https://cloud-images.ubuntu.com/noble/current/SHA256SUMS"
   disk_image       = true
   cd_files         = ["./http/user-data", "./http/meta-data"]
   cd_label         = "cidata"

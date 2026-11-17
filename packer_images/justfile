@@ -145,6 +145,20 @@ check:
             || fail "$1" "does not install it to /etc/netplan/99-wildcard.yaml with mode 0600"
     }
 
+    # C15: a rolling image URL (/current/) is republished in place, so a pinned
+    # checksum goes stale. Such a template must read its sum from a file
+    # (packer's file:<url> form). A URL without /current/ may pin any sum.
+    check_rolling_url_checksum() {
+        local f="{{ images }}/$1/template.pkr.hcl" sum
+        grep -Eq '^[[:space:]]*iso_url[[:space:]]*=[[:space:]]*"[^"]*/current/' "$f" || return 0
+        while IFS= read -r sum; do
+            [[ "$sum" == file:* ]] \
+                || fail "$1" "rolling iso_url (/current/) needs a file: checksum, not a pinned value"
+        done < <(sed -nE 's/^[[:space:]]*iso_checksum[[:space:]]*=[[:space:]]*"([^"]*)".*/\1/p' "$f")
+        grep -Eq '^[[:space:]]*iso_checksum[[:space:]]*=' "$f" \
+            || fail "$1" "rolling iso_url (/current/) needs a file: checksum, not a pinned value"
+    }
+
     [[ -f "{{ root }}/files/99-vmtool.cfg" ]] || shape_failures+=("files/99-vmtool.cfg is missing")
     if [[ -f "{{ root }}/files/99-wildcard.yaml" ]]; then
         grep -Eq '^[[:space:]]+dhcp-identifier:[[:space:]]*mac[[:space:]]*$' "{{ root }}/files/99-wildcard.yaml" \
@@ -153,7 +167,7 @@ check:
         shape_failures+=("files/99-wildcard.yaml is missing")
     fi
 
-    shape_checks=(check_efi_boot check_fallback_loader check_clean_for_cloud_init check_no_installer_hosts_line check_vmtool_cfg check_cloud_init_not_disabled check_netplan_shared)
+    shape_checks=(check_efi_boot check_fallback_loader check_clean_for_cloud_init check_no_installer_hosts_line check_vmtool_cfg check_cloud_init_not_disabled check_netplan_shared check_rolling_url_checksum)
 
     for dir in "{{ images }}"/*/; do
         t="$(basename "$dir")"
