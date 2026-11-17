@@ -340,3 +340,16 @@ are appended, never edited in; a hook refuses rewrites.
 - Every create test in app, server, CLI and TUI installs
   `testexec.Ansible` and a stub tunnel `Exe`.
 - Commits: the C13 commit on `clone-identity`.
+
+## 2026-11-17 — C16 `setup_bot.yml` keeps the tunnel when it reconnects as bot
+
+- The "Switch remaining tasks to bot key auth" `set_fact` appends
+  `-o IdentitiesOnly=yes` to the existing `ansible_ssh_common_args`
+  (default: today's fixed args for a hand-run inventory) instead of
+  replacing it, so a VM keeps its `vmtool tunnel` ProxyCommand and the
+  first run no longer ends "Could not resolve hostname host/vm".
+- The playbook header says a half-done VM is finished by a re-run.
+- New `scripts/setup_bot_test.go` (yaml.v3); its
+  `ansible-playbook --syntax-check` subtest runs only with
+  `VMTOOL_TEST_ANSIBLE_SYNTAX=1`, never in the gate.
+- Commits: the C16 commit on `clone-identity`.

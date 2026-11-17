@@ -11,7 +11,9 @@
 # login is disabled for bot only and display-manager autologin is untouched.
 #
 # Safe to re-run: existing local creds, bot user, sudoers, sshd config,
-# and the absence of packer are left alone.
+# and the absence of packer are left alone. A VM left half done by an
+# earlier run (bot present, packer still there) is finished by running
+# this playbook again.
 - name: Create bot user and local credentials
   hosts: all
   become: true
@@ -217,6 +219,10 @@
     - name: Reconnect as bot
       when: (ansible_user | default(ansible_ssh_user | default(''))) != dest_user
       block:
+        # Add to ansible_ssh_common_args, never replace it: vmtool's inventory
+        # carries a VM's ProxyCommand (vmtool tunnel host/vm) in it, and
+        # without the proxy ssh tries to resolve "host/vm" as a DNS name.
+        # The default is for a hand-run inventory that sets no args.
         - name: Switch remaining tasks to bot key auth
           set_fact:
             ansible_user: bot
@@ -224,7 +230,7 @@
             ansible_ssh_private_key_file: "{{ machines_dir }}/id_ed25519"
             ansible_ssh_pass: ""
             ansible_password: ""
-            ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes -o LogLevel=ERROR"
+            ansible_ssh_common_args: "{{ (ansible_ssh_common_args | default('-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR')) ~ ' -o IdentitiesOnly=yes' }}"
 
         - name: Reset SSH connection as bot
           meta: reset_connection
