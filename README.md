@@ -37,6 +37,11 @@ scripts/prereqs.sh -e '{"vmtool_extra_pools":[{"name":"fast","path":"/srv/vms"}]
 
 Log out and back in afterwards (or `newgrp libvirt`) to pick up the group.
 
+The playbook also installs OVMF (UEFI firmware: `ovmf` on Debian/Ubuntu,
+`edk2-ovmf` on Arch). New VMs default to UEFI, and packer's UEFI image builds
+need it on the workstation. A running daemon needs no restart; libvirt reads
+the firmware descriptors each time a domain is defined.
+
 ### Hypervisors
 
 `just prereqs <host>` (a host from `config.yml`) runs the same playbook over
@@ -248,6 +253,21 @@ owner. `commission.yml` is refused for machines except through
 registered machine's `.machines` entry, and VM and machine names cannot collide.
 
 ## Troubleshooting
+
+### Two VMs show the same IP
+
+Clones of one image share its DHCP client id when they share its machine-id,
+so the DHCP server hands them the same lease. VMs cloned from an image built
+before `packer_images` ended clean for cloud-init keep the image's
+identity: the same machine-id, SSH host keys and hostname. Fix one with
+
+```bash
+vmtool playbook host/vm commission.yml
+```
+
+and rebuild the image so new clones are right from the start: `just generate
+<template>` in `packer_images`. The next `create` re-uploads it, since the hash
+differs.
 
 ### A new VM never gets an IP
 

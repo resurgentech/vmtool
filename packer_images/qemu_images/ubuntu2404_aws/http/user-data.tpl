@@ -18,23 +18,11 @@ ssh_pwauth: true
 packages:
   - qemu-guest-agent
 
-# Handle files and network configuration
-write_files:
-  - path: /etc/netplan/99-wildcard.yaml
-    permissions: '0600'
-    content: |
-      network:
-        version: 2
-        ethernets:
-          all-en:
-            match:
-              name: "en*"
-            dhcp4: true
+# Network: no netplan here. The cloud image's own cloud-init DHCP config keeps
+# the build VM reachable; the shared files/99-wildcard.yaml is installed by a
+# packer file provisioner (see template.pkr.hcl).
 
 # Finalize configuration
 runcmd:
-  - rm -f /etc/netplan/50-cloud-init.yaml
-  - netplan apply
   - rm -f /etc/ssh/sshd_config.d/60-cloudimg-settings.conf
   - ssh-keygen -A
-  - touch /etc/cloud/cloud-init.disabled

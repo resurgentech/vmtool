@@ -231,3 +231,35 @@ func TestUserTasksAppendGroups(t *testing.T) {
 		t.Fatalf("found %d user tasks with groups, want at least 2", n)
 	}
 }
+
+// TestSetupHostInstallsOVMF pins the UEFI firmware package: new VMs default to
+// UEFI and packer's UEFI builds need it on the workstation.
+func TestSetupHostInstallsOVMF(t *testing.T) {
+	b, err := os.ReadFile("../ansible/playbooks/setup_host.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var plays []struct {
+		Vars map[string]any `yaml:"vars"`
+	}
+	if err := yaml.Unmarshal(b, &plays); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ list, pkg string }{
+		{"vmtool_packages_debian", "ovmf"},
+		{"vmtool_packages_arch", "edk2-ovmf"},
+	} {
+		found := false
+		for _, p := range plays {
+			items, _ := p.Vars[c.list].([]any)
+			for _, it := range items {
+				if it == c.pkg {
+					found = true
+				}
+			}
+		}
+		if !found {
+			t.Errorf("%s lacks %q", c.list, c.pkg)
+		}
+	}
+}

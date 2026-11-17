@@ -228,3 +228,20 @@ are appended, never edited in; a hook refuses rewrites.
   (fails clearly on LVM), growpart exit 1 + NOCHANGE is success, fs step
   always runs (resize2fs or btrfs resize).
 - Commits: the tranche-1 commit on `clone-identity`.
+
+## 2026-11-16 — U3 Hosts get OVMF
+
+- `setup_host.yml` installs `ovmf` (Debian/Ubuntu) and `edk2-ovmf` (Arch)
+  in the base package lists; `TestSetupHostInstallsOVMF` pins them;
+  README prerequisites say why (UEFI default, packer UEFI builds) and
+  that no daemon restart is needed.
+- Commits: the tranche-2 commit on `clone-identity`.
+
+## 2026-11-16 — C3 Images end clean for cloud-init (README part)
+
+- `packer_images` images now end with `cloud-init clean --machine-id`,
+  so each clone takes its own identity at first boot (details in
+  `packer_images/docs/LOG.md`). README Troubleshooting gains "Two VMs
+  show the same IP": cause, `vmtool playbook host/vm commission.yml` for
+  VMs cloned from older images, rebuild the image.
+- Commits: the tranche-2 commit on `clone-identity`.

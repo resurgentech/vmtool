@@ -37,11 +37,120 @@ validate template=default_template: (_check-template template)
     cd "{{ images / template }}" && packer init .
     cd "{{ images / template }}" && packer validate -var distro="{{ template }}" -var username="$PKR_VAR_username" -var password="$PKR_VAR_password" -var output_directory="$(mktemp -u -t packer-validate-XXXXXX)" .
 
-# Syntax-check ./run and validate every template in qemu_images/
+# Shape-check every template, then syntax-check ./run and validate every template in qemu_images/
 check:
     #!/usr/bin/env bash
     set -uo pipefail
     bash -n "{{ root / "run" }}" || { echo "check: bash -n run failed" >&2; exit 1; }
+
+    # --- shape assertions -------------------------------------------------
+    # Each check_* takes a template dir name and calls fail "<template>" "<what>"
+    # for each thing missing. Add new checks as functions and list them in
+    # shape_checks below.
+    shape_failures=()
+    fail() { shape_failures+=("$1: $2"); }
+
+    # Text of the template's last provisioner block: from the last line that
+    # opens a provisioner to the build block's closing brace (column 0).
+    last_provisioner() {
+        awk '/^[[:space:]]*provisioner "/ { buf = ""; on = 1 }
+             on { buf = buf $0 "\n" }
+             /^}/ { on = 0 }
+             END { printf "%s", buf }' "$1"
+    }
+
+    check_efi_boot() {
+        grep -Eq '^[[:space:]]*efi_boot[[:space:]]*=[[:space:]]*true' "{{ images }}/$1/template.pkr.hcl" \
+            || fail "$1" "source \"qemu\" lacks efi_boot = true"
+    }
+
+    check_fallback_loader() {
+        local last
+        last="$(last_provisioner "{{ images }}/$1/template.pkr.hcl")"
+        [[ "$last" =~ ^[[:space:]]*provisioner[[:space:]]+\"shell\" ]] \
+            || fail "$1" "last provisioner is not a shell provisioner"
+        [[ "$last" == *"/boot/efi/EFI/BOOT/BOOTX64.EFI"* ]] \
+            || fail "$1" "last provisioner lacks the BOOTX64.EFI guard"
+        [[ "$last" == *"grub-install --target=x86_64-efi --efi-directory=/boot/efi --removable --no-nvram"* ]] \
+            || fail "$1" "last provisioner lacks the fallback-loader grub-install line"
+    }
+
+    # C3: the image ends clean for cloud-init. The last provisioner waits for
+    # the build VM's own cloud-init, then cleans it as its very last inline line.
+    check_clean_for_cloud_init() {
+        local last lastline pre
+        last="$(last_provisioner "{{ images }}/$1/template.pkr.hcl")"
+        [[ "$last" == *"cloud-init clean --machine-id"* ]] \
+            || { fail "$1" "last provisioner lacks cloud-init clean --machine-id"; return; }
+        [[ "$last" == *"cloud-init status --wait"* ]] \
+            || fail "$1" "last provisioner lacks cloud-init status --wait"
+        pre="${last%%cloud-init clean*}"
+        [[ "$pre" == *"cloud-init status --wait"* ]] \
+            || fail "$1" "cloud-init status --wait is not before cloud-init clean"
+        # last non-blank, non-bracket line of the block must be the clean
+        lastline="$(printf '%s' "$last" | grep -E '^[[:space:]]*"' | tail -n 1)"
+        [[ "$lastline" == *"cloud-init clean --machine-id"* ]] \
+            || fail "$1" "cloud-init clean --machine-id is not the last inline line"
+    }
+
+    check_vmtool_cfg() {
+        local f="{{ images }}/$1/template.pkr.hcl"
+        grep -q 'files/99-vmtool.cfg' "$f" \
+            || fail "$1" "does not install files/99-vmtool.cfg"
+        grep -q '/etc/cloud/cloud.cfg.d/99-vmtool.cfg' "$f" \
+            || fail "$1" "does not install to /etc/cloud/cloud.cfg.d/99-vmtool.cfg"
+    }
+
+    # Nothing may leave cloud-init disabled: not the template, not user-data.tpl.
+    check_cloud_init_not_disabled() {
+        local f
+        for f in "{{ images }}/$1/template.pkr.hcl" "{{ images }}/$1"/http/user-data.tpl; do
+            [[ -e "$f" ]] || continue
+            ! grep -q 'cloud-init\.disabled' "$f" \
+                || fail "$1" "$(basename "$f") touches cloud-init.disabled"
+        done
+    }
+
+    # One shared netplan file (files/99-wildcard.yaml) installed by every
+    # template. No template may carry its own copy (any yaml under its dir) or
+    # write one inline (a user-data.tpl with a netplan write_files path or an
+    # ethernets: block).
+    check_netplan_shared() {
+        local d="{{ images }}/$1" f
+        while IFS= read -r f; do
+            fail "$1" "carries its own netplan/yaml file: ${f#"$d"/}"
+        done < <(find "$d" \( -name '*.yaml' -o -name '*.yml' \) -type f | sort)
+        for f in "$d"/http/user-data.tpl; do
+            [[ -e "$f" ]] || continue
+            ! grep -Ev '^[[:space:]]*#' "$f" | grep -Eq 'path:[[:space:]]*/etc/netplan|ethernets:' \
+                || fail "$1" "$(basename "$f") writes an inline netplan"
+        done
+        grep -q '\.\./\.\./files/99-wildcard\.yaml' "$d/template.pkr.hcl" \
+            || fail "$1" "does not take the shared ../../files/99-wildcard.yaml"
+        grep -Eq 'install -m 0?600 [^"]*/etc/netplan/99-wildcard\.yaml' "$d/template.pkr.hcl" \
+            || fail "$1" "does not install it to /etc/netplan/99-wildcard.yaml with mode 0600"
+    }
+
+    [[ -f "{{ root }}/files/99-vmtool.cfg" ]] || shape_failures+=("files/99-vmtool.cfg is missing")
+    if [[ -f "{{ root }}/files/99-wildcard.yaml" ]]; then
+        grep -Eq '^[[:space:]]+dhcp-identifier:[[:space:]]*mac[[:space:]]*$' "{{ root }}/files/99-wildcard.yaml" \
+            || shape_failures+=("files/99-wildcard.yaml lacks dhcp-identifier: mac")
+    else
+        shape_failures+=("files/99-wildcard.yaml is missing")
+    fi
+
+    shape_checks=(check_efi_boot check_fallback_loader check_clean_for_cloud_init check_vmtool_cfg check_cloud_init_not_disabled check_netplan_shared)
+
+    for dir in "{{ images }}"/*/; do
+        t="$(basename "$dir")"
+        for c in "${shape_checks[@]}"; do "$c" "$t"; done
+    done
+    if (( ${#shape_failures[@]} )); then
+        printf 'check: shape: %s\n' "${shape_failures[@]}" >&2
+        exit 1
+    fi
+
+    # --- packer validate --------------------------------------------------
     failed=()
     for dir in "{{ images }}"/*/; do
         t="$(basename "$dir")"

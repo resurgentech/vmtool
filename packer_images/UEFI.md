@@ -1,135 +1,86 @@
-# Converting to UEFI
+# UEFI images
 
-Notes on what it would take to build and boot UEFI images. Written
-2026-11-14. Nothing here has been built or tested yet; the items under
-"Check after the first build" are the open risks.
+Record of the conversion from BIOS to UEFI templates (roadmap step U4).
+Nothing here has been built yet: the templates validate, but only a real
+build proves they install and boot. The open items are under "Checks at
+B0/B".
 
-## Where we are today: BIOS everywhere
+## What was done
 
-- **vmtool defines BIOS guests.** The `<os>` block in
-  `../pkg/vmtool/libvirt.go` (`domainXML`) has a machine type and a boot
-  device, with no `firmware='efi'` attribute and no `<loader>` element.
-  libvirt then starts the guest with SeaBIOS.
-- **Packer installs under BIOS.** No template sets an EFI option.
-- **The images are BIOS-only.** `ubuntu2604` is GPT with a 1 MiB "BIOS boot"
-  partition and an ext4 root on partition 2. It has no EFI system partition.
+- **vmtool firmware option** shipped earlier (tranche 1, step U1):
+  `--firmware efi|bios`, default `efi`. The VM definition uses libvirt's
+  `firmware='efi'` with secure boot off.
+- **Templates converted in place.** No `_uefi` templates. Old BIOS images keep
+  their names; a rebuild replaces them (new hash, re-uploaded on the next
+  create). Clones are full copies and keep their BIOS definitions.
+- **Every `source "qemu"`** has `efi_boot = true`, with `efi_firmware_code`
+  and `efi_firmware_vars` taken from two variables defaulting to Arch's
+  non-secure-boot `edk2-ovmf` files (`/usr/share/edk2/x64/OVMF_CODE.4m.fd`,
+  `OVMF_VARS.4m.fd`). Other distros use other paths: set
+  `PKR_VAR_efi_firmware_code` / `PKR_VAR_efi_firmware_vars`. `edk2-ovmf` must
+  be installed on the build host.
+- **`boot_wait`** raised from `3s` to `10s`: OVMF reaches GRUB later than
+  SeaBIOS. The ISO's GRUB menu is the same in both modes, so `boot_command` is
+  unchanged.
+- **ext4 ISO templates** keep `layout: direct`. Under UEFI the installer puts
+  an EFI system partition (ESP) where the 1 MiB BIOS boot partition was (p1);
+  root is believed to stay p2.
+- **btrfs templates** (`ubuntu2604_btrfs`, `ubuntu2604_btrfs_gui`): the
+  explicit `storage: config:` in `http/user-data.tpl` replaces the 1M
+  `bios_grub` partition with a 512M ESP as partition 1 (`flag: boot`,
+  `grub_device: true`, fat32, mounted at `/boot/efi`); `grub_device` moved off
+  the disk entry. Root stays partition 2, btrfs. The `/` mount is listed before
+  `/boot/efi` (curtin mounts in list order).
+- **`ubuntu2404_aws`**: the Ubuntu cloud image already carries both a BIOS
+  boot partition and an ESP (root is p1). Building it under UEFI is just
+  `efi_boot`; it stays bootable both ways.
+- **Fallback loader provisioner.** The last provisioner of every template
+  installs `EFI/BOOT/BOOTX64.EFI` with `grub-install --target=x86_64-efi
+  --efi-directory=/boot/efi --removable --no-nvram` if the file is missing
+  (tested with `sudo test -e`, because `/boot/efi` is root-only). The boot
+  entry the installer writes lives in packer's NVRAM, not in the qcow2; a clone
+  gets fresh NVRAM and boots only from this fallback path.
+- **GRUB config edits** work the same under UEFI: GRUB reads
+  `/boot/grub/grub.cfg` in both modes.
+- **`just check`** fails any template without `efi_boot = true`, or whose last
+  provisioner is not a shell provisioner holding the fallback-loader line.
 
-Firmware is a property of the image: a BIOS-installed image does not boot
-under UEFI, and the reverse. So the image and the VM definition must agree.
+Firmware is a property of the image: a BIOS image does not boot under UEFI and
+the reverse, so the VM definition and the image must agree. vmtool's default
+is now `efi`; pass `--firmware bios` for images built before this change.
 
-## Order of work
+## Checks at B0/B
 
-1. vmtool gains a firmware option (Go and spec change, below).
-2. One UEFI template, built and then booted through vmtool.
-3. The remaining templates.
+Not proven without a real build:
 
-A UEFI image is not usable from vmtool until step 1 is done.
-
-## Step 1: vmtool
-
-This is outside `packer_images/` and follows the repo's spec-first rule.
-
-1. **Spec:** add a `firmware` field (`bios` | `efi`, default `bios`) to the
-   create request in `../spec/openapi/vmtool.yaml`, then
-   `go generate ./internal/api/...`.
-2. **`VMConfig`** (`../pkg/vmtool/config.go`): add the field. The default
-   stays `bios` so every existing image keeps booting.
-3. **Domain XML** (`domainXML` in `../pkg/vmtool/libvirt.go`): for `efi`,
-   emit
-
-   ```xml
-   <os firmware='efi'>
-     <type arch='x86_64' machine='q35'>hvm</type>
-     <firmware><feature enabled='no' name='secure-boot'/></firmware>
-     <boot dev='hd'/>
-   </os>
-   ```
-
-   libvirt picks the OVMF files from the descriptors in
-   `/usr/share/qemu/firmware/` and creates a per-VM NVRAM file (the UEFI
-   settings store). Secure boot is off because Omarchy needs it off and
-   Ubuntu does not need it on.
-4. **Undefine:** libvirt refuses to undefine a domain that has NVRAM unless
-   told what to do with the file. Both `dom.Undefine()` calls in
-   `libvirt.go` (`Undefine` and `Delete`) need `UndefineFlags` with the
-   NVRAM flag, or `vmtool delete` fails on UEFI guests.
-5. **Plumbing:** pass the option through `internal/app` and the CLI, TUI and
-   REST adapters.
-
-The caller has to pass the mode that matches the image. Detecting it from
-the image (is there an EFI system partition?) could come later.
-
-## Step 2: a Packer template
-
-Add UEFI images as new templates, for example `ubuntu2604_uefi`, and leave
-the BIOS ones alone: existing VMs were cloned from BIOS images.
-
-In the `source "qemu"` block of `template.pkr.hcl`:
-
-```hcl
-efi_boot          = true
-efi_firmware_code = "/usr/share/edk2/x64/OVMF_CODE.4m.fd"
-efi_firmware_vars = "/usr/share/edk2/x64/OVMF_VARS.4m.fd"
-```
-
-- These are the non-secure-boot OVMF files from Arch's `edk2-ovmf` package.
-  The paths differ on other distros, so make them variables if the build
-  ever has to run elsewhere.
-- **`boot_wait`:** UEFI firmware reaches the boot menu later than BIOS does.
-  The current `3s` may send the keystrokes too early; expect to raise it.
-- **`boot_command`:** should carry over, because Ubuntu's server ISO uses
-  GRUB in both modes. Watch the VNC console on the first build. If the
-  keystrokes miss, the autoinstall never starts and Packer waits out the
-  60-minute `ssh_timeout`.
-- **Autoinstall (`http/user-data.tpl`):** no change. `layout: direct` adapts:
-  under UEFI the installer creates an EFI system partition where the BIOS
-  boot partition was.
-
-`just validate <template>` and `just check` cover the template syntax. Only a
-real build proves it installs.
-
-## Check after the first build
-
-- **Root is still partition 2.** vmtool's disk grow assumes `/dev/vda2`
-  (`growDiskCommand` in `../pkg/vmtool/ansible.go`).
-  Inspect the image without booting it:
-
-  ```bash
-  qemu-nbd --read-only --format=qcow2 --socket=/tmp/n.sock --persistent --fork output/<template>/<template>
-  mkdir -p /tmp/nbdmnt && nbdfuse --readonly /tmp/nbdmnt 'nbd+unix:///?socket=/tmp/n.sock' &
-  sfdisk -l /tmp/nbdmnt/nbd
-  fusermount3 -u /tmp/nbdmnt    # then kill qemu-nbd
-  ```
-
-  No sudo is needed. Add `blkid -p --offset <start*512> /tmp/nbdmnt/nbd` to
-  read a partition's filesystem type.
-- **The fallback bootloader exists.** The boot entry the installer writes
-  lives in the Packer build's NVRAM, which is not part of the qcow2. A VM
-  cloned from the image gets fresh NVRAM and can boot only from the standard
-  fallback path, `EFI/BOOT/BOOTX64.EFI` on the EFI system partition. Ubuntu
-  is believed to install one there by default. If it is missing, add a
-  provisioner line that runs `sudo grub-install --removable`.
+- **`boot_command` timing at 10s.** If the keystrokes miss, the autoinstall
+  never starts and Packer waits out the 60-minute `ssh_timeout`. Watch the VNC
+  console on the first build.
+- **Root is still partition 2 on ext4 `layout: direct`.** vmtool's disk grow
+  assumes `/dev/vda2` (`growDiskCommand` in `../pkg/vmtool/ansible.go`).
+- **The fallback loader is present** in the built image
+  (`EFI/BOOT/BOOTX64.EFI` on the ESP), and a clone with fresh NVRAM boots.
 - **The netplan fix still holds.** It does not depend on firmware; the smoke
   test (the VM gets a DHCP lease) is the proof.
 
-## Alternative: one image that boots both ways
+Inspect an image without booting it (no sudo needed):
 
-Lay the disk out with both a BIOS boot partition and an EFI system
-partition, and install GRUB for both targets, as Ubuntu's own cloud images
-do. Firmware then stops being something the caller must get right.
+```bash
+qemu-nbd --read-only --format=qcow2 --socket=/tmp/n.sock --persistent --fork output/<template>/<template>
+mkdir -p /tmp/nbdmnt && nbdfuse --readonly /tmp/nbdmnt 'nbd+unix:///?socket=/tmp/n.sock' &
+sfdisk -l /tmp/nbdmnt/nbd
+fusermount3 -u /tmp/nbdmnt    # then kill qemu-nbd
+```
 
-- It needs an explicit `storage: config:` list in the autoinstall file
-  instead of `layout: direct`, and a second `grub-install` run.
-- Root must stay on partition 2, or the grow command has to change.
-- A btrfs template needs an explicit storage config anyway, so that is the
-  natural place to try this.
+Add `blkid -p --offset <start*512> /tmp/nbdmnt/nbd` to read a partition's
+filesystem type.
 
 ## Related
 
 - **Omarchy guest:** its ISO boots with UEFI in the project's own QEMU and
   Proxmox examples, and supports an unattended install from a second drive
   labelled `cidata` (the mechanism `ubuntu2404_aws` already uses via
-  `cd_files`). It would need step 1 first, and probably a `virtio` video
-  device in place of `qxl`.
-- **btrfs root:** separate from firmware. `ubuntu2604_btrfs` is the BIOS
-  btrfs template; the grow command handles both ext4 and btrfs.
+  `cd_files`). It would probably want a `virtio` video device in place of
+  `qxl`.
+- **btrfs root:** separate from firmware. The grow command handles both ext4
+  and btrfs.

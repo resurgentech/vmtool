@@ -5,3 +5,4 @@ network:
       match:
         name: "en*"
       dhcp4: true
+      dhcp-identifier: mac

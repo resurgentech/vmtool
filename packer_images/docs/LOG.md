@@ -76,3 +76,51 @@ rewrites.
   inspected offline: 20G, ext4 root on partition 2.
 - Still open: install into libvirt and the booted smoke checks
   (logged-in desktop session, chromium, session type).
+
+## 2026-11-16 — U4 Templates build UEFI images, in place
+
+- All seven templates: `efi_boot = true`, OVMF code/vars from new
+  variables (Arch `edk2-ovmf` non-secure-boot defaults), `boot_wait`
+  10s; a new last shell provisioner installs the fallback loader
+  `EFI/BOOT/BOOTX64.EFI` (`grub-install --removable --no-nvram`) if
+  missing. btrfs templates: 512M ESP replaces the bios_grub partition
+  as p1, root stays p2. `check` gains shape assertions (efi_boot,
+  fallback loader in the last provisioner). `UEFI.md` rewritten as the
+  record. Not built; B0/B prove it.
+- Commits: the tranche-2 commit on `clone-identity` (vmtool repo).
+
+## 2026-11-16 — C3 Images end clean for cloud-init: identity at first boot
+
+- New shared `files/99-vmtool.cfg` (NoCloud/None datasource, no default
+  user, password SSH, hostname not preserved, `manage_etc_hosts:
+  localhost`, growpart + resize_rootfs on `/`), installed by all seven
+  templates to `/etc/cloud/cloud.cfg.d/`. Named `99-` (not `90-` as
+  planned) so it sorts after the package's `90_dpkg.cfg`, which also
+  sets `datasource_list`.
+- The last provisioner now runs `cloud-init status --wait || true`,
+  strips `autoinstall` and packer's `ds=` token from
+  `GRUB_CMDLINE_LINUX_DEFAULT` + `update-grub`, the BOOTX64.EFI guard,
+  `apt-get clean`, removes root's history, and ends on
+  `cloud-init clean --machine-id --logs`.
+- `ubuntu2404_aws` no longer disables cloud-init (user-data and
+  template); installs the cfg and `99-disable-network-config.cfg`.
+- `check` fails on a missing clean / wait, wrong order, clean not last,
+  cfg not installed, or any mention of `cloud-init.disabled`.
+  `CLAUDE.md` gains "Clean first boot (cloud-init)". Not built; B0/B
+  prove it.
+- Commits: the tranche-2 commit on `clone-identity` (vmtool repo).
+
+## 2026-11-16 — C4 `dhcp-identifier: mac`, one shared netplan file
+
+- `files/99-wildcard.yaml` is the one netplan file (`all-en`, `dhcp4`,
+  now `dhcp-identifier: mac`); the six per-template copies are gone. All
+  seven templates copy it in and `install -m 0600` it to
+  `/etc/netplan/99-wildcard.yaml`. `ubuntu2404_aws` dropped its inline
+  `write_files` netplan and the runcmd `rm 50-cloud-init.yaml` +
+  `netplan apply`: the cloud image's own DHCP config carries the build,
+  and the shared file takes over at a clone's first boot.
+- `check` fails on a missing shared file or one without
+  `dhcp-identifier: mac`, any yaml under a template dir, an inline
+  netplan in a `user-data.tpl`, or a template not installing the shared
+  file with mode 0600. Not built; B0/B prove it.
+- Commits: the tranche-2 commit on `clone-identity` (vmtool repo).

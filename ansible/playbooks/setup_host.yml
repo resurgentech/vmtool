@@ -82,6 +82,7 @@
       - ansible              # vmtool shells out to ansible-playbook
       - sshpass              # vmtool shells out to sshpass for password SSH
       - openssh-client
+      - ovmf                 # UEFI firmware for VMs and packer builds
 
     vmtool_packages_arch:
       - libvirt              # daemon and headers are one package on Arch
@@ -92,6 +93,7 @@
       - ansible
       - sshpass
       - openssh
+      - edk2-ovmf            # UEFI firmware for VMs and packer builds
 
     vmtool_packages_go_arch: [go]
     vmtool_packages_packer_debian: [gettext-base, openssl]

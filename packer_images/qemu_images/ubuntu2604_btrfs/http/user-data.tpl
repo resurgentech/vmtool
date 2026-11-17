@@ -18,9 +18,11 @@ autoinstall:
   #         dhcp4: true
   packages:
     - qemu-guest-agent
-  # Same shape as `layout: direct` under BIOS (1M bios_grub + root on
-  # partition 2, which vmtool's grow step expects), but root is a flat btrfs
-  # filesystem. No subvolumes here: create them in the guest afterwards.
+  # Same shape as `layout: direct` under UEFI (512M EFI system partition as
+  # partition 1, root on partition 2, which vmtool's grow step expects), but
+  # root is a flat btrfs filesystem. No subvolumes here: create them in the
+  # guest afterwards. grub_device sits on the ESP (not the disk) for UEFI.
+  # Mounts are listed / first, then /boot/efi (curtin mounts in list order).
   # swap size 0: the default /swap.img would block snapshots of the volume
   # that holds it.
   storage:
@@ -34,19 +36,24 @@ autoinstall:
         ptable: gpt
         wipe: superblock-recursive
         preserve: false
-        grub_device: true
       - type: partition
-        id: part-bios
+        id: part-esp
         device: disk0
         number: 1
-        size: 1M
-        flag: bios_grub
+        size: 512M
+        flag: boot
+        grub_device: true
         preserve: false
       - type: partition
         id: part-root
         device: disk0
         number: 2
         size: -1
+        preserve: false
+      - type: format
+        id: fmt-esp
+        volume: part-esp
+        fstype: fat32
         preserve: false
       - type: format
         id: fmt-root
@@ -57,5 +64,9 @@ autoinstall:
         id: mnt-root
         device: fmt-root
         path: /
+      - type: mount
+        id: mnt-esp
+        device: fmt-esp
+        path: /boot/efi
   late-commands:
     - echo '${PKR_VAR_username} ALL=(ALL) NOPASSWD:ALL' > /target/etc/sudoers.d/${PKR_VAR_username}
