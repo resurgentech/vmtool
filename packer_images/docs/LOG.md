@@ -243,3 +243,23 @@ rewrites.
 - All seven images are now rebuilt and checked on jetfire; every VM made
   here is deleted. Still open in B: veritech04 and the cache
   measurement.
+
+## 2026-11-17 — B closed: hypervisor checks on veritech03
+
+- Run on veritech03 instead of veritech04 (user's decision): same
+  libvirt 10.0.0 / QEMU 8.2.2, daemon built from `clone-identity`.
+- One clone of the cleaned `ubuntu2404` with defaults: boots under UEFI
+  (OVMF 4M from the `ovmf` package), hostname = VM name, machine-id =
+  domain UUID, one `127.0.1.1` line, cloud-init done, cache `unsafe`.
+  `vmtool delete` removed `/var/lib/libvirt/qemu/nvram/<name>_VARS.fd`
+  and the disk.
+- Write speed, `dd bs=4k count=1000 oflag=dsync`, three runs each, host
+  under light load (about 3): default `unsafe` 0.48 to 0.62 s (6.6 to
+  8.6 MB/s); `--disk-cache none` 1.62 to 1.98 s (2.1 to 2.5 MB/s).
+  About 3 to 4 times faster.
+- Seen on the way: `create` returned with an IP and a `cmd` run at once
+  got "connection refused" on port 22; sshd was up about 15 s later.
+  Nothing waits for SSH unless a grow or playbook follows.
+- Both test VMs deleted; the seven VMs of other sessions there were not
+  touched. veritech04 still runs the old daemon; upgrading it is now a
+  rollout item, not a check.
