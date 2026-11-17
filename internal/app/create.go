@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 
 	"github.com/jaredeh/vmtool/pkg/vmtool"
 )
@@ -283,7 +282,6 @@ func (s *Service) CreateVM(ctx context.Context, m Manager, in CreateVMInput) (*v
 		timeout := s.sshTimeout()
 		out, err := vmtool.WaitSSH(s.Tunnel, invPath, timeout)
 		cleanup()
-		out = redact(out, auth.Password)
 		if err != nil {
 			err = fmt.Errorf("%s did not accept SSH within %s: %w", cfg.Name, timeout, err)
 			emit(in, "wait_ssh", "error", err.Error(), out)
@@ -301,7 +299,6 @@ func (s *Service) CreateVM(ctx context.Context, m Manager, in CreateVMInput) (*v
 		}
 		out, err := vmtool.GrowDisk(s.Tunnel, invPath) // once: no blind retry
 		cleanup()
-		out = redact(out, auth.Password)
 		if err != nil {
 			emit(in, "grow_disk", "error", err.Error(), out)
 			return info, &Error{Kind: KindInternal, Op: "grow_disk", Err: err, Output: out}
@@ -341,14 +338,4 @@ func (s *Service) CreateVM(ctx context.Context, m Manager, in CreateVMInput) (*v
 		return nil, wrap("create", err)
 	}
 	return info, nil
-}
-
-// redact removes secret from ansible output before it reaches an error or a
-// progress event (rule 3). Ansible does not print vars, but a module's own
-// message could echo one.
-func redact(out, secret string) string {
-	if secret == "" {
-		return out
-	}
-	return strings.ReplaceAll(out, secret, "***")
 }

@@ -57,7 +57,7 @@ func (s *Service) ResizeDisk(_ context.Context, m Manager, ref VMRef, sizeGB uin
 	out, err := vmtool.GrowDisk(s.Tunnel, invPath) // once: no blind retry
 	if err != nil {
 		res.GrowError = err.Error()
-		if out = strings.TrimSpace(redact(out, resolved.Password)); out != "" {
+		if out = strings.TrimSpace(out); out != "" {
 			res.GrowError += "\n" + out
 		}
 		return res, nil

@@ -245,3 +245,11 @@ are appended, never edited in; a hook refuses rewrites.
   show the same IP": cause, `vmtool playbook host/vm commission.yml` for
   VMs cloned from older images, rebuild the image.
 - Commits: the tranche-2 commit on `clone-identity`.
+
+## 2026-11-16 — Ansible output is passed through unscrubbed
+
+- Removed `redact` (added with C5): the wait_ssh and grow output in
+  create, and the grow output in resize, are no longer rewritten.
+  Decided by the user: playbook output was never scrubbed, and the
+  replacement also hid ordinary words equal to the password.
+- Commits: follow-up commit on `clone-identity`.
