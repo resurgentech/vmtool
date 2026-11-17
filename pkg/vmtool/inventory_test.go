@@ -46,7 +46,7 @@ func TestTempInventoryWritesMachinesDir(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !filepath.IsAbs(abs) || filepath.Base(filepath.Dir(abs)) != "jetfire" || filepath.Base(abs) != "web" {
+	if !filepath.IsAbs(abs) || filepath.Base(abs) != "web.jetfire.vmtool" || filepath.Base(filepath.Dir(abs)) != ".machines" {
 		t.Fatalf("AbsCredsDir = %q", abs)
 	}
 	path, cleanup, err := TempInventory("web", "10.0.0.5", DefaultAuth(), abs)

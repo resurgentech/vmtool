@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -49,6 +50,13 @@ type Machine struct {
 // Ansible inventory hostname.
 func ValidMachineName(name string) bool {
 	return machineNameRE.MatchString(name)
+}
+
+// ValidHostName reports whether name is a valid vmtool host name: a valid
+// machine name without '.', because a VM SSH name <vm>.<host>.vmtool is split
+// at its last dot.
+func ValidHostName(name string) bool {
+	return ValidMachineName(name) && !strings.Contains(name, ".")
 }
 
 // ValidMachineKind reports whether k is metal or alien.

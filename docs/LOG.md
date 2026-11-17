@@ -368,3 +368,19 @@ are appended, never edited in; a hook refuses rewrites.
   that the VM check runs for VMs before "Remove packer user". README
   says what setup_bot does on a VM.
 - Commits: the C17 commit on `clone-identity`.
+
+## 2026-11-17 — C18 One SSH name for every tool: `<vm>.<host>.vmtool`; credentials under that name
+
+- `pkg/vmtool`: `SSHName`, `ParseSSHName` (split at the last dot before
+  the lowercase `.vmtool`), `ValidHostName` (no dots). `CredsDir` is
+  `.machines/<vm>.<host>.vmtool`, the one place the path is built; so
+  `AbsCredsDir`, `ResolveVMAuth`, `ForgetVM`, the inventory key path and
+  `vmtool_machines_dir` follow. The old `.machines/<host>/<vm>/` is never
+  read, written or removed; no migration code.
+- config load refuses a dotted `name:` or `hosts:` key; AddMachine refuses
+  names ending in `.vmtool` (any case).
+- `vmtool tunnel` also takes `<vm>.<host>.vmtool`; `ssh-config` prints
+  one `Host *.vmtool` block using `%n` in ProxyCommand and IdentityFile.
+  Help, README and the setup_bot header say so.
+- Cut-over (copy script re-run, `~/.ssh/config`, checks) is user-run.
+- Commits: the C18 commit on `clone-identity`.

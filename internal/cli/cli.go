@@ -595,7 +595,7 @@ func sshCmd(e *env) *cobra.Command {
 	return &cobra.Command{
 		Use:   "ssh <host/name> [-- ssh-args...]",
 		Short: "SSH into a VM using stored .machines credentials",
-		Long: `SSH into a running VM. If .machines/<host>/<name>/ exists, uses the
+		Long: `SSH into a running VM. If .machines/<name>.<host>.vmtool/ exists, uses the
 username and key stored there. Otherwise falls back to packer. Host key
 checking is disabled.
 

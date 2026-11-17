@@ -62,7 +62,7 @@ func TestSSHCmdTunnelGoldenArgv(t *testing.T) {
 		"-o", "UserKnownHostsFile=/dev/null",
 		"-o", "LogLevel=ERROR",
 		"-o", "ProxyCommand=/opt/vmtool/vmtool tunnel jetfire/web",
-		"-o", "IdentitiesOnly=yes", "-i", filepath.Join(".machines", "jetfire", "web", "id_ed25519"),
+		"-o", "IdentitiesOnly=yes", "-i", filepath.Join(".machines", "web.jetfire.vmtool", "id_ed25519"),
 		"-l", "bot",
 		"jetfire/web", "uptime",
 	}

@@ -215,6 +215,8 @@ func (s *Service) AddMachine(_ context.Context, vms Manager, in AddMachineInput)
 	switch {
 	case !vmtool.ValidMachineName(in.Name):
 		return nil, invalid(op, fmt.Errorf("invalid name %q: use letters, digits, '.', '_', '-'", in.Name))
+	case strings.HasSuffix(strings.ToLower(in.Name), vmtool.SSHNameSuffix):
+		return nil, invalid(op, fmt.Errorf("invalid name %q: names ending in %s are VM SSH names", in.Name, vmtool.SSHNameSuffix))
 	case in.Host == "":
 		return nil, invalid(op, fmt.Errorf("host is required"))
 	case !vmtool.ValidMachineKind(kind):

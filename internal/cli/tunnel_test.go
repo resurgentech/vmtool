@@ -274,3 +274,38 @@ func TestTunnelRemoteError(t *testing.T) {
 		t.Fatalf("stdout %q", out.String())
 	}
 }
+
+// The ssh name and host/vm reach the same VM.
+func TestTunnelSSHName(t *testing.T) {
+	f := fakeTunnel(t, nil)
+	dir := tunnelWorkdir(t, 0)
+	for _, arg := range []string{"web.ws.vmtool", "ws/web"} {
+		var out bytes.Buffer
+		if _, err := runTunnel(t, dir, strings.NewReader("x"), &out, arg); err != nil {
+			t.Fatalf("%s: %v", arg, err)
+		}
+	}
+	lookups, dials := f.calls()
+	if len(lookups) != 2 || lookups[0] != "ws/web" || lookups[1] != "ws/web" || len(dials) != 2 || dials[0] != dials[1] {
+		t.Fatalf("lookups %v dials %v", lookups, dials)
+	}
+}
+
+func TestTunnelSSHNameRefusals(t *testing.T) {
+	f := fakeTunnel(t, nil)
+	dir := tunnelWorkdir(t, 0)
+	for _, arg := range []string{"jetfire.vmtool", "x y.ws.vmtool", ".ws.vmtool", "web.vmtool"} {
+		_, _, want := vmtool.ParseSSHName(arg)
+		if want == nil {
+			t.Fatalf("%q: ParseSSHName accepted", arg)
+		}
+		var out bytes.Buffer
+		_, err := runTunnel(t, dir, strings.NewReader("x"), &out, arg)
+		if err == nil || !strings.Contains(err.Error(), want.Error()) {
+			t.Errorf("%s: err %v, want containing %q", arg, err, want)
+		}
+	}
+	if lookups, dials := f.calls(); len(lookups)+len(dials) != 0 {
+		t.Fatalf("lookups %v dials %v", lookups, dials)
+	}
+}

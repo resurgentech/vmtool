@@ -258,13 +258,36 @@ disks added later by `add-disk`, take the mode of the VM's boot disk
 (`vda`); `migrate-disk` keeps it. Existing VMs are not changed. `GET` VM
 reports `disk_cache`; `vmtool list` is unchanged.
 
+## Guest SSH and `ssh-config`
+
+vmtool's own commands name a VM `host/vm`. Other tools (ssh, scp, rsync, sftp)
+use one SSH name, `<vm>.<host>.vmtool`, split at the last dot before
+`.vmtool`: VM names may contain dots (`a.b.jetfire.vmtool` is VM `a.b` on
+`jetfire`), host names may not (a dotted `name:` or `hosts:` key fails config
+load). A VM's credentials (bot key, password) live in
+`.machines/<vm>.<host>.vmtool/`; the old `.machines/<host>/<vm>/` folders are
+never read, moved or deleted by vmtool. Names ending in `.vmtool` cannot be
+metal/alien machine names.
+
+```bash
+./vmtool ssh-config >> ~/.ssh/config     # one fixed block, `Host *.vmtool`
+ssh web.jetfire.vmtool
+scp f vt-r7.veritech03.vmtool:/tmp/x
+rsync -a dir/ web.jetfire.vmtool:/srv/
+```
+
+Remove an old `Host */*` block first: it has no credentials folder behind it
+any more. The block runs `vmtool tunnel %n` in vmtool's working directory
+(`vmtool tunnel` takes `host/vm` too) and needs `VMTOOL_TOKEN` in the
+environment or in `.env` there. It uses `%n` because ssh lowercases `%h`.
+
 ## Metal and alien machines
 
 vmtool can also drive machines its libvirt does not manage: **metal** (physical
 boxes) and **alien** (VMs on another hypervisor or a cloud). They are
 SSH/Ansible targets only — cmd, ssh, playbook, reboot. There is no create,
 start, power-off, or disk management. Each one is registered in
-`.machines/<name>/machine.yml` (`kind`, `host`) next to its credentials, and
+`.machines/<name>/machine.yml` (`kind`, `host`) next to its credentials (VM credentials are in `.machines/<vm>.<host>.vmtool/`), and
 shows up in the TUI list with its kind.
 
 Requirements: an Ubuntu-compatible OS, and SSH as `packer`/`packer` with

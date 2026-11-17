@@ -2,7 +2,7 @@
 # Replace the image-default packer user with bot.
 # Copies packer's groups and sudoers, writes a password and ed25519
 # keypair on the control host to vmtool_machines_dir (vmtool always sets
-# it: .machines/<host>/<vm>/ for VMs, .machines/<name>/ for metal/alien;
+# it: .machines/<vm>.<host>.vmtool/ for VMs, .machines/<name>/ for metal/alien;
 # run by hand without it: .machines/<inventory_hostname>/), then disables
 # SSH password login, moves GUI autologin (gdm3/lightdm) to bot, and
 # deletes packer.

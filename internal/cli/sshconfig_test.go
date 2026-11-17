@@ -19,10 +19,10 @@ func TestSSHConfigGolden(t *testing.T) {
 		t.Fatal(err)
 	}
 	abs, _ := filepath.Abs(dir)
-	want := `Host */*
-    ProxyCommand sh -c 'cd '\''` + abs + `'\'' && exec ./vmtool tunnel %h'
+	want := `Host *.vmtool
+    ProxyCommand sh -c 'cd '\''` + abs + `'\'' && exec ./vmtool tunnel %n'
     User bot
-    IdentityFile "` + abs + `/.machines/%h/id_ed25519"
+    IdentityFile "` + abs + `/.machines/%n/id_ed25519"
     IdentitiesOnly yes
     StrictHostKeyChecking no
     UserKnownHostsFile /dev/null
@@ -73,20 +73,20 @@ func sshBlock(t *testing.T, dir string) string {
 func TestSSHConfigQuotingExact(t *testing.T) {
 	cases := []struct{ dir, proxy, identity string }{
 		{"/t/a b",
-			`sh -c 'cd '\''/t/a b'\'' && exec ./vmtool tunnel %h'`,
-			`"/t/a b/.machines/%h/id_ed25519"`},
+			`sh -c 'cd '\''/t/a b'\'' && exec ./vmtool tunnel %n'`,
+			`"/t/a b/.machines/%n/id_ed25519"`},
 		{"/t/it's",
-			`sh -c 'cd '\''/t/it'\''\'\'''\''s'\'' && exec ./vmtool tunnel %h'`,
-			`"/t/it's/.machines/%h/id_ed25519"`},
+			`sh -c 'cd '\''/t/it'\''\'\'''\''s'\'' && exec ./vmtool tunnel %n'`,
+			`"/t/it's/.machines/%n/id_ed25519"`},
 		{`/t/q"d`,
-			`sh -c 'cd '\''/t/q"d'\'' && exec ./vmtool tunnel %h'`,
-			`"/t/q\"d/.machines/%h/id_ed25519"`},
+			`sh -c 'cd '\''/t/q"d'\'' && exec ./vmtool tunnel %n'`,
+			`"/t/q\"d/.machines/%n/id_ed25519"`},
 		{"/t/50%",
-			`sh -c 'cd '\''/t/50%%'\'' && exec ./vmtool tunnel %h'`,
-			`"/t/50%%/.machines/%h/id_ed25519"`},
+			`sh -c 'cd '\''/t/50%%'\'' && exec ./vmtool tunnel %n'`,
+			`"/t/50%%/.machines/%n/id_ed25519"`},
 	}
 	for _, c := range cases {
-		want := "Host */*\n    ProxyCommand " + c.proxy + "\n    User bot\n    IdentityFile " + c.identity +
+		want := "Host *.vmtool\n    ProxyCommand " + c.proxy + "\n    User bot\n    IdentityFile " + c.identity +
 			"\n    IdentitiesOnly yes\n    StrictHostKeyChecking no\n    UserKnownHostsFile /dev/null\n"
 		if got := sshBlock(t, c.dir); got != want {
 			t.Errorf("dir %q:\ngot\n%s\nwant\n%s", c.dir, got, want)
@@ -94,13 +94,13 @@ func TestSSHConfigQuotingExact(t *testing.T) {
 	}
 }
 
-// sshExpand does what ssh does to a ProxyCommand: %% -> %, %h -> host.
+// sshExpand does what ssh does to a ProxyCommand: %% -> %, %n -> name.
 func sshExpand(line, host string) string {
 	var b strings.Builder
 	for i := 0; i < len(line); i++ {
 		if line[i] == '%' && i+1 < len(line) {
 			i++
-			if line[i] == 'h' {
+			if line[i] == 'n' {
 				b.WriteString(host)
 			} else {
 				b.WriteByte(line[i])
@@ -132,10 +132,10 @@ func TestSSHConfigProxyCommandRuns(t *testing.T) {
 		if line == "" {
 			t.Fatalf("%q: no ProxyCommand in\n%s", name, block)
 		}
-		cmd := exec.Command("/bin/sh", "-c", "exec "+sshExpand(line, "jetfire/web"))
+		cmd := exec.Command("/bin/sh", "-c", "exec "+sshExpand(line, "web.jetfire.vmtool"))
 		cmd.Dir = t.TempDir() // not the working directory: the line must cd
 		out, err := cmd.CombinedOutput()
-		if err != nil || strings.TrimSpace(string(out)) != "tunnel jetfire/web" {
+		if err != nil || strings.TrimSpace(string(out)) != "tunnel web.jetfire.vmtool" {
 			t.Errorf("%q: out %q err %v\nline: %s", name, out, err, line)
 		}
 	}
@@ -147,5 +147,18 @@ func TestSSHConfigUnsafePath(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "control character") || got != "" {
 			t.Errorf("%q: got %q err %v", dir, got, err)
 		}
+	}
+}
+
+func TestSSHConfigOneBlock(t *testing.T) {
+	got := sshBlock(t, "/t/x")
+	if n := strings.Count(got, "Host "); n != 1 || !strings.HasPrefix(got, "Host *.vmtool\n") {
+		t.Fatalf("want one Host *.vmtool block:\n%s", got)
+	}
+	if strings.Contains(got, "*/*") || strings.Contains(got, "%h") {
+		t.Fatalf("old block left over:\n%s", got)
+	}
+	if n := strings.Count(got, "%n"); n != 2 {
+		t.Fatalf("%%n appears %d times, want 2 (ProxyCommand, IdentityFile):\n%s", n, got)
 	}
 }

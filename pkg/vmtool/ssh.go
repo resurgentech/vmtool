@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -22,11 +23,47 @@ func DefaultAuth() Auth {
 	return Auth{User: "packer", Password: "packer"}
 }
 
-// CredsDir is where a VM's guest credentials live: .machines/<host>/<vm>,
-// relative to vmtool's working directory. setup_bot.yml writes them there
-// (vmtool passes the absolute directory as vmtool_machines_dir).
+// SSHNameSuffix ends every VM SSH name: <vm>.<host>.vmtool.
+const SSHNameSuffix = ".vmtool"
+
+// SSHName is the name ssh, scp, rsync and sftp use for VM name on host:
+// <vm>.<host>.vmtool. It is also the VM's credentials folder name.
+func SSHName(host, name string) string {
+	return name + "." + host + SSHNameSuffix
+}
+
+// ParseSSHName splits <vm>.<host>.vmtool. The suffix must be the lowercase
+// ".vmtool"; the rest is split at its last dot, so the VM name may hold dots
+// and the host name may not.
+func ParseSSHName(s string) (host, vm string, err error) {
+	rest, ok := strings.CutSuffix(s, SSHNameSuffix)
+	if !ok {
+		return "", "", fmt.Errorf("%q: a VM SSH name ends in %q: <vm>.<host>.vmtool", s, SSHNameSuffix)
+	}
+	i := strings.LastIndexByte(rest, '.')
+	if i < 0 {
+		return "", "", fmt.Errorf("%q: the VM part is missing: want <vm>.<host>.vmtool", s)
+	}
+	vm, host = rest[:i], rest[i+1:]
+	switch {
+	case vm == "":
+		return "", "", fmt.Errorf("%q: the VM name is empty: want <vm>.<host>.vmtool", s)
+	case host == "":
+		return "", "", fmt.Errorf("%q: the host name is empty: want <vm>.<host>.vmtool", s)
+	case !ValidHostName(host):
+		return "", "", fmt.Errorf("%q: invalid host name %q: letters, digits, '_', '-'", s, host)
+	case !ValidMachineName(vm):
+		return "", "", fmt.Errorf("%q: invalid VM name %q: letters, digits, '.', '_', '-'", s, vm)
+	}
+	return host, vm, nil
+}
+
+// CredsDir is where a VM's guest credentials live:
+// .machines/<vm>.<host>.vmtool, relative to vmtool's working directory.
+// setup_bot.yml writes them there (vmtool passes the absolute directory as
+// vmtool_machines_dir). It is the only place this path is built.
 func CredsDir(host, name string) string {
-	return filepath.Join(machinesDir, host, name)
+	return filepath.Join(machinesDir, SSHName(host, name))
 }
 
 // AbsCredsDir is CredsDir made absolute, for vmtool_machines_dir.
@@ -38,8 +75,8 @@ func AbsCredsDir(host, name string) (string, error) {
 }
 
 func validVMKey(host, name string) error {
-	if !ValidMachineName(host) || !ValidMachineName(name) {
-		return fmt.Errorf("invalid VM %q/%q: host and name must be valid machine names", host, name)
+	if !ValidHostName(host) || !ValidMachineName(name) {
+		return fmt.Errorf("invalid VM %q/%q: host must be a valid host name (no '.') and name a valid machine name", host, name)
 	}
 	return nil
 }
@@ -97,7 +134,7 @@ func loadAuthDir(dir string) (Auth, bool) {
 }
 
 // ForgetVM removes the stored credentials of VM name on host
-// (.machines/<host>/<name>/). Call it when the VM's disk is replaced or
+// (.machines/<name>.<host>.vmtool/). Call it when the VM's disk is replaced or
 // destroyed; stale creds would otherwise win over packer defaults. A
 // directory holding a machine.yml is never removed here.
 func ForgetVM(host, name string) error {

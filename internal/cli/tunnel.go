@@ -13,6 +13,7 @@ import (
 	"github.com/jaredeh/vmtool/internal/config"
 	"github.com/jaredeh/vmtool/internal/hosts"
 	"github.com/jaredeh/vmtool/internal/remote"
+	"github.com/jaredeh/vmtool/pkg/vmtool"
 	"github.com/spf13/cobra"
 )
 
@@ -51,7 +52,7 @@ var (
 
 func tunnelCmd(e *env) *cobra.Command {
 	return &cobra.Command{
-		Use:   "tunnel <host/vm>",
+		Use:   "tunnel <host/vm | vm.host.vmtool>",
 		Short: "Pipe stdin/stdout to a VM's SSH port (for ssh ProxyCommand)",
 		Long: `Connect stdin and stdout to TCP port 22 of a VM, for use as an SSH
 ProxyCommand. stdout carries only the SSH byte stream; errors go to stderr.
@@ -60,7 +61,10 @@ On the local host it asks libvirt for the VM's IP and connects directly. For
 a host in config.yml's hosts: it opens an authenticated tunnel through that
 host's vmtool daemon (HTTPS, HTTP/1.1 Upgrade), using VMTOOL_TOKEN.
 
-  ssh -o ProxyCommand='vmtool tunnel %h' jetfire/web`,
+The VM is host/vm, or its SSH name <vm>.<host>.vmtool (what the block from
+'vmtool ssh-config' passes). The host name has no dots; the VM name may.
+
+  ssh -o ProxyCommand='vmtool tunnel %n' web.jetfire.vmtool`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// stdout is the byte stream: no usage text, and main prints the
@@ -80,13 +84,24 @@ host's vmtool daemon (HTTPS, HTTP/1.1 Upgrade), using VMTOOL_TOKEN.
 	}
 }
 
-// openTunnel connects to arg's (host/vm) port 22: directly for the local
-// host, through the host's daemon for a configured one.
+// openTunnel connects to arg's port 22: directly for the local host, through
+// the host's daemon for a configured one. arg is host/vm, or the VM SSH name
+// <vm>.<host>.vmtool that ssh passes (%n). The suffix is matched ignoring
+// case so a wrong-case name gets ParseSSHName's message, not a host/vm one.
 func openTunnel(ctx context.Context, e *env, arg string) (io.ReadWriteCloser, error) {
 	r := e.resolver()
-	ref, err := r.ParseVM(arg)
-	if err != nil {
-		return nil, err
+	var ref app.VMRef
+	if !strings.Contains(arg, "/") && strings.HasSuffix(strings.ToLower(arg), vmtool.SSHNameSuffix) {
+		host, vm, err := vmtool.ParseSSHName(arg)
+		if err != nil {
+			return nil, err
+		}
+		ref = app.VMRef{Host: host, Name: vm}
+	} else {
+		var err error
+		if ref, err = r.ParseVM(arg); err != nil {
+			return nil, err
+		}
 	}
 	setup, cancel := context.WithTimeout(ctx, tunnelSetupTimeout)
 	defer cancel()

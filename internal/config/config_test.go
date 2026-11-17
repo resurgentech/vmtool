@@ -282,3 +282,19 @@ func TestWriteErrorNamesLineNotContent(t *testing.T) {
 		t.Errorf("err = %q", err)
 	}
 }
+
+func TestLoadRefusesDottedHostNames(t *testing.T) {
+	setHost(t, "jetfire")
+	for _, tc := range []struct{ name, yml string }{
+		{"name", "name: x.y\n"},
+		{"hosts key", "hosts:\n  x.y: { address: 10.0.0.1 }\n"},
+	} {
+		dir := t.TempDir()
+		writeFile(t, dir, "config.yml", tc.yml)
+		_, err := Load(dir)
+		want := `host name "x.y" must not contain '.': VM SSH names are <vm>.<host>.vmtool`
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: err %v, want containing %q", tc.name, err, want)
+		}
+	}
+}

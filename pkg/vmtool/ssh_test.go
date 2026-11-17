@@ -1,9 +1,12 @@
 package vmtool
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -18,7 +21,7 @@ func writeCreds(t *testing.T, dir, user string) {
 }
 
 func TestCredsDir(t *testing.T) {
-	if got := CredsDir("jetfire", "web"); got != filepath.Join(".machines", "jetfire", "web") {
+	if got := CredsDir("jetfire", "web"); got != filepath.Join(".machines", "web.jetfire.vmtool") {
 		t.Fatalf("CredsDir = %q", got)
 	}
 }
@@ -29,7 +32,7 @@ func TestResolveVMAuthByHostAndName(t *testing.T) {
 	t.Chdir(t.TempDir())
 	writeCreds(t, filepath.Join(".machines", "10.0.0.5"), "stale-ip")
 	writeCreds(t, filepath.Join(".machines", "web"), "stale-bare")
-	writeCreds(t, filepath.Join(".machines", "veritech01", "web"), "other-host")
+	writeCreds(t, CredsDir("veritech01", "web"), "other-host")
 
 	if a := ResolveVMAuth("jetfire", "web", Auth{User: "u", Password: "p"}); a.User != "u" || a.Password != "p" {
 		t.Fatalf("no creds: %+v, want the fallback", a)
@@ -93,7 +96,7 @@ func TestForgetVM(t *testing.T) {
 	}
 }
 
-// A machine.yml inside .machines/<host>/<vm>/ is never ours to delete.
+// A machine.yml inside .machines/<vm>.<host>.vmtool/ is never ours to delete.
 func TestForgetVMKeepsManifest(t *testing.T) {
 	t.Chdir(t.TempDir())
 	dir := CredsDir("jetfire", "web")
@@ -135,4 +138,144 @@ func TestSSHCmdUsesHostScopedKey(t *testing.T) {
 	if !slices.Contains(c.Args, "veritech01/web") || !slices.Contains(c.Args, "packer") {
 		t.Fatalf("other host argv %q, want packer", c.Args)
 	}
+}
+
+func TestSSHName(t *testing.T) {
+	if got := SSHName("jetfire", "web"); got != "web.jetfire.vmtool" {
+		t.Fatalf("SSHName = %q", got)
+	}
+	if got := SSHName("jetfire", "a.b"); got != "a.b.jetfire.vmtool" {
+		t.Fatalf("SSHName dotted = %q", got)
+	}
+}
+
+func TestParseSSHName(t *testing.T) {
+	for _, tc := range []struct{ in, host, vm string }{
+		{"web.jetfire.vmtool", "jetfire", "web"},
+		{"a.b.jetfire.vmtool", "jetfire", "a.b"},
+		{"Web.Jetfire.vmtool", "Jetfire", "Web"},
+		{"vt-r7.veritech03.vmtool", "veritech03", "vt-r7"},
+	} {
+		h, v, err := ParseSSHName(tc.in)
+		if err != nil || h != tc.host || v != tc.vm {
+			t.Errorf("%q: %q %q %v, want %q %q", tc.in, h, v, err, tc.host, tc.vm)
+		}
+	}
+	msgs := map[string]string{}
+	for _, tc := range []struct{ in, want string }{
+		{"jetfire.vmtool", "VM"},
+		{".jetfire.vmtool", "VM"},
+		{"web..vmtool", "host"},
+		{"web.jetfire", ".vmtool"},
+		{"web.jetfire.vmtool.", ".vmtool"},
+		{"web.jetfire.VMTOOL", ".vmtool"},
+		{"x y.jetfire.vmtool", "VM"},
+		{"-x.jetfire.vmtool", "VM"},
+		{"web.j_x!.vmtool", "host"},
+		{"", ".vmtool"},
+	} {
+		_, _, err := ParseSSHName(tc.in)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%q: err %v, want containing %q", tc.in, err, tc.want)
+			continue
+		}
+		msgs[tc.in] = err.Error()
+	}
+	if msgs["web.jetfire"] == msgs["jetfire.vmtool"] || msgs["jetfire.vmtool"] == msgs["web..vmtool"] {
+		t.Errorf("failures share a message: %v", msgs)
+	}
+}
+
+func TestValidHostName(t *testing.T) {
+	for _, ok := range []string{"jetfire", "veritech03", "a-b_c", "A1"} {
+		if !ValidHostName(ok) {
+			t.Errorf("%q refused", ok)
+		}
+	}
+	for _, bad := range []string{"", "x.y", ".x", "x.", "-x", "a b", "a/b", ".."} {
+		if ValidHostName(bad) {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}
+
+func TestAbsCredsDirNewPath(t *testing.T) {
+	t.Chdir(t.TempDir())
+	abs, err := AbsCredsDir("jetfire", "a.b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !filepath.IsAbs(abs) || filepath.Base(abs) != "a.b.jetfire.vmtool" || filepath.Base(filepath.Dir(abs)) != ".machines" {
+		t.Fatalf("AbsCredsDir = %q", abs)
+	}
+	for _, bad := range [][2]string{{"x.y", "web"}, {"jetfire", "../web"}, {"", "web"}} {
+		if _, err := AbsCredsDir(bad[0], bad[1]); err == nil {
+			t.Errorf("AbsCredsDir%v accepted", bad)
+		}
+	}
+}
+
+// The old .machines/<host>/<vm>/ layout is never read.
+func TestResolveVMAuthIgnoresOldFolder(t *testing.T) {
+	t.Chdir(t.TempDir())
+	writeCreds(t, filepath.Join(".machines", "jetfire", "web"), "old-bot")
+	os.WriteFile(filepath.Join(".machines", "jetfire", "web", "id_ed25519"), []byte("k"), 0o600)
+	if a := ResolveVMAuth("jetfire", "web", DefaultAuth()); a.User != "packer" || a.KeyPath != "" {
+		t.Fatalf("read the old folder: %+v", a)
+	}
+	writeCreds(t, CredsDir("jetfire", "web"), "new-bot")
+	os.WriteFile(filepath.Join(CredsDir("jetfire", "web"), "id_ed25519"), []byte("k"), 0o600)
+	a := ResolveVMAuth("jetfire", "web", DefaultAuth())
+	if a.User != "new-bot" || a.KeyPath != filepath.Join(".machines", "web.jetfire.vmtool", "id_ed25519") {
+		t.Fatalf("new folder: %+v", a)
+	}
+}
+
+func TestForgetVMLeavesOldFolder(t *testing.T) {
+	t.Chdir(t.TempDir())
+	old := filepath.Join(".machines", "jetfire", "web")
+	writeCreds(t, old, "old-bot")
+	os.WriteFile(filepath.Join(old, "id_ed25519"), []byte("k"), 0o600)
+	writeCreds(t, CredsDir("jetfire", "web"), "bot")
+	if err := ForgetVM("jetfire", "web"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(CredsDir("jetfire", "web")); !os.IsNotExist(err) {
+		t.Fatalf("new folder remains: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(old, "id_ed25519")); err != nil {
+		t.Fatalf("old folder touched: %v", err)
+	}
+}
+
+// No Go file but ssh.go builds a credentials path from MachinesDir plus a
+// host and a VM; CredsDir is the one place.
+func TestNoOtherCredsPathJoins(t *testing.T) {
+	root := filepath.Join("..", "..")
+	re := regexp.MustCompile(`(?i)(machinesDir|MachinesDir)\s*,\s*[^,)]*(host|ref\.|vm)`)
+	filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", ".claude", ".machines", "tmp", "node_modules":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") || filepath.Base(p) == "ssh.go" {
+			return nil
+		}
+		b, rerr := os.ReadFile(p)
+		if rerr != nil {
+			return nil
+		}
+		for i, l := range strings.Split(string(b), "\n") {
+			if re.MatchString(l) {
+				t.Errorf("%s:%d joins MachinesDir with a host/vm: %s", p, i+1, strings.TrimSpace(l))
+			}
+		}
+		return nil
+	})
 }

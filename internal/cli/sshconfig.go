@@ -12,13 +12,19 @@ import (
 func sshConfigCmd(e *env) *cobra.Command {
 	return &cobra.Command{
 		Use:   "ssh-config",
-		Short: "Print an ~/.ssh/config block that reaches VMs as host/vm",
-		Long: `Print a 'Host */*' block for ~/.ssh/config. With it, plain ssh and scp
-reach any VM through 'vmtool tunnel', using the bot key kept in
-.machines/<host>/<vm>/:
+		Short: "Print an ~/.ssh/config block that reaches VMs as <vm>.<host>.vmtool",
+		Long: `Print one 'Host *.vmtool' block for ~/.ssh/config. With it ssh, scp, rsync
+and sftp reach any VM as <vm>.<host>.vmtool, through 'vmtool tunnel', using
+the bot key kept in .machines/<vm>.<host>.vmtool/:
 
   vmtool ssh-config >> ~/.ssh/config
-  ssh jetfire/web
+  ssh web.jetfire.vmtool
+  scp f vt-r7.veritech03.vmtool:/tmp/x
+
+The block is fixed: nothing to regenerate when VMs come and go. Remove an old
+'Host */*' block first; it has no credentials folder behind it any more. The
+host name has no dots; the VM name may (a.b.jetfire.vmtool is VM a.b on
+jetfire). vmtool's own commands still take host/vm.
 
 The ProxyCommand runs in vmtool's working directory (where config.yml is)
 and needs VMTOOL_TOKEN in the environment (or in .env there).`,
@@ -38,9 +44,10 @@ and needs VMTOOL_TOKEN in the environment (or in .env there).`,
 	}
 }
 
-// sshConfigBlock is the 'Host */*' block for the absolute working directory
-// dir. ssh expands % tokens in both ProxyCommand and IdentityFile, so a %
-// in dir is written %%. ssh runs ProxyCommand as `$SHELL -c "exec <line>"`,
+// sshConfigBlock is the 'Host *.vmtool' block for the absolute working
+// directory dir. It uses %n, the name as typed, not %h, which ssh lowercases
+// (a VM with capitals would miss its folder). ssh expands % tokens in both
+// ProxyCommand and IdentityFile, so a % in dir is written %%. ssh runs ProxyCommand as `$SHELL -c "exec <line>"`,
 // so the line is `sh -c '<script>'`: the directory is shell-quoted inside
 // the script and the script is quoted again for the outer shell.
 // IdentityFile uses ssh_config double quotes, where \" and \\ are escapes.
@@ -53,12 +60,12 @@ func sshConfigBlock(dir string) (string, error) {
 		}
 	}
 	pct := strings.ReplaceAll(dir, "%", "%%")
-	script := "cd " + shellQuote(pct) + " && exec ./vmtool tunnel %h"
+	script := "cd " + shellQuote(pct) + " && exec ./vmtool tunnel %n"
 	ident := strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(pct)
-	return fmt.Sprintf(`Host */*
+	return fmt.Sprintf(`Host *.vmtool
     ProxyCommand sh -c %s
     User bot
-    IdentityFile "%s/.machines/%%h/id_ed25519"
+    IdentityFile "%s/.machines/%%n/id_ed25519"
     IdentitiesOnly yes
     StrictHostKeyChecking no
     UserKnownHostsFile /dev/null

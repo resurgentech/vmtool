@@ -204,15 +204,21 @@ func (c *Config) finish() error {
 	if c.TokenSHA256 != "" && !hashRE.MatchString(c.TokenSHA256) {
 		return errors.New("token_sha256 must be 64 lowercase hex characters")
 	}
+	if err := dotFree(c.Name); err != nil {
+		return err
+	}
 	if err := c.notAMachine(c.Name); err != nil {
 		return err
 	}
 	for name, h := range c.Hosts {
+		if err := dotFree(name); err != nil {
+			return err
+		}
 		if err := c.notAMachine(name); err != nil {
 			return err
 		}
-		if !vmtool.ValidMachineName(name) {
-			return fmt.Errorf("host name %q is not a valid machine name", name)
+		if !vmtool.ValidHostName(name) {
+			return fmt.Errorf("host name %q is not a valid host name", name)
 		}
 		if name == short || name == c.Name {
 			return fmt.Errorf("host %q has the same name as the local host", name)
@@ -224,6 +230,15 @@ func (c *Config) finish() error {
 			h.Port = DefaultPort
 			c.Hosts[name] = h
 		}
+	}
+	return nil
+}
+
+// dotFree refuses a host name with a dot: VM SSH names are
+// <vm>.<host>.vmtool and are split at the last dot.
+func dotFree(name string) error {
+	if strings.Contains(name, ".") {
+		return fmt.Errorf("host name %q must not contain '.': VM SSH names are <vm>.<host>.vmtool", name)
 	}
 	return nil
 }

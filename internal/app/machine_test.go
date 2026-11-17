@@ -103,6 +103,8 @@ func TestAddMachineRejectsBeforeSSH(t *testing.T) {
 		{"other host", AddMachineInput{Name: "nuc1", Host: "10.0.0.99"}, KindConflict},
 		{"other kind", AddMachineInput{Name: "nuc1", Host: "10.0.0.42", Kind: "alien"}, KindConflict},
 		{"VM creds dir", AddMachineInput{Name: "oldvm", Host: "h"}, KindConflict},
+		{"VM SSH name", AddMachineInput{Name: "x.jetfire.vmtool", Host: "h"}, KindInvalid},
+		{"VM SSH name, any case", AddMachineInput{Name: "X.VMTOOL", Host: "h"}, KindInvalid},
 		{"local host name", AddMachineInput{Name: "jetfire", Host: "h"}, KindConflict},
 		{"configured host name", AddMachineInput{Name: "veritech01", Host: "h"}, KindConflict},
 	} {
