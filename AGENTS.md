@@ -9,13 +9,14 @@
 3. **Secrets.** Never commit `.machines/`, guest passwords, or SSH private keys. Do not log `ssh_pass` or request bodies.
 4. **Generated artifacts.** `internal/api/api.gen.go` is produced by oapi-codegen. Regenerate; do not patch.
 5. **Loopback REST.** Default bind is `127.0.0.1:9473`. Every request needs the bearer token. The server refuses to bind off loopback unless TLS and `token_sha256` are configured in `config.yml`.
+6. **Tests.** Tests never reach real libvirt, ssh, ansible, sudo or OpenBao. External tools are stubbed only through `internal/testexec` (`testexec.Stub`, `testexec.Ansible`); under `go test`, `pkg/vmtool` refuses to start any tool outside the stub directory, and refuses the test binary as the tunnel's ProxyCommand. The gate (`just test` / `just check`) runs in a capped systemd scope (`scripts/test-capped.sh`); run ad-hoc `go test` the same way: `scripts/test-capped.sh ./pkg/...` or `systemd-run --user --scope -q -p TasksMax=256 -p CPUQuota=800% -- go test <pkgs>`.
 
 ## Spec-first change procedure
 
 1. Edit `spec/openapi/vmtool.yaml`.
 2. `go generate ./internal/api/...`
 3. Implement or adjust `internal/app` and the three adapters.
-4. `scripts/verify-generate.sh` and `go test ./...` before push.
+4. `just check` (`scripts/verify-generate.sh` and the capped `go test ./...`) before push.
 
 See [`spec/README.md`](spec/README.md) and [`docs/design/spec-first.md`](docs/design/spec-first.md).
 
@@ -52,4 +53,5 @@ These add to the hard rules above; they do not replace them.
 | What shipped | `docs/LOG.md` |
 | What was done, and the judgment calls | `docs/reports/` (local, gitignored): one file per built step, recap plus assumptions |
 | Roles and process | the orch plugin (`/orch`), or `.grok/agents/` for Grok |
+| Test stubs | `internal/testexec` |
 | Agent definitions | `architect`, `foreman`, `implementer`, `recon` (plugin); `.grok/agents/` (Grok) |

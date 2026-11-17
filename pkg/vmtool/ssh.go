@@ -178,9 +178,11 @@ func buildSSH(dest string, loginFlag bool, auth Auth, opts, remote []string) *ex
 	args = append(args, dest)
 	args = append(args, remote...)
 	if auth.KeyPath == "" && auth.Password != "" {
-		cmd := exec.Command("sshpass", append([]string{"-e", "ssh"}, args...)...)
+		// A refusal under go test is in cmd.Err: Start and Run return it.
+		cmd, _ := command("sshpass", append([]string{"-e", "ssh"}, args...)...)
 		cmd.Env = append(os.Environ(), "SSHPASS="+auth.Password)
 		return cmd
 	}
-	return exec.Command("ssh", args...)
+	cmd, _ := command("ssh", args...)
+	return cmd
 }

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"testing"
 )
 
 // TokenEnv is the environment variable that carries the vmtool token to a
@@ -27,6 +28,10 @@ type Tunnel struct {
 }
 
 // CurrentExe is the absolute, symlink-resolved path of the running vmtool.
+// Under `go test`, or when the executable is named *.test, it is an error: a
+// test binary used as the tunnel's ProxyCommand would re-run its own suite
+// for every ssh it serves (the 2026-11-17 fork bomb). Tests set Tunnel.Exe to
+// a stub instead.
 func CurrentExe() (string, error) {
 	p, err := os.Executable()
 	if err != nil {
@@ -34,6 +39,9 @@ func CurrentExe() (string, error) {
 	}
 	if r, err := filepath.EvalSymlinks(p); err == nil {
 		p = r
+	}
+	if testing.Testing() || strings.HasSuffix(filepath.Base(p), ".test") {
+		return "", testBinaryTunnelError(p)
 	}
 	return filepath.Abs(p)
 }
@@ -63,6 +71,9 @@ func (t Tunnel) Environ(base []string) []string {
 func (t Tunnel) check() error {
 	if t.Exe == "" {
 		return fmt.Errorf("cannot reach guests through the tunnel: vmtool executable path unknown")
+	}
+	if isTestBinary(t.Exe) {
+		return testBinaryTunnelError(t.Exe)
 	}
 	return nil
 }

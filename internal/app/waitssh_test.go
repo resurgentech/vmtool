@@ -7,36 +7,15 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jaredeh/vmtool/internal/testexec"
 )
 
-// sshStub installs stub `ansible` and `ansible-playbook` executables. Each
-// invocation appends "<tool> <module-or-playbook>" to the returned log.
-// STUB_WAIT_FAIL / STUB_GROW_FAIL make the matching call exit 4 / 2 with
-// output; STUB_GROW_OUT is what a failing grow prints.
+// sshStub installs stub `ansible` and `ansible-playbook` through
+// internal/testexec and returns their call log (see testexec.Ansible).
 func sshStub(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
-	log := filepath.Join(dir, "calls.log")
-	script := `#!/bin/sh
-case "$*" in
-*wait_for_connection*)
-  echo "wait $*" >> '` + log + `'
-  if [ -n "$STUB_WAIT_FAIL" ]; then echo "wait boom: sshd not answering"; exit 4; fi ;;
-*growpart*)
-  echo "grow" >> '` + log + `'
-  if [ -n "$STUB_GROW_FAIL" ]; then echo "$STUB_GROW_OUT"; exit 2; fi ;;
-*)
-  echo "other $*" >> '` + log + `' ;;
-esac
-exit 0
-`
-	for _, n := range []string{"ansible", "ansible-playbook"} {
-		if err := os.WriteFile(filepath.Join(dir, n), []byte(script), 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	return log
+	return testexec.Ansible(t)
 }
 
 type sshVMs struct{ createVMs }

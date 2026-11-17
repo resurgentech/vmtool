@@ -59,9 +59,9 @@ generate:
 verify:
     "{{ root }}/scripts/verify-generate.sh"
 
-# Run all Go tests
-test:
-    cd "{{ root }}" && go test ./...
+# Run Go tests (default ./...) in a capped systemd --user scope (scripts/test-capped.sh)
+test *ARGS:
+    cd "{{ root }}" && "{{ root }}/scripts/test-capped.sh" {{ ARGS }}
 
 # Pre-push: stale-generate check + tests
 check: verify test

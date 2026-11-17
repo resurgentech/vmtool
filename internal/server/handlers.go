@@ -30,7 +30,8 @@ type handlers struct {
 	vmIP      func(ctx context.Context, host, name string) (string, error)
 	dialGuest func(ctx context.Context, addr string) (net.Conn, error)
 	// tunnelExe is the vmtool path guest SSH uses as its ProxyCommand; empty
-	// means the running executable.
+	// means the running executable. Under go test that is refused
+	// (vmtool.CurrentExe), so tests that need a tunnel set a stub path here.
 	tunnelExe string
 	// imageManifest is the daemon's image-manifest.yml; empty means
 	// vmtool.ImageManifestFile in the working directory (images.go).

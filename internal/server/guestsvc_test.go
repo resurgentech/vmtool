@@ -26,3 +26,18 @@ func TestGuestSvcUsesRequestBearer(t *testing.T) {
 		t.Fatalf("token without a request: %+v", got.Tunnel)
 	}
 }
+
+// Without tunnelExe the server would use its own executable, which under
+// go test is server.test: CurrentExe refuses it, so guestSvc gets no Exe and
+// every guest-SSH path fails before any process starts.
+func TestGuestSvcNeverUsesTestBinaryAsTunnel(t *testing.T) {
+	t.Chdir(t.TempDir())
+	h := &handlers{svc: &app.Service{PlaybookDir: "pb"}}
+	got := h.guestSvc(context.Background())
+	if got.Tunnel.Exe != "" {
+		t.Fatalf("guestSvc tunnel Exe = %q under go test, want empty", got.Tunnel.Exe)
+	}
+	if _, err := got.RemoteCmd(app.VMRef{Host: "box", Name: "web"}, []string{"true"}); err == nil {
+		t.Fatal("RemoteCmd without a tunnel executable succeeded")
+	}
+}

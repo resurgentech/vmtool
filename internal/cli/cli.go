@@ -45,6 +45,10 @@ type env struct {
 	// verified VMTOOL_TOKEN; never print or log it.
 	cfg   *config.Config
 	token string
+	// tunnelExe is the vmtool path guest SSH uses as its ProxyCommand; empty
+	// means the running executable. Tests set it to a stub path, since under
+	// go test the running executable is refused (vmtool.CurrentExe).
+	tunnelExe string
 }
 
 // gateError is the gate's refusal. Error is one line naming the fix; Unwrap
@@ -325,6 +329,9 @@ func uploadProgress(w io.Writer, ev app.ProgressEvent) bool {
 // the ProxyCommand, and the token the gate verified, passed to children in
 // VMTOOL_TOKEN (never in argv).
 func (e *env) tunnel() (vmtool.Tunnel, error) {
+	if e.tunnelExe != "" {
+		return vmtool.Tunnel{Exe: e.tunnelExe, Token: e.token}, nil
+	}
 	exe, err := vmtool.CurrentExe()
 	return vmtool.Tunnel{Exe: exe, Token: e.token}, err
 }

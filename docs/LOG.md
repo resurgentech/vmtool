@@ -293,3 +293,27 @@ are appended, never edited in; a hook refuses rewrites.
 - The remote client retries `getImageManifest` once on a timeout only
   (typed `timeoutError`); no other call retries.
 - Commits: the C9 commit on `clone-identity`.
+
+## 2026-11-17 — C19 Tests cannot start real tools; the gate runs capped
+
+- After the 2026-11-17 fork bomb (a test's real `ansible` -> `ssh` used
+  the test binary as its ProxyCommand, which re-ran the suite).
+- `pkg/vmtool/exec.go`: every external tool starts through `command()`.
+  Under `go test` (`testing.Testing()`) it refuses, without starting a
+  process, any name that does not resolve inside `VMTOOL_TEST_STUBS`:
+  `test tried to run real "<name>"; install stubs with testexec.Stub(t, ...)
+  (internal/testexec)`. All six exec sites (ansible x2, ansible-playbook,
+  ssh, sshpass, sudo) use it.
+- `vmtool.CurrentExe()` errors under `go test` or for a `*.test`
+  executable, and `Tunnel.check()` refuses a test binary given as `Exe`.
+  The server's `guestSvc` then has no tunnel; the CLI's `env` gains a
+  `tunnelExe` seam for tests, like the server's.
+- New `internal/testexec`: `Stub(t, scripts)` and `Ansible(t)` (the old
+  `sshStub`). The app and pkg/vmtool stubs use it.
+- `just test` (so `just check` and the orch commit hook) runs
+  `scripts/test-capped.sh`: `go test` in a `systemd-run --user --scope`
+  with TasksMax 256 (measured peak 114, doubled, rounded up) and
+  CPUQuota of half the online CPUs; plain `go test` with a warning when
+  `systemd-run --user` is unavailable. `just test` takes package args.
+- AGENTS.md hard rule 6 (Tests) and a "Test stubs" row.
+- Commits: the C19 commit on `clone-identity`.

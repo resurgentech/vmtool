@@ -67,7 +67,8 @@ func playbookCmd(t Tunnel, inventoryPath, playbookPath string, extraVars map[str
 	for _, kv := range extraVarArgs(extraVars) {
 		args = append(args, "--extra-vars", kv)
 	}
-	cmd := exec.Command("ansible-playbook", args...)
+	// A refusal under go test is in cmd.Err; CombinedOutput returns it.
+	cmd, _ := command("ansible-playbook", args...)
 	cmd.Env = ansibleEnv(t)
 	return cmd
 }
@@ -83,12 +84,12 @@ func RunCommand(t Tunnel, inventoryPath, command string) (string, error) {
 	return string(out), nil
 }
 
-func adhocCmd(t Tunnel, inventoryPath, command string) *exec.Cmd {
-	cmd := exec.Command("ansible", "all",
+func adhocCmd(t Tunnel, inventoryPath, shellCmd string) *exec.Cmd {
+	cmd, _ := command("ansible", "all",
 		"--inventory", inventoryPath,
 		"--become",
 		"--module-name", "shell",
-		"--args", command,
+		"--args", shellCmd,
 	)
 	cmd.Env = ansibleEnv(t)
 	return cmd
@@ -151,7 +152,7 @@ func WaitSSH(t Tunnel, inventoryPath string, timeout time.Duration) (string, err
 	if secs < 1 {
 		secs = 1
 	}
-	cmd := exec.Command("ansible", "all",
+	cmd, _ := command("ansible", "all",
 		"--inventory", inventoryPath,
 		"--module-name", "wait_for_connection",
 		"--args", fmt.Sprintf("timeout=%d", secs),

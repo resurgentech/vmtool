@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -204,7 +203,10 @@ func CreateBridge(cfg BridgeConfig) error {
 
 // sudoRun executes a command with sudo, piping the password via stdin.
 func sudoRun(password string, args ...string) error {
-	cmd := exec.Command("sudo", append([]string{"-S"}, args...)...)
+	cmd, err := command("sudo", append([]string{"-S"}, args...)...)
+	if err != nil {
+		return err
+	}
 	cmd.Stdin = strings.NewReader(password + "\n")
 	out, err := cmd.CombinedOutput()
 	if err != nil {

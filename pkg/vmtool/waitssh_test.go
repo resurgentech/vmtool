@@ -6,20 +6,18 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jaredeh/vmtool/internal/testexec"
 )
 
-// stubAnsible puts an `ansible` on PATH that appends its argv to a log and
-// prints out, exiting with code. It returns the log path.
+// stubAnsible installs an `ansible` stub (internal/testexec) that appends
+// its argv to a log and prints out, exiting with code. It returns the log path.
 func stubAnsible(t *testing.T, out string, code int) string {
 	t.Helper()
-	dir := t.TempDir()
-	log := filepath.Join(dir, "argv.log")
+	log := filepath.Join(t.TempDir(), "argv.log")
 	script := "#!/bin/sh\necho \"$@\" >> '" + log + "'\ncat <<'EOF'\n" + out + "\nEOF\nexit " +
 		string(rune('0'+code)) + "\n"
-	if err := os.WriteFile(filepath.Join(dir, "ansible"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	testexec.Stub(t, map[string]string{"ansible": script})
 	return log
 }
 

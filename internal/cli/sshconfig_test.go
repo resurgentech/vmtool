@@ -33,16 +33,28 @@ func TestSSHConfigGolden(t *testing.T) {
 }
 
 func TestEnvTunnelCarriesTokenAndAbsExe(t *testing.T) {
-	e := &env{dir: t.TempDir(), token: "cli-test-token"}
+	e := &env{dir: t.TempDir(), token: "cli-test-token", tunnelExe: "/opt/vmtool/vmtool"}
 	tn, err := e.tunnel()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !filepath.IsAbs(tn.Exe) || tn.Token != "cli-test-token" {
+	if tn.Exe != "/opt/vmtool/vmtool" || tn.Token != "cli-test-token" {
 		t.Fatalf("tunnel = %+v", tn)
 	}
 	if e.service("").Tunnel != tn {
 		t.Fatal("service does not carry the tunnel")
+	}
+}
+
+// Without tunnelExe the CLI would use its own executable, cli.test under go
+// test; tunnel() refuses it and service() leaves the tunnel's Exe empty.
+func TestEnvTunnelRefusesTestBinary(t *testing.T) {
+	e := &env{dir: t.TempDir(), token: "cli-test-token"}
+	if tn, err := e.tunnel(); err == nil || !strings.Contains(err.Error(), "refusing to use the test binary") {
+		t.Fatalf("tunnel() = %+v, %v", tn, err)
+	}
+	if exe := e.service("").Tunnel.Exe; exe != "" {
+		t.Fatalf("service tunnel Exe = %q under go test, want empty", exe)
 	}
 }
 
