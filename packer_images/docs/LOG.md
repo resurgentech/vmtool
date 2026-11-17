@@ -124,3 +124,29 @@ rewrites.
   netplan in a `user-data.tpl`, or a template not installing the shared
   file with mode 0600. Not built; B0/B prove it.
 - Commits: the tranche-2 commit on `clone-identity` (vmtool repo).
+
+## 2026-11-16 — B0 pilot: `ubuntu2604` built UEFI and checked on jetfire
+
+- Built with `just generate ubuntu2604` in 7 min 33 s; `boot_wait = "10s"`
+  reached GRUB under OVMF at the first attempt. The old BIOS image is
+  kept as `ubuntu2604-bios.qcow2` in the default pool.
+- Image, offline: GPT with ESP p1 (538M) and ext4 root p2; `BOOTX64.EFI`
+  on the ESP; `/etc/machine-id` is `uninitialized`; no
+  `/etc/cloud/cloud-init.disabled` and no `99-installer.cfg`;
+  `99-vmtool.cfg` present; netplan `99-wildcard.yaml` mode 0600 with
+  `dhcp-identifier: mac`; `GRUB_CMDLINE_LINUX_DEFAULT=""`.
+- Two clones made by vmtool (branch `clone-identity`, defaults; one with
+  `--disk-size 20`): both boot under UEFI with cache `unsafe`; address in
+  18 s and 26 s; hostname is the VM name; machine-id and instance-id are
+  the domain UUID; different host keys and addresses; DHCP client id is
+  `01:<mac>`; no `ubuntu` user; packer password login works; the 20G
+  clone's root is 19.5G and vmtool's grow step reports success. After a
+  reboot the identity is unchanged, a line added to `/etc/hosts`
+  survives and the lease stays one row per MAC.
+- Fault: `/etc/hosts` keeps the installer's `127.0.1.1 ubuntu2604` line;
+  cloud-init adds `127.0.1.1 <vm> <vm>` below it instead of replacing
+  it. The VM name resolves; the image name also resolves on every clone.
+  To fix in the templates before the other six are built.
+- A BIOS image created with the default firmware does not boot (OVMF:
+  "No bootable option or device was found"), as expected.
+- Both clones deleted.
