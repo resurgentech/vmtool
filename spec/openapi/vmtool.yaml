@@ -423,11 +423,13 @@ paths:
         refusal is a JSON response sent before the upgrade, checked in this
         order: bearer token (401), workstation role (403), `Origin` (403),
         HTTP/1.1 (426), WebSocket upgrade headers (400), name, `cols` and
-        `rows` (400), target (unknown host or VM), address (409), console limit
-        (429), ssh or the pty failing to start (502). No subprotocol is
-        offered or required. Served by the workstation only: on a server
-        whose config.yml role is hypervisor this operation answers 403
-        "served by the workstation".
+        `rows` (400), target (unknown host or VM, 404), address (a VM with no IP,
+        409), console limit (429), ssh or the pty failing to start (502). No
+        subprotocol is offered or required. Served by the workstation only:
+        on a server whose config.yml role is hypervisor this operation
+        answers 403 "served by the workstation". The full contract, the
+        close-code table and a client example are in spec/README.md,
+        "Console (WebSocket)".
       parameters:
         - $ref: '#/components/parameters/ConsoleCols'
         - $ref: '#/components/parameters/ConsoleRows'
@@ -1169,11 +1171,13 @@ paths:
         refusal is a JSON response sent before the upgrade, checked in this
         order: bearer token (401), workstation role (403), `Origin` (403),
         HTTP/1.1 (426), WebSocket upgrade headers (400), name, `cols` and
-        `rows` (400), target (unknown machine), address (409), console limit
+        `rows` (400), target (unknown machine, 404), console limit
         (429), ssh or the pty failing to start (502). No subprotocol is
         offered or required. Served by the workstation only: on a server
         whose config.yml role is hypervisor this operation answers 403
-        "served by the workstation".
+        "served by the workstation". The full contract, the close-code
+        table and a client example are in spec/README.md, "Console
+        (WebSocket)".
       parameters:
         - $ref: '#/components/parameters/ConsoleCols'
         - $ref: '#/components/parameters/ConsoleRows'

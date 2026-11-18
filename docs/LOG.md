@@ -467,3 +467,16 @@ are appended, never edited in; a hook refuses rewrites.
 - New deps: `github.com/coder/websocket` v1.8.14, `github.com/creack/pty`
   v1.1.24. API stays 2.1.0.
 - Commits: the C23 commit on `clone-identity`.
+
+## 2026-11-17 — C24 Console contract and client example in the docs
+
+- spec/README.md "Console (WebSocket)": handshake and refusal order,
+  message table, resize, binary-only input, ignored bad text, close codes
+  (4000 `exit N` with its regex, 4503, 1009, 1011), limits, no logging,
+  a Python `websockets` example (bearer header, CA from env, bytes input,
+  exit code from the close), the comparison with interloc's contract,
+  and a hermes_setup porting note (`send_secret` becomes exec with
+  `stdin`).
+- README: a console paragraph linking there. The two console operations'
+  descriptions cross-link; the machine one no longer lists a 409.
+- Commits: the C24 commit on `clone-identity`.

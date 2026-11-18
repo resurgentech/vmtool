@@ -288,6 +288,18 @@ any more. The block runs `vmtool tunnel %n` in vmtool's working directory
 (`vmtool tunnel` takes `host/vm` too) and needs `VMTOOL_TOKEN` in the
 environment or in `.env` there. It uses `%n` because ssh lowercases `%h`.
 
+### Console (WebSocket)
+
+For a program rather than a person at a terminal, the REST server also
+offers a console: `GET /v1/hosts/{host}/vms/{name}/console` and
+`GET /v1/metal/{name}/console` upgrade to a WebSocket that is a login shell on
+the target (`ssh -tt` on a pty on the server). Terminal bytes travel as binary
+messages, a resize is a JSON text message, and the close code 4000 with the
+reason `exit N` reports the exit status. It needs the bearer token and refuses
+any `Origin`, so it is not for browsers. The handshake, the close codes, the
+limits and a Python example are in
+[`spec/README.md`](spec/README.md#console-websocket).
+
 ## Metal and alien machines
 
 vmtool can also drive machines its libvirt does not manage: **metal** (physical

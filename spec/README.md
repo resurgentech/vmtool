@@ -64,12 +64,166 @@ port 22, hijacks the connection and relays raw bytes (`internal/server/tunnel.go
 wired through `tunnelMux`). It is still in the spec, so the exclusion register
 stays empty.
 
+## Console (WebSocket)
+
 `GET /v1/hosts/{host}/vms/{name}/console` (`openVMConsole`) and
-`GET /v1/metal/{name}/console` (`openMachineConsole`) are WebSocket upgrades
-served the same way (`internal/server/console.go`, wired through `tunnelMux`;
-both are in the spec and workstation-only). They run `ssh -tt` on a local pty
-and relay it as binary messages; the handshake checks, close codes and limits
-are in each operation's description. The full contract is step C24.
+`GET /v1/metal/{name}/console` (`openMachineConsole`) upgrade to a WebSocket
+(RFC 6455) that is an interactive login shell on the target: `ssh -tt` with
+no remote command, on a pty on the server with `TERM=xterm-256color`. There is
+no command parameter (for one command use `exec`). The code is
+`internal/server/console.go`, wired through `tunnelMux`; both operations are
+workstation-only. Nothing in the stream is logged: no output byte, no typed
+input, no control message, and none goes into an error.
+
+### Handshake
+
+- URL: `ws[s]://<server>/v1/hosts/{host}/vms/{name}/console` or
+  `.../v1/metal/{name}/console`, with optional `?cols=N&rows=N` (integers
+  1-65535; default 80x24).
+- `Authorization: Bearer <token>` on the handshake, as for every route.
+- No `Origin` header: any `Origin` is refused (403), so a browser cannot open
+  a console. Most non-browser clients send none unless told to.
+- No subprotocol is offered or required.
+- HTTP/1.1 only. A client that negotiated HTTP/2 gets 426.
+
+The server checks in this order, and every refusal is an ordinary JSON
+`{"error": "..."}` response sent before the upgrade. Success is
+`101 Switching Protocols`.
+
+| # | Check | Status |
+|---|---|---|
+| 1 | bearer token | 401 |
+| 2 | server role is not workstation | 403 |
+| 3 | an `Origin` header is present | 403 |
+| 4 | not HTTP/1.1 (the response carries `Upgrade: websocket`) | 426 |
+| 5 | not a WebSocket upgrade (`Connection`, `Upgrade`, `Sec-WebSocket-Version: 13`, `Sec-WebSocket-Key`) | 400 |
+| 6 | invalid name, or `cols`/`rows` not an integer in 1-65535 | 400 |
+| 7 | the target: unknown host, VM or machine | 404 |
+| 8 | a VM with no IP address (a machine has no such case) | 409 |
+| 9 | 16 consoles already open, or the server is shutting down | 429 |
+| 10 | ssh or its pty could not be started | 502 |
+
+An error while resolving the target (steps 7 and 8) is mapped by kind (400,
+404, 409, 502; anything else 500), as for the other operations.
+
+### Messages
+
+| Direction | Type | Meaning |
+|---|---|---|
+| client to server | binary | typed input, written to the terminal as is |
+| client to server | text | a control message; only `{"event":"resize","cols":N,"rows":N}` (N an integer 1-65535) resizes the pty |
+| server to client | binary | terminal output, at most 32 KiB per message |
+
+Typed input must be a binary message. A browser terminal's `ws.send(string)`
+is a text message and is treated as a control message: it is ignored, not
+typed. A text message that is not valid JSON, is another event, or has a size
+outside 1-65535 is ignored too: it is not written to the terminal and the
+socket stays open. The server sends no text messages.
+
+### Close codes
+
+| Code | Reason | When |
+|---|---|---|
+| 4000 | `exit N` | the shell ended; `N` is ssh's exit status (255 for an ssh connection failure). The remaining output is sent first |
+| 1009 | `message too big` | an inbound message over 64 KiB |
+| 1011 | `ping timeout` | no pong within 30 s of a ping |
+| 1011 | `console failed` | the terminal could not be written, or the shell was killed by a signal so it has no exit status |
+| 4503 | `unavailable` | the server is shutting down |
+
+The reason of an exit matches `^exit [0-9]+$`. If the client closes first or
+the connection drops, the server sends nothing. In every case the server kills
+the shell's whole process group (ssh and the tunnel's ProxyCommand) before it
+returns, so a dropped console leaves no process behind.
+
+### Limits
+
+- Inbound messages: 64 KiB. Outbound messages: 32 KiB.
+- The server pings every 30 s and ends a console that does not pong within
+  30 s; a client library that answers pings needs nothing more.
+- At most 16 consoles at once, across both operations (429 above that).
+- The server's own read and write deadlines do not apply to a console.
+- Compression (permessage-deflate) is not offered.
+
+### Example (Python, `websockets`)
+
+Starts `sudo`, waits for its password prompt, answers it, resizes, and leaves. The token and the CA path
+come from the environment; the secret is a placeholder.
+
+```python
+import asyncio
+import json
+import os
+import re
+import ssl
+
+from websockets.asyncio.client import connect
+from websockets.exceptions import ConnectionClosed
+
+URL = os.environ["VMTOOL_URL"]  # e.g. wss://workstation:9473
+TOKEN = os.environ["VMTOOL_TOKEN"]
+CTX = ssl.create_default_context(cafile=os.environ["VMTOOL_CA"])  # the hulbert.local CA
+
+
+async def main() -> int:
+    uri = URL + "/v1/hosts/jetfire/vms/web/console?cols=120&rows=40"
+    try:
+        # No origin= : any Origin header is refused with 403.
+        async with connect(
+            uri, additional_headers={"Authorization": "Bearer " + TOKEN}, ssl=CTX
+        ) as ws:
+            # Typed input must be bytes: a str is a text message and is ignored.
+            await ws.send(b"sudo -k; sudo true\n")
+            seen = b""
+            while b"password" not in seen.lower():  # terminal output is binary
+                seen += await ws.recv()
+            await ws.send(b"PLACEHOLDER-not-a-secret-1\n")  # the answer
+            # A resize is a text message holding JSON.
+            await ws.send(json.dumps({"event": "resize", "cols": 200, "rows": 50}))
+            await ws.send(b"exit 0\n")
+            while True:  # drain the output until the server closes
+                await ws.recv()
+    except ConnectionClosed as closed:
+        rcvd = closed.rcvd  # the server's close frame, or None
+        if rcvd is not None and rcvd.code == 4000:
+            m = re.fullmatch(r"exit ([0-9]+)", rcvd.reason)
+            if m:
+                return int(m.group(1))
+        raise RuntimeError(f"the console did not end with an exit: {rcvd}")
+
+
+if __name__ == "__main__":
+    raise SystemExit(asyncio.run(main()))
+```
+
+### Compared with interloc's terminal contract
+
+This is the same data path and vocabulary as interloc's: binary terminal bytes
+in both directions, the `{"event":"resize",...}` control message, and close
+code 4000 when the process exits. The differences: one socket instead of
+interloc's two (`ws/frontend` for data, `ws/control` for controls); no
+terminal resource to create and no `?terminal=` id; no reattach and no ring
+replay, so a dropped socket is a finished console; no closing trailer, only
+the close frame's `exit N`; a bearer header instead of a session cookie; and
+no browser, because an `Origin` is refused.
+
+### Porting hermes_setup's `send_secret`
+
+`send_secret` was written for the old console (removed in `0ee7231`); it
+does not work against this one as it is. What to change:
+
+- The paths are `/v1/hosts/{host}/vms/{name}/console` and
+  `/v1/metal/{name}/console`; the host is a path segment of the VM path.
+- Send the bearer header (`additional_headers`) and no `origin`.
+- Send input as bytes. `socket.send(str)` is a text message and is ignored
+  here, so the prelude, the heredoc and the exit query would silently go
+  nowhere. Use `.encode()`.
+- Read the exit code from the close (`rcvd.code == 4000`, parse
+  `rcvd.reason`), not from a marker echoed in the output.
+- Better, leave the console for this job: `send_secret` becomes
+  `POST /v1/hosts/{host}/vms/{name}/exec` (API 2.1.0) with
+  `{"command": ["sh", "-c", "umask 077; cat > /p/.env.new && mv /p/.env.new /p/.env"], "stdin": "KEY=PLACEHOLDER\n"}`.
+  The reply carries `exit_code`; the secret is on stdin, in no echo and in no
+  argv. `POST /v1/metal/{name}/exec` is the same for a machine.
 
 ## URL versioning
 
