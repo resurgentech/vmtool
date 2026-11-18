@@ -1,0 +1,444 @@
+---
+# Build an NVMe stripe (md RAID 0), an LVM volume group on it, and a libvirt
+# `logical` storage pool over that volume group, for vmtool's fast block disks.
+# Called from setup_host.yml only when vmtool_nvme_drives is non-empty.
+#
+# DESTRUCTIVE BY NATURE: this is destructive by nature, runs only with the
+# drives named, and refuses non-blank drives. Nothing here runs unless
+# `vmtool_nvme_drives` lists /dev/disk/by-id/ paths; every drive must be whole,
+# unpartitioned, carry no signature, have no holders and be neither mounted nor
+# swap, or the play fails and changes nothing. If the volume group already
+# exists it is adopted: the drives are then not examined and not written.
+#
+#   just prereqs veritech02 -e '{"vmtool_nvme_drives":["/dev/disk/by-id/nvme-A","/dev/disk/by-id/nvme-B"]}'
+#
+# The only commands here that write storage are the md array create, pvcreate
+# and vgcreate (guarded by vmtool_nvme_create). The probes are read-only. No
+# volume, volume group, physical volume or array is ever removed, stopped or
+# wiped by this file. The pool is defined without pool-build, because on a
+# logical pool that would run pvcreate/vgcreate itself.
+#
+# Variables (defaults in setup_host.yml): vmtool_nvme_drives, vmtool_nvme_vg,
+# vmtool_nvme_md (array name, /dev/md/<name>), vmtool_nvme_pool.
+
+# ---------------------------------------------------------------- preflight
+
+- name: Fail on a family that is not Debian
+  ansible.builtin.fail:
+    msg: "The NVMe stripe is only built on Debian/Ubuntu hosts; this host is {{ vmtool_family }}. Nothing was changed."
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_family != 'debian'
+
+- name: Fail on fewer than 2 drives
+  ansible.builtin.fail:
+    msg: "vmtool_nvme_drives needs at least 2 drives for a stripe, got {{ vmtool_nvme_drives | length }}. Nothing was changed."
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_drives | length < 2
+
+- name: "Fail on a drive that is not a whole /dev/disk/by-id/ path"
+  ansible.builtin.fail:
+    msg: >-
+      {{ item }}: each drive must be a /dev/disk/by-id/ path without -part and
+      without '..'. Nothing was changed.
+  loop: "{{ vmtool_nvme_drives }}"
+  when:
+    - vmtool_nvme_drives | length > 0
+    - (not (item is match('^/dev/disk/by-id/'))) or ('-part' in item) or ('..' in item)
+
+- name: Resolve the drives
+  ansible.builtin.command:
+    argv: [realpath, -m, "{{ item }}"]
+  register: vmtool_nvme_realpaths
+  changed_when: false
+  check_mode: false
+  loop: "{{ vmtool_nvme_drives }}"
+  when: vmtool_nvme_drives | length > 0
+
+- name: Remember the resolved drives
+  ansible.builtin.set_fact:
+    vmtool_nvme_real: "{{ vmtool_nvme_realpaths.results | map(attribute='stdout') | map('trim') | list }}"
+  when: vmtool_nvme_drives | length > 0
+
+- name: Fail on duplicate drives
+  ansible.builtin.fail:
+    msg: >-
+      vmtool_nvme_drives names the same device twice once resolved
+      ({{ vmtool_nvme_real | join(', ') }}); the list must be unique. Nothing was changed.
+  when:
+    - vmtool_nvme_drives | length > 0
+    - (vmtool_nvme_real | unique | length) != (vmtool_nvme_real | length)
+
+- name: Install mdadm and lvm2
+  ansible.builtin.apt:
+    name: [mdadm, lvm2]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when: vmtool_nvme_drives | length > 0
+
+# -------------------------------------------------------------------- adopt
+
+- name: Look for the volume group
+  ansible.builtin.command:
+    argv: [vgs, --noheadings, -o, vg_name, "{{ vmtool_nvme_vg }}"]
+  register: vmtool_nvme_vg_info
+  changed_when: false
+  check_mode: false
+  failed_when: false
+  when: vmtool_nvme_drives | length > 0
+
+- name: Look for the md array
+  ansible.builtin.stat:
+    path: "/dev/md/{{ vmtool_nvme_md }}"
+  register: vmtool_nvme_md_before
+  when: vmtool_nvme_drives | length > 0
+
+- name: Refuse an md array that exists without the volume group
+  ansible.builtin.fail:
+    msg: >-
+      /dev/md/{{ vmtool_nvme_md }}: an md array of that name exists without the
+      VG {{ vmtool_nvme_vg }}; nothing was changed. Finish or remove it yourself.
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_vg_info.rc != 0
+    - vmtool_nvme_md_before.stat.exists
+
+# With the VG present nothing below that examines or writes a drive runs.
+- name: Decide whether to create the stripe
+  ansible.builtin.set_fact:
+    vmtool_nvme_create: "{{ vmtool_nvme_vg_info.rc != 0 and not vmtool_nvme_md_before.stat.exists }}"
+  when: vmtool_nvme_drives | length > 0
+
+- name: Say that the volume group is adopted
+  ansible.builtin.debug:
+    msg: "Volume group {{ vmtool_nvme_vg }} exists: adopting it; the drives are not examined or written."
+  when:
+    - vmtool_nvme_drives | length > 0
+    - not (vmtool_nvme_create | bool)
+
+# -------------------------------------------------------------- blank check
+
+# Read-only. Every probe is skipped when the volume group is adopted.
+- name: Check that each drive is a block device
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    follow: true
+  register: vmtool_nvme_stat
+  loop: "{{ vmtool_nvme_drives }}"
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_create | bool
+
+- name: Refuse a drive that is not a block device
+  ansible.builtin.fail:
+    msg: "{{ item.item }}: not a block device; nothing was changed."
+  loop: "{{ vmtool_nvme_stat.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_create | bool
+    - not (item.stat.isblk | default(false))
+
+- name: List what is on each drive
+  ansible.builtin.command:
+    argv: [lsblk, --noheadings, --list, --output, NAME, "{{ item }}"]
+  register: vmtool_nvme_lsblk
+  changed_when: false
+  check_mode: false
+  loop: "{{ vmtool_nvme_real }}"
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_create | bool
+
+- name: Refuse a drive with partitions
+  ansible.builtin.fail:
+    msg: "{{ item.item }}: has a partition or child device ({{ item.stdout_lines[1:] | join(' ') }}); nothing was changed."
+  loop: "{{ vmtool_nvme_lsblk.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_create | bool
+    - item.stdout_lines | length > 1
+
+- name: Look for signatures with a dry run
+  ansible.builtin.command:
+    argv: [wipefs, --no-act, "{{ item }}"]
+  register: vmtool_nvme_sig
+  changed_when: false
+  check_mode: false
+  loop: "{{ vmtool_nvme_real }}"
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_create | bool
+
+- name: Probe each drive for a signature
+  ansible.builtin.command:
+    argv: [blkid, -p, "{{ item }}"]
+  register: vmtool_nvme_blkid
+  changed_when: false
+  check_mode: false
+  failed_when: vmtool_nvme_blkid.rc not in [0, 2]
+  loop: "{{ vmtool_nvme_real }}"
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_create | bool
+
+- name: Refuse a drive that carries a signature
+  ansible.builtin.fail:
+    msg: "{{ item.item }}: carries a signature (a filesystem, RAID or LVM label); nothing was changed."
+  loop: "{{ vmtool_nvme_sig.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_create | bool
+    - item.stdout | trim | length > 0
+
+- name: Refuse a drive that blkid recognises
+  ansible.builtin.fail:
+    msg: "{{ item.item }}: blkid -p reports a signature; nothing was changed."
+  loop: "{{ vmtool_nvme_blkid.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_create | bool
+    - item.rc == 0
+
+- name: Read the holders of each drive
+  ansible.builtin.command:
+    argv: [ls, -A, "/sys/class/block/{{ item | basename }}/holders"]
+  register: vmtool_nvme_holders
+  changed_when: false
+  check_mode: false
+  loop: "{{ vmtool_nvme_real }}"
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_create | bool
+
+- name: Refuse a drive that another device holds
+  ansible.builtin.fail:
+    msg: "{{ item.item }}: is held by another device ({{ item.stdout_lines | join(' ') }}); nothing was changed."
+  loop: "{{ vmtool_nvme_holders.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_create | bool
+    - item.stdout | trim | length > 0
+
+- name: Look for mounts on each drive
+  ansible.builtin.command:
+    argv: [findmnt, --noheadings, --source, "{{ item }}"]
+  register: vmtool_nvme_mounts
+  changed_when: false
+  check_mode: false
+  failed_when: vmtool_nvme_mounts.rc not in [0, 1]
+  loop: "{{ vmtool_nvme_real }}"
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_create | bool
+
+- name: Refuse a mounted drive
+  ansible.builtin.fail:
+    msg: "{{ item.item }}: is mounted; nothing was changed."
+  loop: "{{ vmtool_nvme_mounts.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_create | bool
+    - item.rc == 0
+
+- name: List swap
+  ansible.builtin.command:
+    argv: [swapon, --noheadings, "--show=NAME"]
+  register: vmtool_nvme_swap
+  changed_when: false
+  check_mode: false
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_create | bool
+
+- name: Refuse a drive used as swap
+  ansible.builtin.fail:
+    msg: "{{ item }}: is used as swap; nothing was changed."
+  loop: "{{ vmtool_nvme_real }}"
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_create | bool
+    - item in (vmtool_nvme_swap.stdout_lines | map('trim') | list)
+
+# ------------------------------------------------------------------- create
+
+# The only writing storage commands in this file.
+- name: Create the md RAID 0 array
+  ansible.builtin.command:
+    argv: >-
+      {{ ['mdadm', '--create', '/dev/md/' ~ vmtool_nvme_md, '--level=0',
+          '--raid-devices=' ~ (vmtool_nvme_drives | length), '--metadata=1.2',
+          '--name=' ~ vmtool_nvme_md] + vmtool_nvme_drives }}
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_create | bool
+
+- name: Wait for the array device
+  ansible.builtin.command: udevadm settle
+  changed_when: false
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_create | bool
+
+- name: Create the physical volume
+  ansible.builtin.command:
+    argv: [pvcreate, "/dev/md/{{ vmtool_nvme_md }}"]
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_create | bool
+
+- name: Create the volume group
+  ansible.builtin.command:
+    argv: [vgcreate, "{{ vmtool_nvme_vg }}", "/dev/md/{{ vmtool_nvme_md }}"]
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_create | bool
+
+# -------------------------------------------------------------- persistence
+
+- name: Look for the md array again
+  ansible.builtin.stat:
+    path: "/dev/md/{{ vmtool_nvme_md }}"
+  register: vmtool_nvme_md_now
+  when: vmtool_nvme_drives | length > 0
+
+- name: Read the array's ARRAY line
+  ansible.builtin.command:
+    argv: [mdadm, --detail, --brief, "/dev/md/{{ vmtool_nvme_md }}"]
+  register: vmtool_nvme_detail
+  changed_when: false
+  check_mode: false
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_md_now.stat.exists
+
+# Keyed on the array's UUID, so a line for another array is left alone.
+- name: Record the array in /etc/mdadm/mdadm.conf
+  ansible.builtin.lineinfile:
+    path: /etc/mdadm/mdadm.conf
+    create: true
+    mode: "0644"
+    regexp: '^ARRAY\s.*UUID={{ _uuid }}'
+    line: "{{ vmtool_nvme_detail.stdout_lines | select('match', '^ARRAY') | first }}"
+  vars:
+    # Block scalars, not double quotes: YAML must not unescape the '\\1' Jinja sees.
+    _uuid: >-
+      {{ vmtool_nvme_detail.stdout | regex_search('UUID=([0-9a-f:]+)', '\\1') | default([''], true) | first }}
+  register: vmtool_nvme_conf
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_md_now.stat.exists
+
+- name: Rebuild the initramfs so the array assembles at boot
+  ansible.builtin.command: update-initramfs -u
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_conf is changed
+
+# --------------------------------------------------------------------- pool
+
+- name: "Inspect the {{ vmtool_nvme_pool }} pool"
+  ansible.builtin.command: "virsh -c qemu:///system pool-info {{ vmtool_nvme_pool }}"
+  register: vmtool_nvme_pool_info
+  changed_when: false
+  check_mode: false
+  failed_when: false
+  when: vmtool_nvme_drives | length > 0
+
+- name: "Read the {{ vmtool_nvme_pool }} pool's type and source"
+  ansible.builtin.command: "virsh -c qemu:///system pool-dumpxml {{ vmtool_nvme_pool }}"
+  register: vmtool_nvme_pool_xml
+  changed_when: false
+  check_mode: false
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_pool_info.rc == 0
+
+# An existing pool of the same type and source volume group is adopted as it is.
+- name: "Refuse a {{ vmtool_nvme_pool }} pool that is something else"
+  ansible.builtin.fail:
+    msg: >-
+      libvirt pool {{ vmtool_nvme_pool }} already exists with type
+      '{{ _type }}' and source volume group '{{ _src }}', but vmtool wants type
+      'logical' over {{ vmtool_nvme_vg }}. Nothing was changed; remove or repoint
+      that pool yourself.
+  vars:
+    # Block scalars, not double quotes: YAML must not unescape the '\\1' Jinja sees.
+    _type: >-
+      {{ vmtool_nvme_pool_xml.stdout | regex_search("<pool\\s+type='([^']*)'", '\\1') | default([''], true) | first }}
+    _src: >-
+      {{ vmtool_nvme_pool_xml.stdout | regex_search('<source>[\\s\\S]*?<name>([^<]*)</name>', '\\1') | default([''], true) | first | trim }}
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_pool_info.rc == 0
+    - _type != 'logical' or _src != vmtool_nvme_vg
+
+# No pool-build: on a logical pool it would run pvcreate/vgcreate.
+- name: "Define the {{ vmtool_nvme_pool }} pool"
+  ansible.builtin.command:
+    argv: [virsh, -c, "qemu:///system", pool-define, /dev/stdin]
+    stdin: |
+      <pool type='logical'>
+        <name>{{ vmtool_nvme_pool }}</name>
+        <source>
+          <name>{{ vmtool_nvme_vg }}</name>
+          <format type='lvm2'/>
+        </source>
+        <target>
+          <path>/dev/{{ vmtool_nvme_vg }}</path>
+        </target>
+      </pool>
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_pool_info.rc != 0
+
+- name: "Autostart the {{ vmtool_nvme_pool }} pool"
+  ansible.builtin.command: "virsh -c qemu:///system pool-autostart {{ vmtool_nvme_pool }}"
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_pool_info.rc != 0 or vmtool_nvme_pool_info.stdout is search('Autostart:\s+no')
+
+- name: "Start the {{ vmtool_nvme_pool }} pool"
+  ansible.builtin.command: "virsh -c qemu:///system pool-start {{ vmtool_nvme_pool }}"
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_pool_info.rc != 0 or vmtool_nvme_pool_info.stdout is search('State:\s+inactive')
+
+# ------------------------------------------------------------------ summary
+
+- name: Read the volume group
+  ansible.builtin.command:
+    argv: [vgs, "{{ vmtool_nvme_vg }}"]
+  register: vmtool_nvme_vg_final
+  changed_when: false
+  check_mode: false
+  failed_when: false
+  when: vmtool_nvme_drives | length > 0
+
+- name: Read the pool
+  ansible.builtin.command: "virsh -c qemu:///system pool-info {{ vmtool_nvme_pool }}"
+  register: vmtool_nvme_pool_final
+  changed_when: false
+  check_mode: false
+  failed_when: false
+  when: vmtool_nvme_drives | length > 0
+
+- name: Show the NVMe volume group and pool
+  ansible.builtin.debug:
+    msg: >-
+      {{ vmtool_nvme_vg_final.stdout_lines | default([]) + vmtool_nvme_pool_final.stdout_lines | default([])
+         + ['Logical volumes in ' ~ vmtool_nvme_vg ~ ' that vmtool did not create (for example test leftovers) are yours to keep or remove; this play never touches them.'] }}
+  when: vmtool_nvme_drives | length > 0

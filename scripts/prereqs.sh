@@ -14,6 +14,11 @@
 # vmtool pool at HV_POOL_DIR, Go only when missing or older than GO_MIN
 # (GO_INSTALL_VERSION is what gets installed), and the daemon port in ufw
 # (-e vmtool_daemon_port=9473). It always asks for the become password.
+# Opt-in NVMe stripe (destructive by nature, runs only with the drives named,
+# and refuses non-blank drives): pass the drives as extra arguments, e.g.
+#   scripts/prereqs.sh veritech02 -e '{"vmtool_nvme_drives":["/dev/disk/by-id/nvme-A","/dev/disk/by-id/nvme-B"]}'
+# It builds an md RAID 0 array, a volume group and a libvirt logical pool
+# `nvme` (ansible/playbooks/tasks/nvme_stripe.yml). Without it nothing happens.
 # VMTOOL_ROOT (default: this checkout) is where config.yml and vmtool live;
 # VMTOOL_BIN overrides the binary. The justfile sets HV_DIR (/opt/vmtool),
 # HV_POOL_DIR (/var/lib/vmtool/images), GO_MIN (1.21) and GO_INSTALL_VERSION

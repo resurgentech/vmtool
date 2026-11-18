@@ -12,6 +12,15 @@
 # libvirt dir pool `vmtool` under /var/lib/vmtool/images (instead of a `default`
 # pool), and Go only when none at or above vmtool_go_min is found.
 #
+# Optional, for hypervisors with blank NVMe drives (Debian/Ubuntu only):
+#
+#   just prereqs veritech02 -e '{"vmtool_nvme_drives":["/dev/disk/by-id/nvme-A","/dev/disk/by-id/nvme-B"]}'
+#
+# That builds an md RAID 0 stripe, a volume group on it and a libvirt `logical`
+# pool `nvme` (tasks/nvme_stripe.yml). It is destructive by nature, runs only
+# with the drives named, and refuses non-blank drives. Without the variable
+# nothing of this runs.
+#
 # Supports Ubuntu/Debian and Omarchy/Arch. Safe to re-run.
 - name: Install vmtool host prerequisites
   hosts: "{{ vmtool_hosts | default('localhost') }}"
@@ -34,6 +43,15 @@
 
     # Additional dir pools: [{name: fast, path: /srv/vms}, ...]
     vmtool_extra_pools: []
+
+    # Fast block disks, off unless vmtool_nvme_drives is non-empty: a list of
+    # /dev/disk/by-id/ paths (at least 2, whole and blank) to stripe with md
+    # RAID 0, put an LVM volume group on, and expose as a libvirt `logical`
+    # pool. An existing volume group or pool of that name is adopted.
+    vmtool_nvme_drives: []
+    vmtool_nvme_vg: vmtool-nvme
+    vmtool_nvme_md: vmtool-nvme    # /dev/md/<name>
+    vmtool_nvme_pool: nvme
 
     # Drop /etc/profile.d/vmtool.sh so bare `virsh` matches vmtool (qemu:///system).
     vmtool_set_default_uri: true
@@ -524,6 +542,12 @@
       loop_control:
         loop_var: pool
         label: "{{ pool.name }} ({{ pool.path }})"
+
+    # Opt-in and destructive by nature: runs only with vmtool_nvme_drives named.
+    # See tasks/nvme_stripe.yml.
+    - name: Build the NVMe stripe and its logical pool
+      ansible.builtin.include_tasks: tasks/nvme_stripe.yml
+      when: vmtool_nvme_drives | length > 0
 
     # ----------------------------------------------------------------- summary
 

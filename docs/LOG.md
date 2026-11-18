@@ -565,3 +565,26 @@ are appended, never edited in; a hook refuses rewrites.
   pool refresh (C8) and the image cache's `RefreshPool` visible.
 - README: the key, its scope and where it lives.
 - Commits: the L4 commit on `clone-identity`.
+
+## 2026-11-18 — L5 Host setup builds the NVMe stripe and the logical pool, opt-in
+
+- New `ansible/playbooks/tasks/nvme_stripe.yml`, included by
+  `setup_host.yml` only when `vmtool_nvme_drives` (a list of
+  `/dev/disk/by-id/` paths) is non-empty; every task carries that guard.
+  Destructive by nature, runs only with the drives named, refuses
+  non-blank drives.
+- Preflight before any write: Debian family, at least 2 whole by-id
+  drives, no duplicates after `realpath`, mdadm and lvm2 installed.
+- Adopt first: an existing VG `vmtool_nvme_vg` is adopted without
+  examining the drives; an md array of that name without the VG fails.
+- Blank checks (read-only): partitions, signatures (`--no-act` dry run
+  and `blkid -p`), holders, mounts, swap. Only then `mdadm --create`
+  (RAID 0), `pvcreate`, `vgcreate`: the only writing storage commands.
+- Persistence: the ARRAY line in `/etc/mdadm/mdadm.conf` (by UUID),
+  `update-initramfs -u` only when it changed.
+- libvirt `logical` pool `vmtool_nvme_pool` defined without
+  `pool-build`; an existing pool of the same type and VG is adopted
+  (autostart and start as needed), a different one fails.
+- Structural tests in `scripts/nvme_stripe_test.go`; the playbook was not
+  executed. README "Hypervisors" and `scripts/prereqs.sh` give the command.
+- Commits: the L5 commit on `clone-identity`.

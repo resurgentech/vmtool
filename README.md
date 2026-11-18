@@ -65,6 +65,28 @@ The paths and versions are variables at the top of the [`justfile`](justfile)
 (`hv_dir`, `hv_pool_dir`, `go_min`, `go_install_version`). Re-running is a
 no-op.
 
+#### Fast block disks (opt-in NVMe stripe)
+
+On a Debian/Ubuntu hypervisor with blank NVMe drives, host setup can also build
+an md RAID 0 stripe, an LVM volume group on it and a libvirt `logical` pool
+`nvme` (use it with `--pool nvme`). This is **destructive by nature, runs only
+with the drives named, and refuses non-blank drives**: nothing happens unless
+you pass `vmtool_nvme_drives`, a list of at least two `/dev/disk/by-id/` paths.
+Each drive must be whole, with no partition, no signature, no holder, and not
+mounted or swap; otherwise the play fails and changes nothing. If the volume
+group already exists it is adopted and the drives are not touched; an existing
+pool of the same type and volume group is adopted too, and one that differs
+makes the play fail.
+
+```bash
+just prereqs veritech02 -e '{"vmtool_nvme_drives":["/dev/disk/by-id/nvme-A","/dev/disk/by-id/nvme-B"]}'
+```
+
+The other variables are `vmtool_nvme_vg` (`vmtool-nvme`), `vmtool_nvme_md`
+(`vmtool-nvme`, the array `/dev/md/<name>`) and `vmtool_nvme_pool` (`nvme`).
+Logical volumes that vmtool did not create are yours; the play never removes
+anything.
+
 Then put the daemon on it, from the workstation:
 
 ```bash
