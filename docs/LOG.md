@@ -663,3 +663,37 @@ are appended, never edited in; a hook refuses rewrites.
   `testexec.Stub` prereqs.sh) and `TestPrereqsDocsAgree`: red before,
   green after; `just check` green.
 - Commits: the L9 commit on `clone-identity`.
+
+## 2026-11-18 — NVMe pools live on veritech03 and veritech04; runners rebuilt on them (XO)
+
+- On the user's word ("Veritech three and four are yours ... Delete any
+  existing VMs on those two machines and replace them with the new
+  system"): both daemons deployed at API 2.2.0; vt-r7..vt-r12 and
+  int_bot1 (veritech03) and vt-r1..vt-r6 (veritech04) deleted.
+- Host setup with each host's two Samsung drives, first real run of L5.
+  It stopped on veritech03 after creating the array and the volume group
+  (the regex defect fixed in L8); the documented `just prereqs` form
+  could not pass the drive list (fixed in L9). After L8/L9: veritech03
+  re-run took the adopt path (ARRAY line written, initramfs rebuilt, pool
+  `nvme` defined, autostarted, started); veritech04 ran in full; a second
+  pass on each changed nothing. `VMTOOL_TEST_ANSIBLE_SYNTAX=1 just test
+  ./scripts/` green on ansible-core 2.21.5.
+- Tranche 7 checks on veritech03 with a trial VM: M1 pool `nvme` is
+  `logical`, active, autostart; M2 block disk `raw`, `cache='none'`,
+  `io='native'`, `discard='unmap'`, `iothread='1'`, `queues='4'`,
+  `<iothreads>1</iothreads>`, root 20 GB; M3 fio in a file on the guest's
+  ext4: 4k fsync 5.2k IOPS, 4k random write 134k IOPS; M4 add-disk made LV
+  `<name>-2`; M5 resize-disk refused up front, VM kept running; M6 delete
+  removed both LVs. M7 happened unplanned: veritech03 was rebooted by
+  another tool at 14:15 PST; array, volume group, pool and the three VMs
+  defined on it came back by themselves (VMs shut off: autostart is off).
+- Twelve VMs recreated on the `nvme` pools from the rebuilt
+  `ubuntu2604.qcow2` (UEFI, 40 GB, `setup_bot.yml`): vt-r1, vt-r2 16 vCPU /
+  12 GiB, vt-r3..vt-r12 8 / 8. Each checked: user `bot`, `packer` gone,
+  password login off, `/tmp` on the root disk. Create took 30-35 s per VM.
+- Created with a side build of HEAD; the workstation install is still the
+  Nov 16 build (cutover held). Credentials were copied into the old folder
+  layout so the installed `vmtool cmd` reaches the new VMs.
+- Found, not fixed: the README example `vmtool create veritech02/build1
+  ubuntu2604 --pool nvme` needs `ubuntu2604.qcow2`; `vmtool info` does not
+  print `disk_backing` / `disk_cache`, which the API returns.
