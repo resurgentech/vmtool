@@ -364,9 +364,7 @@ func (m *Manager) Delete(name string, noclone bool) error {
 	var diskPaths []string
 	if !noclone {
 		if xmlDesc, err := dom.GetXMLDesc(0); err == nil {
-			for _, d := range parseFileDisks(xmlDesc) {
-				diskPaths = append(diskPaths, d.Path)
-			}
+			diskPaths = fileDiskPaths(xmlDesc) // block disks wait for L2
 		}
 	}
 
@@ -445,6 +443,7 @@ func (m *Manager) Info(name string) (*VMInfo, error) {
 	if xmlDesc, err := dom.GetXMLDesc(0); err == nil {
 		vi.Firmware = domainFirmware(xmlDesc)
 		vi.DiskCache = diskCacheOf(xmlDesc, "vda")
+		vi.DiskBacking = diskBackingOf(xmlDesc, "vda")
 	}
 
 	return vi, nil
@@ -704,18 +703,47 @@ func parsePoolPath(xml string) string {
 	return xml[si : si+ei]
 }
 
-// parseDiskSourcePath extracts the first disk source file path from a domain XML descriptor.
+// Disk backings: what a domain disk's <source> points at.
+const (
+	DiskBackingFile  = "file"  // <source file=…>: an image file in a dir pool
+	DiskBackingBlock = "block" // <source dev=…>: a block device, e.g. a logical volume
+)
+
+// parsedDisk is one <disk> of a domain XML descriptor.
+type parsedDisk struct {
+	Path   string
+	Target string
+	Kind   string // DiskBackingFile or DiskBackingBlock
+}
+
+// parseDiskSourcePath extracts the first disk's source path (file or block
+// device) from a domain XML descriptor.
 func parseDiskSourcePath(xml string) string {
-	disks := parseFileDisks(xml)
+	disks := parseDisks(xml)
 	if len(disks) == 0 {
 		return ""
 	}
 	return disks[0].Path
 }
 
-// parseFileDisks returns every file-backed <disk> in a domain XML descriptor.
-func parseFileDisks(xml string) []DiskDevice {
-	var out []DiskDevice
+// firstFileDiskPath is parseDiskSourcePath for the operations that only
+// handle file disks (resize, migrate): a block first disk is refused rather
+// than touched.
+func firstFileDiskPath(xml string) (string, error) {
+	disks := parseDisks(xml)
+	if len(disks) == 0 || disks[0].Path == "" {
+		return "", fmt.Errorf("could not find disk source path in domain XML")
+	}
+	if disks[0].Kind != DiskBackingFile {
+		return "", fmt.Errorf("disk %s is a block device (%s); this operation supports file disks only", disks[0].Target, disks[0].Path)
+	}
+	return disks[0].Path, nil
+}
+
+// parseDisks returns every file- or block-backed <disk> in a domain XML
+// descriptor, with its kind.
+func parseDisks(xml string) []parsedDisk {
+	var out []parsedDisk
 	rest := xml
 	for {
 		start := strings.Index(rest, "<disk")
@@ -729,14 +757,54 @@ func parseFileDisks(xml string) []DiskDevice {
 		}
 		block := rest[:end+len("</disk>")]
 		rest = rest[end+len("</disk>"):]
-		path := xmlAttr(block, "<source", "file")
 		target := xmlAttr(block, "<target", "dev")
-		if path == "" || target == "" {
+		if target == "" {
 			continue
 		}
-		out = append(out, DiskDevice{Path: path, Target: target})
+		if path := xmlAttr(block, "<source", "file"); path != "" {
+			out = append(out, parsedDisk{Path: path, Target: target, Kind: DiskBackingFile})
+		} else if path := xmlAttr(block, "<source", "dev"); path != "" {
+			out = append(out, parsedDisk{Path: path, Target: target, Kind: DiskBackingBlock})
+		}
 	}
 	return out
+}
+
+// fileDiskPaths returns the source path of every file-backed disk.
+func fileDiskPaths(xml string) []string {
+	var out []string
+	for _, d := range parseDisks(xml) {
+		if d.Kind == DiskBackingFile {
+			out = append(out, d.Path)
+		}
+	}
+	return out
+}
+
+// usedTargets returns the target of every disk, file or block.
+func usedTargets(xml string) []string {
+	var out []string
+	for _, d := range parseDisks(xml) {
+		out = append(out, d.Target)
+	}
+	return out
+}
+
+// diskBackingOf returns the kind of the disk with target dev, or "" when
+// the domain has no such disk.
+func diskBackingOf(xml, target string) string {
+	for _, d := range parseDisks(xml) {
+		if d.Target == target {
+			return d.Kind
+		}
+	}
+	return ""
+}
+
+// parsePoolType returns the type attribute of the <pool> element in a
+// storage pool XML descriptor (dir, logical, …), or "" when there is none.
+func parsePoolType(xml string) string {
+	return xmlAttr(xml, "<pool", "type")
 }
 
 // diskCacheOf returns the cache mode on the <driver> of the disk with target
@@ -901,10 +969,7 @@ func (m *Manager) AddDisk(name string, sizeGB uint, pool string) (*DiskDevice, e
 		return nil, fmt.Errorf("getting domain XML: %w", err)
 	}
 	cache := diskCacheOf(xmlDesc, "vda") // the new disk takes the boot disk's mode
-	var used []string
-	for _, d := range parseFileDisks(xmlDesc) {
-		used = append(used, d.Target)
-	}
+	used := usedTargets(xmlDesc)
 
 	disk, err := m.createEmptyDisk(name, sizeGB, pool, used)
 	if err != nil {
@@ -1097,6 +1162,8 @@ type PoolInfo struct {
 	Name   string `json:"name"`
 	Path   string `json:"path"`
 	Active bool   `json:"active"`
+	// Type is libvirt's pool type (dir, logical, …); empty when unknown.
+	Type string `json:"type,omitempty"`
 }
 
 // ListPools returns metadata for all storage pools.
@@ -1109,11 +1176,12 @@ func (m *Manager) ListPools() ([]PoolInfo, error) {
 	for _, pool := range pools {
 		name, _ := pool.GetName()
 		active, _ := pool.IsActive()
-		path := ""
+		path, typ := "", ""
 		if xmlDesc, err := pool.GetXMLDesc(0); err == nil {
 			path = parsePoolPath(xmlDesc)
+			typ = parsePoolType(xmlDesc)
 		}
-		result = append(result, PoolInfo{Name: name, Path: path, Active: active})
+		result = append(result, PoolInfo{Name: name, Path: path, Active: active, Type: typ})
 		pool.Free()
 	}
 	return result, nil
@@ -1165,9 +1233,9 @@ func (m *Manager) ResizeDisk(name string, sizeGB uint) error {
 	if err != nil {
 		return fmt.Errorf("getting domain XML: %w", err)
 	}
-	diskPath := parseDiskSourcePath(xmlDesc)
-	if diskPath == "" {
-		return fmt.Errorf("could not find disk source path in domain XML")
+	diskPath, err := firstFileDiskPath(xmlDesc) // block disks wait for L2
+	if err != nil {
+		return err
 	}
 
 	vol, err := m.conn.LookupStorageVolByPath(diskPath)
@@ -1236,9 +1304,9 @@ func (m *Manager) MigrateDisk(vmName, targetPool string) error {
 	if err != nil {
 		return fmt.Errorf("getting domain XML: %w", err)
 	}
-	oldPath := parseDiskSourcePath(xmlDesc)
-	if oldPath == "" {
-		return fmt.Errorf("could not find disk source path in domain XML")
+	oldPath, err := firstFileDiskPath(xmlDesc) // block disks wait for L2
+	if err != nil {
+		return err
 	}
 
 	if wasRunning {

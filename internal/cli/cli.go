@@ -921,18 +921,27 @@ func poolListCmd(e *env) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-		fmt.Fprintln(w, "NAME\tPATH\tACTIVE")
-		for _, p := range pools {
-			active := "no"
-			if p.Active {
-				active = "yes"
-			}
-			fmt.Fprintf(w, "%s\t%s\t%s\n", p.Name, p.Path, active)
-		}
-		return w.Flush()
+		return writePoolTable(os.Stdout, pools)
 	})
 	return cmd
+}
+
+// writePoolTable prints the pool list; an unknown type shows as "-".
+func writePoolTable(out io.Writer, pools []vmtool.PoolInfo) error {
+	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(w, "NAME\tTYPE\tPATH\tACTIVE")
+	for _, p := range pools {
+		active := "no"
+		if p.Active {
+			active = "yes"
+		}
+		typ := p.Type
+		if typ == "" {
+			typ = "-"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", p.Name, typ, p.Path, active)
+	}
+	return w.Flush()
 }
 
 func poolCreateCmd(e *env) *cobra.Command {

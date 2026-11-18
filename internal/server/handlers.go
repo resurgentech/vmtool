@@ -104,6 +104,10 @@ func toAPI(info *vmtool.VMInfo) api.VMInfo {
 		dc := api.VMInfoDiskCache(info.DiskCache)
 		out.DiskCache = &dc
 	}
+	if info.DiskBacking != "" {
+		db := api.VMInfoDiskBacking(info.DiskBacking)
+		out.DiskBacking = &db
+	}
 	if info.Firmware != "" {
 		fw := api.VMInfoFirmware(info.Firmware)
 		out.Firmware = &fw
@@ -576,7 +580,7 @@ func (h *handlers) ListPools(ctx context.Context, req api.ListPoolsRequestObject
 	pools := v.([]vmtool.PoolInfo)
 	out := make([]api.PoolInfo, len(pools))
 	for i, p := range pools {
-		out[i] = api.PoolInfo{Name: p.Name, Path: p.Path, Active: p.Active}
+		out[i] = api.PoolInfo{Name: p.Name, Path: p.Path, Active: p.Active, Type: nonEmptyPtr(p.Type)}
 	}
 	return api.ListPools200JSONResponse(out), nil
 }
@@ -653,4 +657,12 @@ func (h *handlers) ListHosts(ctx context.Context, _ api.ListHostsRequestObject) 
 		out[i] = hi
 	}
 	return api.ListHosts200JSONResponse(out), nil
+}
+
+// nonEmptyPtr is nil for "", so an unknown value is omitted from the JSON.
+func nonEmptyPtr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }

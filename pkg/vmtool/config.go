@@ -109,4 +109,7 @@ type VMInfo struct {
 	// DiskCache is the cache mode on vda's driver, read from the domain XML by
 	// Info; empty when the disk names none. List leaves it empty.
 	DiskCache string `json:"disk_cache,omitempty"`
+	// DiskBacking is file or block for vda, read from the domain XML by Info;
+	// empty when unknown. List leaves it empty.
+	DiskBacking string `json:"disk_backing,omitempty"`
 }

@@ -282,6 +282,9 @@ func fromAPI(v api.VMInfo) vmtool.VMInfo {
 	if v.DiskCache != nil {
 		out.DiskCache = string(*v.DiskCache)
 	}
+	if v.DiskBacking != nil {
+		out.DiskBacking = string(*v.DiskBacking)
+	}
 	return out
 }
 
@@ -484,6 +487,9 @@ func (m *Manager) ListPools() ([]vmtool.PoolInfo, error) {
 	out := make([]vmtool.PoolInfo, len(vs))
 	for i, p := range vs {
 		out[i] = vmtool.PoolInfo{Name: p.Name, Path: p.Path, Active: p.Active}
+		if p.Type != nil {
+			out[i].Type = *p.Type
+		}
 	}
 	return out, nil
 }

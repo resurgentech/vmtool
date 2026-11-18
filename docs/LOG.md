@@ -494,3 +494,19 @@ are appended, never edited in; a hook refuses rewrites.
   commands; `Long` of both says it. README examples already matched.
 - Tests: `TestExecDash`, `TestExecNoCommand`, tightened `TestExecTTYFlag`.
 - Commits: the C26 commit on `clone-identity`.
+
+## 2026-11-18 — L1 Pool type and disk backing are reported (API 2.2.0)
+
+- Spec 2.2.0: optional `PoolInfo.type` (libvirt's pool type: `dir`,
+  `logical`, …) and `VMInfo.disk_backing` (`file|block`, of `vda`); both
+  omitted when unknown or from an older daemon.
+- `pkg/vmtool`: `parsePoolType`; `parseDisks` replaces `parseFileDisks`
+  and returns file and block disks with their kind. `ListPools` and
+  `Info` fill `PoolInfo.Type` / `VMInfo.DiskBacking`.
+- No behaviour change for storage: `Delete` still removes file disks
+  only; resize-disk and migrate-disk refuse a block `vda` with a clear
+  error (L2 adds block handling). `AddDisk` now counts block targets as
+  used.
+- Server, remote client and `pool list` (new TYPE column, `-` when
+  unknown) carry the fields; a 2.1.0 answer decodes to "".
+- Commits: the L1 commit on `clone-identity`.
