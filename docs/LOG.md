@@ -588,3 +588,18 @@ are appended, never edited in; a hook refuses rewrites.
 - Structural tests in `scripts/nvme_stripe_test.go`; the playbook was not
   executed. README "Hypervisors" and `scripts/prereqs.sh` give the command.
 - Commits: the L5 commit on `clone-identity`.
+
+## 2026-11-18 — L6 Docs for fast block disks
+
+- README "Fast block disks (LVM on NVMe)": when to use it (disposable
+  workers, no redundancy), the two key measured rows, clone by
+  conversion, size at create (libvirt cannot resize an LV; resize-disk
+  refuses), cache `none` with `io='native'` by default and why, IO thread
+  and queues, `default_pool`, delete removes only LVs of logical pools,
+  API 2.2.0 fields, non-goals. The disk-cache section notes the logical
+  exception.
+- spec/README: `PoolInfo.type`, `disk_backing`, `size_bytes`, the LV path
+  rule for logical pools, and `default_pool` in the empty-pool paragraph.
+- The user-run checks on veritech02 (M1–M7) are not done; they are listed
+  in the step's report.
+- Commits: the L6 commit on `clone-identity`.

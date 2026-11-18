@@ -276,13 +276,13 @@ the body and keeps the error.
 | `WaitForIP` | `waitVMIP` | New. `timeout_seconds` 1..3600, default 120. |
 | `Define` | `defineVM` | New. `PUT vms/{name}/definition`; no `ssh_user`/`ssh_pass`. |
 | `CreateVolume` | `createVolume` | New. Returns `{path}`. |
-| `CloneImage` | `cloneVolume` | New. `base_path` must be inside a pool. Returns `{path}`. |
+| `CloneImage` | `cloneVolume` | New. `base_path` must be inside a pool. Optional `size_bytes` (2.2.0): a `logical` target gets an LV of max(image, size), converted to raw; dir pools ignore it. Returns `{path}`. |
 | `ResizeVolume` | `resizeVolume` | New. `path` must be inside a pool. |
 | `ImagePath` | `getImagePath` | New. 404 if no pool has it. |
 | `ListNetworks` / `ListBridges` | `listNetworks` / `listBridges` | |
 | `ListImagesByPool` | `listImages` | `{pool: [image]}`. |
 | `DeleteImage` | `deleteImage` | `pool` query, default `default`. |
-| `ListPools` | `listPools` | `PoolInfo{name,path,active}`. |
+| `ListPools` | `listPools` | `PoolInfo{name,path,active,type?}`; `type` (2.2.0) is libvirt's pool type (`dir`, `logical`, …). `GET` VM adds `disk_backing` (`file`/`block`) the same release. |
 | `CreatePool` | `createPool` | |
 
 | `ImageManifest` (`app.ImageStore`) | `getImageManifest` | New. Optional interface, remote only. `{name, sha256?, size?, foreign, path?}`. |
@@ -294,6 +294,9 @@ composes `cloneVolume`, `resizeVolume`, `defineVM` and `startVM`.
 Path inputs (`base_path`, `path`, `disk_path`, `extra_disks[].path`) must be
 absolute and, after `filepath.Clean` and symlink resolution of the existing
 prefix, strictly inside the path of a libvirt storage pool; otherwise `400`.
+A pool of type `logical` is the exception: its volumes are `/dev/<vg>/<lv>`,
+symlinks to `/dev/dm-N`, so there the cleaned path is accepted unresolved
+when it is exactly `<pool path>/<one name>` and exists.
 The cleaned path is what reaches libvirt. Names in bodies (`new_name`, volume
 `name`, the VM name in `.../vms/{name}/definition`) must be plain names. The
 check is point-in-time; it is defence in depth for a loopback, token-guarded
@@ -340,7 +343,12 @@ and `internal/app` never fill one in; the host that owns libvirt resolves
 it. The workstation's libvirt `vmtool.Manager` maps empty to `default`; a
 hypervisor's resolver (`internal/hosts`) wraps its local Manager so empty is
 `vmtool`. So a VM created on a hypervisor with no `--pool` has its clone and
-extra disk in the `vmtool` pool, next to the cached image.
+extra disk in the `vmtool` pool, next to the cached image. The workstation's
+`config.yml` may set `default_pool` (local host) or `hosts.<h>.default_pool`;
+the workstation's resolver then fills that pool in for new VM disks only
+(clone target, `createVolume`, `addDisk`, `defineVM`'s pool) before any
+request, so a daemon receives it as an explicit pool. Images keep the cache
+pool.
 
 ## GET / pattern
 

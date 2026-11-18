@@ -301,8 +301,9 @@ installed on <host>`: install it (`just prereqs <host>`) or create with
 
 ### Disk cache (`unsafe` by default)
 
-A clone that vmtool creates gets `cache='unsafe'` on its disk driver, so guest
-writes are fast. `unsafe` keeps guest writes that the guest believes are
+A clone that vmtool creates in a dir pool gets `cache='unsafe'` on its disk
+driver, so guest writes are fast (a clone in a `logical` pool gets `none`; see
+[Fast block disks](#fast-block-disks-lvm-on-nvme)). `unsafe` keeps guest writes that the guest believes are
 flushed in host memory; a host crash or power loss can corrupt the VM's disk.
 Pick `none` for a VM whose data matters:
 `vmtool create --disk-cache none host/name image` (modes: `none`, `writeback`,
@@ -313,6 +314,64 @@ a mode: `unsafe` on a base image would risk the image itself. Extra disks, and
 disks added later by `add-disk`, take the mode of the VM's boot disk
 (`vda`); `migrate-disk` keeps it. Existing VMs are not changed. `GET` VM
 reports `disk_cache`; `vmtool list` is unchanged.
+
+### Fast block disks (LVM on NVMe)
+
+A host with two spare NVMe drives can give VMs raw block devices: LVM logical
+volumes on an md RAID 0 stripe of the two drives, exposed as a libvirt
+`logical` pool (`nvme` by default). Host setup builds it, opt-in and only
+for drives you name ([Hypervisors](#fast-block-disks-opt-in-nvme-stripe)).
+Use it for disposable workers that need disk speed: the stripe has no
+redundancy, so losing one drive loses every VM disk on it.
+
+Measured on veritech02 (4 vCPUs, fio on the bare virtual disk, 4k I/O):
+
+| backing / host cache | write+fsync IOPS | randwrite IOPS | randread IOPS |
+|---|---|---|---|
+| qcow2 on the boot drive, `unsafe` (the dir-pool default) | 9.5–9.8k | 74–81k | 129–132k |
+| LV on the stripe, `none`, `io='native'`, 4 queues, an IO thread (what vmtool writes) | 15.5k | 136k | 132k |
+
+```bash
+vmtool pool list --host veritech02                       # TYPE logical for nvme
+vmtool create veritech02/build1 ubuntu2604 --pool nvme --disk-size 40
+vmtool add-disk veritech02/build1 100 --pool nvme         # LV build1-2, attached as a block disk
+vmtool delete veritech02/build1                           # removes both LVs
+```
+
+- **Clone by conversion.** `create` asks libvirtd to copy the cached qcow2
+  image (still kept in the `vmtool` dir pool) into a new LV named after the
+  VM, converted to raw. The image cache does not move; LVs never show as
+  images.
+- **Size it at create.** libvirt cannot resize a logical volume, so
+  `resize-disk` on such a disk fails with a message that says so, before it
+  touches the VM. Give `--disk-size` at create: the LV is made at the larger
+  of the image's size and `--disk-size`.
+- **Cache `none` by default.** A clone in a `logical` pool gets
+  `cache='none'` with `io='native'`: the host page cache is bypassed, which is
+  both the fast path for an LV and safe across a host crash. `--disk-cache`
+  still overrides; with any mode other than `none` or `directsync` the
+  `io='native'` attribute is left out (QEMU needs O_DIRECT for it). A block
+  disk added to a file-backed VM takes that VM's boot-disk mode, as every
+  added disk does.
+- **IO thread and queues.** A VM with a block disk gets one IO thread;
+  each block disk gets `queues` = min(vCPUs, 4) and `discard='unmap'`. A
+  block disk added later to a VM without an IO thread gets none. File-backed
+  disks are unchanged.
+- **No `--pool` every time.** Set `hosts.<host>.default_pool: nvme` in the
+  workstation's `config.yml` ([`default_pool`](#a-hosts-default-pool-for-new-vm-disks-default_pool)).
+- **Delete removes the LV**, but only a volume of a `logical` pool; a block
+  device in no pool or in any other kind of pool is never deleted. Volumes
+  vmtool did not create are left alone.
+- `vmtool info` / `GET` VM report `disk_backing` (`file` or `block`);
+  `pool list` / `GET` pools report each pool's `type` (API 2.2.0). A daemon
+  must run 2.2.0 (`just deploy <host>`) before a logical pool works through
+  it.
+
+Not supported: growing an LV-backed disk, `migrate-disk` to or from a logical
+pool or of a block disk (refused before the VM is stopped), thin snapshots
+or instant clones, moving or converting existing VMs, creating a logical pool
+from the CLI or REST (`pool create` makes dir pools only), and RAID levels
+other than 0.
 
 ## Guest SSH and `ssh-config`
 
