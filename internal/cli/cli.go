@@ -383,10 +383,15 @@ in place as this VM: it uses up the image's first boot (name, keys and
 machine-id), and every later clone of it would inherit them. Run
 'sudo cloud-init clean --machine-id' in the guest before shutdown to remedy.
 
-A clone gets disk cache mode 'unsafe' unless --disk-cache names another
-(none, writeback, writethrough). unsafe keeps guest writes that the guest
-believes are flushed in host memory; a host crash or power loss can corrupt
-the VM's disk. Pick --disk-cache none for a VM whose data matters. --noclone
+A clone in a dir pool is the file <name>.qcow2; in a logical pool it is an LV
+named <name>, attached as a block disk. A disk in a logical pool is sized at
+create (--disk-size) and cannot be grown later.
+
+A clone gets disk cache mode 'unsafe' (in a logical pool: 'none') unless
+--disk-cache names another (none, writeback, writethrough, unsafe). unsafe
+keeps guest writes that the guest believes are flushed in host memory; a
+host crash or power loss can corrupt the VM's disk. Pick --disk-cache none
+for a VM whose data matters. --noclone
 gets no cache attribute unless a mode is named. Extra disks, and disks added
 later by add-disk, take the VM's boot-disk mode.
 
@@ -466,12 +471,12 @@ grows it at first boot on images built with it).
 	cmd.Flags().StringVar(&sshPass, "ssh-pass", "", "SSH password (default packer)")
 	cmd.Flags().StringVar(&inventory, "inventory", "ansible/inventory.yml", "path to write Ansible inventory file")
 	cmd.Flags().StringVar(&playbook, "playbook", "", "playbook name under ansible/playbooks, or a path")
-	cmd.Flags().StringVar(&pool, "pool", "", "storage pool for the cloned disk (default: the host's default pool: \"default\" on a workstation, \"vmtool\" on a hypervisor)")
+	cmd.Flags().StringVar(&pool, "pool", "", "storage pool for the VM's disk (default: the host's default_pool in the workstation's config.yml, else \"default\" on a workstation, \"vmtool\" on a hypervisor). A dir pool holds <name>.qcow2; a logical pool an LV named <name>")
 	cmd.Flags().BoolVar(&noclone, "noclone", false, "boot directly from the image without cloning (changes persist to source; uses up the image's cloud-init first boot, run 'sudo cloud-init clean --machine-id' in the guest before shutdown)")
 	cmd.Flags().BoolVar(&noWait, "no-wait", false, "return right after the VM starts: no wait for an address, none for SSH, and --disk-size does not grow the filesystem. For a guest whose address vmtool cannot see (static address, foreign DHCP without a guest agent) or a very slow boot. Cannot be combined with --playbook")
 	cmd.Flags().StringVar(&firmware, "firmware", "", "guest firmware: efi (UEFI, default) or bios. An image installed for BIOS needs --firmware bios")
-	cmd.Flags().StringVar(&diskCache, "disk-cache", "", "disk cache mode: none, writeback, writethrough or unsafe (default unsafe for a clone, the hypervisor's default with --noclone). unsafe keeps guest writes the guest believes are flushed in host memory; a host crash or power loss can corrupt the VM's disk. Pick none for a VM whose data matters")
-	cmd.Flags().UintVar(&extraDiskSizeGB, "extra-disk-size", 0, "create a second empty virtio disk (vdb) named <name>-2.qcow2")
+	cmd.Flags().StringVar(&diskCache, "disk-cache", "", "disk cache mode: none, writeback, writethrough or unsafe (default for a clone: none in a logical pool, unsafe in any other pool; the hypervisor's default with --noclone). unsafe keeps guest writes the guest believes are flushed in host memory; a host crash or power loss can corrupt the VM's disk. Pick none for a VM whose data matters")
+	cmd.Flags().UintVar(&extraDiskSizeGB, "extra-disk-size", 0, "create a second empty virtio disk (vdb): <name>-2.qcow2 in a dir pool, LV <name>-2 in a logical pool")
 	cmd.Flags().StringVar(&extraDiskPool, "extra-disk-pool", "", "storage pool for the extra disk (default: same as --pool)")
 	cmd.Flags().StringArrayVar(&extraVars, "extra-var", nil, "ansible extra-var key=value for --playbook (repeatable; name: letters, digits, _). Values go to ansible in its environment, not argv. deviceid defaults to the VM name")
 
@@ -966,7 +971,10 @@ func migrateDiskCmd(e *env) *cobra.Command {
 		Use:   "migrate-disk <host/vm> <pool>",
 		Short: "Move a VM's disk to a different storage pool",
 		Long: `Stop the VM (if running), copy its disk volume to the target pool,
-redefine the domain with the new path, then restart (if it was running).`,
+redefine the domain with the new path, then restart (if it was running).
+
+A block disk (an LV in a logical pool), or a logical pool as the target, is
+refused before the VM is stopped.`,
 		Args: cobra.ExactArgs(2),
 		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
 			vmName := args[0]
@@ -993,7 +1001,10 @@ func resizeDiskCmd(e *env) *cobra.Command {
 		Long: `Resize a VM's disk volume to the given size in GB (must be larger).
 
 If the VM is running, also notifies the guest of the new size and expands
-the root partition and filesystem via SSH.`,
+the root partition and filesystem via SSH.
+
+A disk in a logical pool (an LV) cannot be grown: it is sized at create
+(--disk-size). resize-disk refuses it before touching the VM.`,
 		Args: cobra.ExactArgs(2),
 		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
 			vmName := args[0]
@@ -1032,12 +1043,14 @@ func addDiskCmd(e *env) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add-disk <host/vm> <size-gb>",
 		Short: "Attach a new empty disk to a VM",
-		Long: `Create an empty qcow2 volume and attach it as the next virtio disk (vdb, vdc, …).
+		Long: `Create an empty volume and attach it as the next virtio disk (vdb, vdc, …).
 
-Volume name is <vm>-2.qcow2 for the first extra disk, <vm>-3.qcow2 if called
-again, and so on. If the VM is running the disk is hot-plugged and persisted.
-If it is shut off the change is persisted and appears on the next start. The
-guest sees a raw block device; it is not partitioned or formatted.
+In a dir pool the volume is <vm>-2.qcow2 for the first extra disk,
+<vm>-3.qcow2 if called again, and so on; in a logical pool it is an LV named
+<vm>-2, <vm>-3, …, attached as a block disk. If the VM is running the disk
+is hot-plugged and persisted. If it is shut off the change is persisted and
+appears on the next start. The guest sees a raw block device; it is not
+partitioned or formatted.
 
   vmtool add-disk jetfire/web 50
   vmtool add-disk jetfire/web 100 --pool fast`,
@@ -1058,7 +1071,7 @@ guest sees a raw block device; it is not partitioned or formatted.
 		}),
 	}
 
-	cmd.Flags().StringVar(&pool, "pool", "", "storage pool for the new volume (default: the host's default pool: \"default\" on a workstation, \"vmtool\" on a hypervisor)")
+	cmd.Flags().StringVar(&pool, "pool", "", "storage pool for the new volume (default: the host's default_pool in the workstation's config.yml, else \"default\" on a workstation, \"vmtool\" on a hypervisor). A dir pool holds <vm>-N.qcow2; a logical pool an LV named <vm>-N")
 	return cmd
 }
 

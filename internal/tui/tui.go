@@ -670,8 +670,9 @@ func (m model) updateConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // --- Create mode ---
 
 // hostDefaultPool is the create form's first Pool option: no pool, so the
-// host that owns libvirt picks its default (default on a workstation, vmtool
-// on a hypervisor).
+// host's default applies: its default_pool in the workstation's config.yml
+// when set, else the default of the host that owns libvirt (default on a
+// workstation, vmtool on a hypervisor).
 const hostDefaultPool = "(host default)"
 
 // formPool is the pool the create form's Pool value names: empty for
@@ -723,7 +724,8 @@ func (m model) enterCreateMode() (tea.Model, tea.Cmd) {
 		{label: "Playbook", kind: fieldSelect, options: pbOptions},
 		{label: "Noclone", kind: fieldSelect, options: []string{"false", "true"}},
 		{label: "Firmware", kind: fieldSelect, options: []string{"efi", "bios"}},
-		// default: unsafe for a clone, none named for --noclone (resolved in app).
+		// default: for a clone none in a logical pool, unsafe in any other
+		// pool; none named for --noclone (resolved in app).
 		// unsafe can corrupt the disk on a host crash or power loss.
 		{label: "Disk cache", kind: fieldSelect, options: []string{"default", "none", "writeback", "writethrough", "unsafe"}},
 		// no: create returns right after start (NoWait); a guest whose address

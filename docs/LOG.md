@@ -615,3 +615,20 @@ are appended, never edited in; a hook refuses rewrites.
   has a "/tmp on disk" section; details in `packer_images/docs/LOG.md`.
 - Image rebuilds and clone checks are user-run and not done.
 - Commits: the I1 commit on `clone-identity`.
+
+## 2026-11-18 — L7 CLI help states both pool kinds and default_pool
+
+- Help only, no behaviour change. create `--pool` and add-disk `--pool`
+  name the host's `default_pool` (workstation `config.yml`) before the
+  built-in `default` / `vmtool`, and the volume names per pool kind
+  (`<name>.qcow2` in a dir pool, an LV `<name>` in a logical pool).
+- create `Long`, `--disk-cache`, `--extra-disk-size` and add-disk `Long`
+  state the logical-pool names, the cache default `none` for a clone in a
+  logical pool, and that such a disk is sized at create and cannot grow.
+  resize-disk and migrate-disk `Long` state their refusals of LVs.
+- TUI comments for the host-default pool option and the cache default
+  updated; the form itself is unchanged. `images delete --pool` keeps
+  its text (default_pool does not apply to images).
+- Test `TestDiskHelpNamesPoolKinds` (`internal/cli/pool_test.go`): red
+  on today's text (11 failures), green after; `just check` green.
+- Commits: the L7 commit on `clone-identity`.
