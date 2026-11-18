@@ -54,10 +54,170 @@ func diskXML(path, target, cache string) string {
     </disk>`, attr, path, target)
 }
 
+// blockDiskXML is a single block-backed virtio disk device fragment (a logical
+// volume): raw, discard on, multi-queue. io='native' only when the cache mode
+// opens the device O_DIRECT (none, directsync); with any other mode libvirt
+// refuses it, so the attribute is left out. iothread='1' only when the domain
+// has an <iothreads> pool.
+func blockDiskXML(path, target, cache string, queues int, iothread bool) string {
+	attrs := ""
+	if cache != "" {
+		attrs += fmt.Sprintf(" cache='%s'", xmlEscape(cache))
+	}
+	if cache == "none" || cache == "directsync" {
+		attrs += " io='native'"
+	}
+	attrs += fmt.Sprintf(" discard='unmap' queues='%d'", queues)
+	if iothread {
+		attrs += " iothread='1'"
+	}
+	return fmt.Sprintf(`<disk type='block' device='disk'>
+      <driver name='qemu' type='raw'%s/>
+      <source dev='%s'/>
+      <target dev='%s' bus='virtio'/>
+    </disk>`, attrs, xmlEscape(path), target)
+}
+
+// diskQueues is the virtio queue count for a block disk: one per vCPU, at most 4.
+func diskQueues(vcpus uint) int {
+	if vcpus < 1 {
+		return 1
+	}
+	if vcpus > 4 {
+		return 4
+	}
+	return int(vcpus)
+}
+
+// diskKindFromVol decides a disk's kind from what libvirt knows about the
+// volume at its path: a block volume is a block disk; a path libvirt does not
+// know (found false) or any other volume type stays a file disk, as before.
+func diskKindFromVol(found bool, t libvirt.StorageVolType) string {
+	if found && t == libvirt.STORAGE_VOL_BLOCK {
+		return DiskBackingBlock
+	}
+	return DiskBackingFile
+}
+
+// domainHasIothreads reports whether a domain XML has an <iothreads> element.
+func domainHasIothreads(xml string) bool {
+	return strings.Contains(xml, "<iothreads>") || strings.Contains(xml, "<iothreads ")
+}
+
+// attachDiskXML is the device XML for a disk added to an existing domain:
+// the cache mode is vda's, a block disk gets queues from the domain's vCPUs
+// and an iothread only if the domain already has iothreads.
+func attachDiskXML(kind, path, target, domXML string, vcpus uint) string {
+	cache := diskCacheOf(domXML, "vda")
+	if kind == DiskBackingBlock {
+		return blockDiskXML(path, target, cache, diskQueues(vcpus), domainHasIothreads(domXML))
+	}
+	return diskXML(path, target, cache)
+}
+
+// poolTypeLogical is libvirt's LVM volume group pool type.
+const poolTypeLogical = "logical"
+
+// volNameFor is the volume name stored in a pool of poolType: a logical pool
+// holds LVs with no .qcow2 suffix, any other pool keeps the suffix.
+func volNameFor(poolType, name string) string {
+	if poolType == poolTypeLogical {
+		return strings.TrimSuffix(name, ".qcow2")
+	}
+	return normalizeVolName(name)
+}
+
+// volumeXML is the XML for a new empty volume of sizeGB. In a logical pool
+// there is no <format>, and <allocation> equals <capacity>: a smaller
+// allocation makes libvirt create a slow old-style snapshot LV.
+func volumeXML(poolType, name string, sizeGB uint) string {
+	if poolType == poolTypeLogical {
+		return fmt.Sprintf(`<volume>
+  <name>%s</name>
+  <capacity unit='G'>%d</capacity>
+  <allocation unit='G'>%d</allocation>
+</volume>`, name, sizeGB, sizeGB)
+	}
+	return fmt.Sprintf(`<volume>
+  <name>%s</name>
+  <capacity unit='G'>%d</capacity>
+  <target>
+    <format type='qcow2'/>
+  </target>
+</volume>`, name, sizeGB)
+}
+
+// shouldDeleteDisk decides whether Delete removes a disk's volume. A file disk
+// is always tried (a volume libvirt does not know is ignored). A block disk is
+// removed only when libvirt found its volume in a pool of type logical: a
+// block path in no pool, or in disk/iscsi/any other pool, is not ours.
+func shouldDeleteDisk(kind string, found bool, poolType string) bool {
+	if kind != DiskBackingBlock {
+		return true
+	}
+	return found && poolType == poolTypeLogical
+}
+
+const errBlockGrow = "growing a block-device disk is not supported: libvirt cannot resize a logical volume; create the VM with --disk-size"
+
+// resizeDiskPath is ResizeDisk's pre-check, run before anything changes: the
+// boot disk's path, or an error when it is a block disk (cannot be grown).
+func resizeDiskPath(xml string) (string, error) {
+	if disks := parseDisks(xml); len(disks) > 0 && disks[0].Kind == DiskBackingBlock {
+		return "", fmt.Errorf("%s", errBlockGrow)
+	}
+	return firstFileDiskPath(xml)
+}
+
+// resizeVolumeAction decides ResizeVolume: whether to call vol.Resize. A block
+// volume already at least want bytes needs nothing; a smaller one cannot be
+// grown. A file volume is always resized, as before.
+func resizeVolumeAction(kind string, capacity, want uint64) (bool, error) {
+	if kind != DiskBackingBlock {
+		return true, nil
+	}
+	if capacity >= want {
+		return false, nil
+	}
+	return false, fmt.Errorf("%s", errBlockGrow)
+}
+
+// migratePrecheck is MigrateDisk's pre-check, run before the VM is stopped:
+// the boot disk's path, or an error when vda is a block disk or the target
+// pool is logical.
+func migratePrecheck(xml, targetPoolType string) (string, error) {
+	if disks := parseDisks(xml); (len(disks) > 0 && disks[0].Kind == DiskBackingBlock) || targetPoolType == poolTypeLogical {
+		return "", fmt.Errorf("migrate-disk does not support block-device disks or logical pools")
+	}
+	return firstFileDiskPath(xml)
+}
+
+// diskDeviceXML writes one disk of a new domain: block per its kind, file otherwise.
+func diskDeviceXML(path, target, kind, cache string, vcpus uint, iothread bool) string {
+	if kind == DiskBackingBlock {
+		return blockDiskXML(path, target, cache, diskQueues(vcpus), iothread)
+	}
+	return diskXML(path, target, cache)
+}
+
+// anyBlockDisk reports whether the config has a block disk (vda or extra).
+func anyBlockDisk(cfg VMConfig) bool {
+	if cfg.DiskKind == DiskBackingBlock {
+		return true
+	}
+	for _, d := range cfg.ExtraDisks {
+		if d.Path != "" && d.Kind == DiskBackingBlock {
+			return true
+		}
+	}
+	return false
+}
+
 func disksXML(cfg VMConfig) string {
+	iothread := anyBlockDisk(cfg)
 	var b strings.Builder
 	b.WriteString("    ")
-	b.WriteString(diskXML(cfg.DiskPath, "vda", cfg.DiskCache))
+	b.WriteString(diskDeviceXML(cfg.DiskPath, "vda", cfg.DiskKind, cfg.DiskCache, cfg.VCPUs, iothread))
 	for i, d := range cfg.ExtraDisks {
 		if d.Path == "" {
 			continue
@@ -67,9 +227,17 @@ func disksXML(cfg VMConfig) string {
 			target = fmt.Sprintf("vd%c", 'b'+i)
 		}
 		b.WriteString("\n    ")
-		b.WriteString(diskXML(d.Path, target, cfg.DiskCache))
+		b.WriteString(diskDeviceXML(d.Path, target, d.Kind, cfg.DiskCache, cfg.VCPUs, iothread))
 	}
 	return b.String()
+}
+
+// iothreadsXML is the <iothreads> line, only when a disk is a block disk.
+func iothreadsXML(cfg VMConfig) string {
+	if anyBlockDisk(cfg) {
+		return "  <iothreads>1</iothreads>\n"
+	}
+	return ""
 }
 
 // xmlEscape escapes s for use as XML text or inside an attribute value.
@@ -139,7 +307,7 @@ func domainXML(cfg VMConfig) string {
   <name>%s</name>
 %s  <memory unit='GiB'>%d</memory>
   <vcpu>%d</vcpu>
-%s  <features>
+%s%s  <features>
     <acpi/>
     <apic/>
   </features>
@@ -167,7 +335,7 @@ func domainXML(cfg VMConfig) string {
       <backend model='random'>/dev/urandom</backend>
     </rng>
   </devices>
-</domain>`, xmlEscape(cfg.Name), identityXML(cfg), cfg.Memory, cfg.VCPUs, osXML(cfg), disksXML(cfg), networkXML(cfg.Network))
+</domain>`, xmlEscape(cfg.Name), identityXML(cfg), cfg.Memory, cfg.VCPUs, iothreadsXML(cfg), osXML(cfg), disksXML(cfg), networkXML(cfg.Network))
 }
 
 // prepareDefine fills a missing UUID and returns the domain XML with the
@@ -191,6 +359,7 @@ func (m *Manager) Define(cfg VMConfig) error {
 			return err
 		}
 	}
+	m.resolveDiskKinds(&cfg)
 	domXML, _ := prepareDefine(cfg)
 	dom, err := m.conn.DomainDefineXML(domXML)
 	if err != nil {
@@ -200,6 +369,37 @@ func (m *Manager) Define(cfg VMConfig) error {
 		return err
 	}
 	return nil
+}
+
+// volKindByPath asks libvirt for the volume at path and decides its kind
+// (diskKindFromVol); a path libvirt does not know is a file disk.
+func (m *Manager) volKindByPath(path string) string {
+	vol, err := m.conn.LookupStorageVolByPath(path)
+	if err != nil {
+		return diskKindFromVol(false, 0)
+	}
+	defer vol.Free()
+	info, err := vol.GetInfo()
+	if err != nil {
+		return diskKindFromVol(false, 0)
+	}
+	return diskKindFromVol(true, info.Type)
+}
+
+// resolveDiskKinds fills every unset disk kind of cfg from libvirt, on the
+// host that defines the domain. A kind already set is kept.
+func (m *Manager) resolveDiskKinds(cfg *VMConfig) {
+	if cfg.DiskKind == "" {
+		cfg.DiskKind = m.volKindByPath(cfg.DiskPath)
+	}
+	extras := make([]DiskDevice, len(cfg.ExtraDisks))
+	copy(extras, cfg.ExtraDisks)
+	for i := range extras {
+		if extras[i].Kind == "" && extras[i].Path != "" {
+			extras[i].Kind = m.volKindByPath(extras[i].Path)
+		}
+	}
+	cfg.ExtraDisks = extras
 }
 
 // Start boots a previously defined VM.
@@ -350,6 +550,14 @@ func (m *Manager) ResizeVolume(volPath string, sizeBytes uint64) error {
 		return fmt.Errorf("looking up volume at %q: %w", volPath, err)
 	}
 	defer vol.Free()
+	info, err := vol.GetInfo()
+	if err != nil {
+		return fmt.Errorf("getting volume info: %w", err)
+	}
+	do, err := resizeVolumeAction(diskKindFromVol(true, info.Type), info.Capacity, sizeBytes)
+	if err != nil || !do {
+		return err
+	}
 	return vol.Resize(sizeBytes, 0)
 }
 
@@ -361,10 +569,10 @@ func (m *Manager) Delete(name string, noclone bool) error {
 	}
 	defer dom.Free()
 
-	var diskPaths []string
+	var disks []parsedDisk
 	if !noclone {
 		if xmlDesc, err := dom.GetXMLDesc(0); err == nil {
-			diskPaths = fileDiskPaths(xmlDesc) // block disks wait for L2
+			disks = parseDisks(xmlDesc)
 		}
 	}
 
@@ -382,14 +590,42 @@ func (m *Manager) Delete(name string, noclone bool) error {
 		return fmt.Errorf("undefining domain: %w", err)
 	}
 
-	if noclone || len(diskPaths) == 0 {
+	if noclone || len(disks) == 0 {
 		return nil
 	}
 
-	for _, diskPath := range diskPaths {
-		if err := m.deleteVolumeByPath(diskPath); err != nil {
+	for _, d := range disks {
+		if err := m.deleteDiskVolume(d); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// deleteDiskVolume removes one disk's volume if shouldDeleteDisk allows it.
+// A file disk is deleted by path as before; a block disk only when libvirt
+// finds its volume in a pool of type logical.
+func (m *Manager) deleteDiskVolume(d parsedDisk) error {
+	if d.Kind != DiskBackingBlock {
+		return m.deleteVolumeByPath(d.Path)
+	}
+	vol, err := m.conn.LookupStorageVolByPath(d.Path)
+	if err != nil {
+		return nil // in no pool: not ours
+	}
+	defer vol.Free()
+	poolType := ""
+	if pool, err := vol.LookupPoolByVolume(); err == nil {
+		if x, err := pool.GetXMLDesc(0); err == nil {
+			poolType = parsePoolType(x)
+		}
+		pool.Free()
+	}
+	if !shouldDeleteDisk(d.Kind, true, poolType) {
+		return nil
+	}
+	if err := vol.Delete(0); err != nil {
+		return fmt.Errorf("deleting volume at %q: %w", d.Path, err)
 	}
 	return nil
 }
@@ -899,43 +1135,59 @@ func (m *Manager) deleteVolumeByPath(path string) error {
 }
 
 // CreateVolume creates an empty qcow2 volume in pool and returns its path.
+// In a logical pool the volume is an LV: the name has no .qcow2 suffix (a
+// given x.qcow2 is stored as x) and the volume has no format.
 func (m *Manager) CreateVolume(poolName, volName string, sizeGB uint) (string, error) {
+	path, _, err := m.createVolume(poolName, volName, sizeGB)
+	return path, err
+}
+
+// createVolume is CreateVolume that also returns the pool's type.
+func (m *Manager) createVolume(poolName, volName string, sizeGB uint) (path, poolType string, err error) {
 	if sizeGB == 0 {
-		return "", fmt.Errorf("size must be greater than 0")
+		return "", "", fmt.Errorf("size must be greater than 0")
 	}
 	if poolName == "" {
 		poolName = DefaultPool
 	}
-	volName = normalizeVolName(volName)
 	if volName == "" {
-		return "", fmt.Errorf("volume name is required")
+		return "", "", fmt.Errorf("volume name is required")
 	}
 
 	pool, err := m.conn.LookupStoragePoolByName(poolName)
 	if err != nil {
-		return "", fmt.Errorf("looking up pool %q: %w", poolName, err)
+		return "", "", fmt.Errorf("looking up pool %q: %w", poolName, err)
 	}
 	defer pool.Free()
 
-	volXML := fmt.Sprintf(`<volume>
-  <name>%s</name>
-  <capacity unit='G'>%d</capacity>
-  <target>
-    <format type='qcow2'/>
-  </target>
-</volume>`, volName, sizeGB)
+	if x, err := pool.GetXMLDesc(0); err == nil {
+		poolType = parsePoolType(x)
+	}
+	volName = volNameFor(poolType, volName)
+	if volName == "" {
+		return "", "", fmt.Errorf("volume name is required")
+	}
 
-	vol, err := pool.StorageVolCreateXML(volXML, 0)
+	vol, err := pool.StorageVolCreateXML(volumeXML(poolType, volName, sizeGB), 0)
 	if err != nil {
-		return "", fmt.Errorf("creating volume %q: %w", volName, err)
+		return "", "", fmt.Errorf("creating volume %q: %w", volName, err)
 	}
 	defer vol.Free()
 
-	path, err := vol.GetPath()
+	path, err = vol.GetPath()
 	if err != nil {
-		return "", fmt.Errorf("getting volume path: %w", err)
+		return "", "", fmt.Errorf("getting volume path: %w", err)
 	}
-	return path, nil
+	return path, poolType, nil
+}
+
+// kindForPoolType is the kind of a disk whose volume was just made in a pool
+// of poolType: an LV in a logical pool is a block disk, anything else a file.
+func kindForPoolType(poolType string) string {
+	if poolType == poolTypeLogical {
+		return DiskBackingBlock
+	}
+	return DiskBackingFile
 }
 
 func (m *Manager) createEmptyDisk(vmName string, sizeGB uint, pool string, usedTargets []string) (*DiskDevice, error) {
@@ -943,11 +1195,11 @@ func (m *Manager) createEmptyDisk(vmName string, sizeGB uint, pool string, usedT
 	if err != nil {
 		return nil, err
 	}
-	path, err := m.CreateVolume(pool, extraVolName(vmName, len(usedTargets)+1), sizeGB)
+	path, poolType, err := m.createVolume(pool, extraVolName(vmName, len(usedTargets)+1), sizeGB)
 	if err != nil {
 		return nil, err
 	}
-	return &DiskDevice{Path: path, Target: target}, nil
+	return &DiskDevice{Path: path, Target: target, Kind: kindForPoolType(poolType)}, nil
 }
 
 // AddDisk creates an empty qcow2 volume and attaches it as the next virtio disk.
@@ -968,8 +1220,11 @@ func (m *Manager) AddDisk(name string, sizeGB uint, pool string) (*DiskDevice, e
 	if err != nil {
 		return nil, fmt.Errorf("getting domain XML: %w", err)
 	}
-	cache := diskCacheOf(xmlDesc, "vda") // the new disk takes the boot disk's mode
 	used := usedTargets(xmlDesc)
+	var vcpus uint
+	if info, err := dom.GetInfo(); err == nil {
+		vcpus = info.NrVirtCpu
+	}
 
 	disk, err := m.createEmptyDisk(name, sizeGB, pool, used)
 	if err != nil {
@@ -986,7 +1241,7 @@ func (m *Manager) AddDisk(name string, sizeGB uint, pool string) (*DiskDevice, e
 		flags |= libvirt.DOMAIN_DEVICE_MODIFY_LIVE
 	}
 
-	if err := dom.AttachDeviceFlags(diskXML(disk.Path, disk.Target, cache), flags); err != nil {
+	if err := dom.AttachDeviceFlags(attachDiskXML(disk.Kind, disk.Path, disk.Target, xmlDesc, vcpus), flags); err != nil {
 		_ = m.deleteVolumeByPath(disk.Path)
 		return nil, fmt.Errorf("attaching disk: %w", err)
 	}
@@ -1233,7 +1488,9 @@ func (m *Manager) ResizeDisk(name string, sizeGB uint) error {
 	if err != nil {
 		return fmt.Errorf("getting domain XML: %w", err)
 	}
-	diskPath, err := firstFileDiskPath(xmlDesc) // block disks wait for L2
+	// Before anything changes: a block disk cannot be grown (libvirt does not
+	// resize logical volumes), so the VM is not touched.
+	diskPath, err := resizeDiskPath(xmlDesc)
 	if err != nil {
 		return err
 	}
@@ -1304,7 +1561,17 @@ func (m *Manager) MigrateDisk(vmName, targetPool string) error {
 	if err != nil {
 		return fmt.Errorf("getting domain XML: %w", err)
 	}
-	oldPath, err := firstFileDiskPath(xmlDesc) // block disks wait for L2
+	pool, err := m.conn.LookupStoragePoolByName(targetPool)
+	if err != nil {
+		return fmt.Errorf("looking up pool %q: %w", targetPool, err)
+	}
+	defer pool.Free()
+	targetType := ""
+	if x, err := pool.GetXMLDesc(0); err == nil {
+		targetType = parsePoolType(x)
+	}
+	// Before the VM is stopped: refuse block disks and logical pools.
+	oldPath, err := migratePrecheck(xmlDesc, targetType)
 	if err != nil {
 		return err
 	}
@@ -1320,12 +1587,6 @@ func (m *Manager) MigrateDisk(vmName, targetPool string) error {
 		return fmt.Errorf("looking up volume at %q: %w", oldPath, err)
 	}
 	defer oldVol.Free()
-
-	pool, err := m.conn.LookupStoragePoolByName(targetPool)
-	if err != nil {
-		return fmt.Errorf("looking up pool %q: %w", targetPool, err)
-	}
-	defer pool.Free()
 
 	volInfo, err := oldVol.GetInfo()
 	if err != nil {

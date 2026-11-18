@@ -510,3 +510,24 @@ are appended, never edited in; a hook refuses rewrites.
 - Server, remote client and `pool list` (new TYPE column, `-` when
   unknown) carry the fields; a 2.1.0 answer decodes to "".
 - Commits: the L1 commit on `clone-identity`.
+
+## 2026-11-18 — L2 Block disks in the libvirt layer
+
+- `pkg/vmtool`: a block disk (`<source dev=…>`, raw, `discard='unmap'`,
+  `queues` = min(vCPUs, 4), `io='native'` only with cache `none` /
+  `directsync`, `iothread='1'` when the domain has iothreads). The domain
+  gets `<iothreads>1</iothreads>` iff a disk is block. File disks keep
+  today's XML byte for byte (golden tests).
+- Define resolves each disk's kind from the volume libvirt finds at its
+  path (unknown path: file). `DiskDevice.Kind`, `VMConfig.DiskKind`.
+- CreateVolume / AddDisk in a `logical` pool make an LV named without
+  `.qcow2`, no `<format>`, allocation = capacity, attached as block.
+- Delete removes a block disk only when its volume is in a `logical`
+  pool; block paths elsewhere are never touched.
+- libvirt cannot resize a logical volume (verified on veritech02), so
+  resize-disk on a block `vda` fails before touching the VM: "growing a
+  block-device disk is not supported …; create the VM with --disk-size".
+  ResizeVolume on a block volume already large enough is a no-op.
+- migrate-disk refuses a block `vda` or a logical target before stopping
+  the VM.
+- Commits: the L2 commit on `clone-identity`.

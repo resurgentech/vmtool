@@ -33,6 +33,9 @@ type NetworkConfig struct {
 type DiskDevice struct {
 	Path   string
 	Target string // guest device name, e.g. vda, vdb
+	// Kind is DiskBackingFile or DiskBackingBlock; empty is resolved by Define
+	// from the volume libvirt finds at Path (a path it does not know is a file).
+	Kind string
 }
 
 // VMConfig holds the parameters for defining a VM.
@@ -41,6 +44,7 @@ type VMConfig struct {
 	VCPUs           uint
 	Memory          uint // GiB
 	DiskPath        string
+	DiskKind        string // kind of vda, as DiskDevice.Kind; empty is resolved by Define
 	DiskSizeGB      uint   // 0 means use the base image size as-is
 	Pool            string // empty is the host's default pool (see DefaultPool, HypervisorPool)
 	Network         NetworkConfig
