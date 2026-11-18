@@ -416,3 +416,20 @@ are appended, never edited in; a hook refuses rewrites.
   `sshpass -e ssh`.
 - `info.version` 2.1.0; tranches 4 and 5 ship under it.
 - Commits: the C20 commit on `clone-identity`.
+
+## 2026-11-17 — C21 Playbook variables travel in the environment, not argv
+
+- `vmtool.RunPlaybook` (the only builder of the ansible-playbook command)
+  emits, per variable in sorted order, `--extra-vars
+  name={{ lookup("ansible.builtin.env", "VMTOOL_VAR_name") }}`; values go
+  in the child environment as `VMTOOL_VAR_<name>`, inherited
+  `VMTOOL_VAR_*` entries stripped. Covers create `--playbook`,
+  `playbook`, `metal playbook` and `metal add`, built-ins (`deviceid`,
+  `vmtool_kind`) included.
+- New `vmtool.CheckExtraVars`: names `^[A-Za-z_][A-Za-z0-9_]*$` (empty
+  refused), NUL values refused; messages name the variable, never the
+  value. Run by app (KindInvalid, REST 400; CreateVM before any libvirt
+  call), by `RunPlaybook`, and by the CLI's `parseExtraVars`.
+- Spec `ExtraVars` description states the rule; no version change
+  (ships under 2.1.0).
+- Commits: the C21 commit on `clone-identity`.

@@ -219,3 +219,12 @@ func TestServiceGetsConfigWaits(t *testing.T) {
 		t.Errorf("IPTimeout %s SSHTimeout %s", s.IPTimeout, s.SSHTimeout)
 	}
 }
+
+func TestParseExtraVarsRefusesBadName(t *testing.T) {
+	if _, err := parseExtraVars([]string{"foo-bar=1"}); err == nil || !strings.Contains(err.Error(), "foo-bar") {
+		t.Fatalf("err = %v", err)
+	}
+	if got, err := parseExtraVars([]string{"ok_1=a=b"}); err != nil || got["ok_1"] != "a=b" {
+		t.Fatalf("good: %v %v", got, err)
+	}
+}

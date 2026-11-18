@@ -473,7 +473,7 @@ grows it at first boot on images built with it).
 	cmd.Flags().StringVar(&diskCache, "disk-cache", "", "disk cache mode: none, writeback, writethrough or unsafe (default unsafe for a clone, the hypervisor's default with --noclone). unsafe keeps guest writes the guest believes are flushed in host memory; a host crash or power loss can corrupt the VM's disk. Pick none for a VM whose data matters")
 	cmd.Flags().UintVar(&extraDiskSizeGB, "extra-disk-size", 0, "create a second empty virtio disk (vdb) named <name>-2.qcow2")
 	cmd.Flags().StringVar(&extraDiskPool, "extra-disk-pool", "", "storage pool for the extra disk (default: same as --pool)")
-	cmd.Flags().StringArrayVar(&extraVars, "extra-var", nil, "ansible extra-var key=value for --playbook (repeatable). deviceid defaults to the VM name")
+	cmd.Flags().StringArrayVar(&extraVars, "extra-var", nil, "ansible extra-var key=value for --playbook (repeatable; name: letters, digits, _). Values go to ansible in its environment, not argv. deviceid defaults to the VM name")
 
 	return cmd
 }
@@ -778,6 +778,9 @@ func parseExtraVars(pairs []string) (map[string]string, error) {
 		}
 		out[k] = v
 	}
+	if err := vmtool.CheckExtraVars(out); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 
@@ -811,7 +814,7 @@ func playbookCmd(e *env) *cobra.Command {
 
 	cmd.Flags().StringVar(&sshUser, "ssh-user", "packer", "SSH username if no .machines entry exists")
 	cmd.Flags().StringVar(&sshPass, "ssh-pass", "packer", "SSH password if no .machines entry exists")
-	cmd.Flags().StringArrayVar(&extraVars, "extra-var", nil, "ansible extra-var key=value (repeatable). deviceid defaults to the VM name")
+	cmd.Flags().StringArrayVar(&extraVars, "extra-var", nil, "ansible extra-var key=value (repeatable; name: letters, digits, _). Values go to ansible in its environment, not argv. deviceid defaults to the VM name")
 
 	return cmd
 }

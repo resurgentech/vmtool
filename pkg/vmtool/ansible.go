@@ -5,26 +5,69 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
 )
 
-func extraVarArgs(extraVars map[string]string) []string {
-	if len(extraVars) == 0 {
-		return nil
-	}
+// extraVarPrefix names the environment variables that carry extra-var values.
+const extraVarPrefix = "VMTOOL_VAR_"
+
+var extraVarName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// CheckExtraVars refuses an extra-var name that is not ASCII letters, digits
+// and _ (not starting with a digit), and a value with a NUL byte, which an
+// environment entry cannot hold. Messages name the variable, never the value.
+func CheckExtraVars(extraVars map[string]string) error {
 	keys := make([]string, 0, len(extraVars))
 	for k := range extraVars {
-		if k == "" {
-			continue
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if !extraVarName.MatchString(k) {
+			return fmt.Errorf("invalid extra-var name %q: use letters, digits and _, not starting with a digit", k)
 		}
+		if strings.IndexByte(extraVars[k], 0) >= 0 {
+			return fmt.Errorf("extra-var %q: value contains a NUL byte", k)
+		}
+	}
+	return nil
+}
+
+// extraVarArgs returns, in sorted name order, one "name={{ lookup(...) }}"
+// argument per variable. The value is read by ansible from the environment
+// (VMTOOL_VAR_<name>); it never appears on the command line.
+func extraVarArgs(extraVars map[string]string) []string {
+	keys := make([]string, 0, len(extraVars))
+	for k := range extraVars {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 	out := make([]string, 0, len(keys))
 	for _, k := range keys {
-		out = append(out, k+"="+extraVars[k])
+		out = append(out, k+`={{ lookup("ansible.builtin.env", "`+extraVarPrefix+k+`") }}`)
+	}
+	return out
+}
+
+// extraVarEnv is env without any inherited VMTOOL_VAR_* entry, plus one
+// VMTOOL_VAR_<name>=<value> per variable.
+func extraVarEnv(env []string, extraVars map[string]string) []string {
+	out := make([]string, 0, len(env)+len(extraVars))
+	for _, e := range env {
+		if !strings.HasPrefix(e, extraVarPrefix) {
+			out = append(out, e)
+		}
+	}
+	keys := make([]string, 0, len(extraVars))
+	for k := range extraVars {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		out = append(out, extraVarPrefix+k+"="+extraVars[k])
 	}
 	return out
 }
@@ -49,11 +92,16 @@ func ListPlaybooks(dir string) ([]string, error) {
 }
 
 // RunPlaybook executes an ansible-playbook against the given inventory file.
-// extraVars are passed as repeated --extra-vars key=value.
+// extraVars reach ansible-playbook through its environment (VMTOOL_VAR_<name>),
+// read back by one --extra-vars lookup per variable, so no value is in argv.
+// A bad name or value is refused before anything starts (CheckExtraVars).
 // Returns the combined stdout/stderr output and any error.
 // t puts the token in the child's environment for the tunnel's ProxyCommand;
 // pass Tunnel{} for a metal machine.
 func RunPlaybook(t Tunnel, inventoryPath, playbookPath string, extraVars map[string]string) (string, error) {
+	if err := CheckExtraVars(extraVars); err != nil {
+		return "", err
+	}
 	cmd := playbookCmd(t, inventoryPath, playbookPath, extraVars)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -69,7 +117,7 @@ func playbookCmd(t Tunnel, inventoryPath, playbookPath string, extraVars map[str
 	}
 	// A refusal under go test is in cmd.Err; CombinedOutput returns it.
 	cmd, _ := command("ansible-playbook", args...)
-	cmd.Env = ansibleEnv(t)
+	cmd.Env = extraVarEnv(ansibleEnv(t), extraVars)
 	return cmd
 }
 

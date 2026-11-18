@@ -147,6 +147,9 @@ func (s *Service) CreateVM(ctx context.Context, m Manager, in CreateVMInput) (*v
 	if !vmtool.ValidDiskCache(in.DiskCache) {
 		return nil, invalid("create", fmt.Errorf("invalid disk cache %q: want none, writeback, writethrough or unsafe", in.DiskCache))
 	}
+	if err := vmtool.CheckExtraVars(in.ExtraVars); err != nil {
+		return nil, invalid("create", err)
+	}
 	if in.NoWait && in.Playbook != "" {
 		return nil, invalid("create", fmt.Errorf("--no-wait cannot be combined with --playbook: a playbook needs a guest vmtool can reach"))
 	}

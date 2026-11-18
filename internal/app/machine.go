@@ -325,6 +325,9 @@ func withMachineVars(m vmtool.Machine, extra map[string]string) map[string]strin
 
 func (s *Service) RunMachinePlaybook(_ context.Context, name, playbook string, extraVars map[string]string) (*PlaybookResult, error) {
 	const op = "machine_playbook"
+	if err := vmtool.CheckExtraVars(extraVars); err != nil {
+		return nil, invalid(op, err)
+	}
 	if filepath.Base(playbook) == commissionPlaybook {
 		return nil, invalid(op, fmt.Errorf("%s rewrites machine identity; for aliens use add with commission", commissionPlaybook))
 	}

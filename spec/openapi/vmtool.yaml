@@ -1247,7 +1247,10 @@ components:
             attaches it when the domain is defined.
         extra_vars:
           $ref: '#/components/schemas/ExtraVars'
-          description: Ansible extra-vars for the optional create-time playbook.
+          description: >
+            Ansible extra-vars for the optional create-time playbook. Names and
+            values follow the ExtraVars rules; a bad one answers 400 before
+            anything is created.
         no_wait:
           type: boolean
           default: false
@@ -1349,8 +1352,14 @@ components:
       type: object
       additionalProperties: { type: string }
       description: >
-        Ansible extra-vars (`--extra-vars key=value`). vmtool always sets
-        deviceid to the VM name unless this map already contains deviceid.
+        Ansible extra-vars. vmtool always sets deviceid to the VM name unless
+        this map already contains deviceid. A name must match
+        `^[A-Za-z_][A-Za-z0-9_]*$` (ASCII letters, digits and `_`, not starting
+        with a digit; an empty name is refused). A value is any text, except
+        that a NUL byte is refused. A bad name or value answers 400, naming the
+        variable and never its value. Values reach ansible-playbook through its
+        environment (`VMTOOL_VAR_<name>`), not its command line; they keep
+        extra-var precedence.
     PlaybookResult:
       type: object
       required: [output]

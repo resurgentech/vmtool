@@ -220,7 +220,7 @@ refused; use 'metal add --kind alien --commission'.`,
 			return nil
 		},
 	}
-	cmd.Flags().StringArrayVar(&extraVars, "extra-var", nil, "ansible extra-var key=value (repeatable)")
+	cmd.Flags().StringArrayVar(&extraVars, "extra-var", nil, "ansible extra-var key=value (repeatable; name: letters, digits, _). Values go to ansible in its environment, not argv")
 	return cmd
 }
 

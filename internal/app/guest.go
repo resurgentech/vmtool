@@ -37,6 +37,9 @@ func (s *Service) ExecVM(_ context.Context, m Manager, ref VMRef, argv []string,
 }
 
 func (s *Service) RunPlaybook(_ context.Context, m Manager, ref VMRef, playbook string, auth vmtool.Auth, extraVars map[string]string) (*PlaybookResult, error) {
+	if err := vmtool.CheckExtraVars(extraVars); err != nil {
+		return nil, invalid("playbook", err)
+	}
 	pb, err := s.resolvePlaybook(playbook)
 	if err != nil {
 		return nil, err
