@@ -141,7 +141,7 @@ func (s *Server) httpServer() (*http.Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load tls_cert/tls_key: %w", err)
 	}
-	return &http.Server{
+	srv := &http.Server{
 		Addr:              s.addr(),
 		Handler:           s.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
@@ -153,7 +153,10 @@ func (s *Server) httpServer() (*http.Server, error) {
 			Certificates: []tls.Certificate{cert},
 			NextProtos:   []string{"http/1.1"},
 		},
-	}, nil
+	}
+	// A hijacked console is not tracked by Shutdown: close each with 4503.
+	s.h.attachShutdown(srv)
+	return srv, nil
 }
 
 // serve runs srv on ln over TLS. srv.TLSConfig must be set (httpServer

@@ -26,11 +26,12 @@ const (
 	tunnel101        = "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: " + tunnelProtocol + "\r\n\r\n"
 )
 
-// tunnelMux is the generated ServerInterface (the strict adapter) with
-// OpenVMTunnel replaced: a strict handler returns a response object and
-// cannot take over the connection. Every other operation goes to the strict
-// adapter unchanged. The bearer check, request log and body limit wrap this
-// mux like every route (chain in server.go).
+// tunnelMux is the generated ServerInterface (the strict adapter) with the
+// operations that take over the connection replaced: OpenVMTunnel, the two
+// consoles (console.go) and uploadImage (images.go). A strict handler returns
+// a response object and cannot upgrade or stream. Every other operation goes
+// to the strict adapter unchanged. The bearer check, request log and body
+// limit wrap this mux like every route (chain in server.go).
 type tunnelMux struct {
 	api.ServerInterface
 	h *handlers

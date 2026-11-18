@@ -2,7 +2,6 @@ package server
 
 import (
 	"net/http"
-	"net/http/httptest"
 	"path"
 	"sort"
 	"strings"
@@ -70,33 +69,32 @@ func TestSpecParity(t *testing.T) {
 	}
 }
 
-func TestNoConsoleInSpec(t *testing.T) {
+// The console is its own operation on its own path: GET only, workstation
+// only. The exec paths stay "run a command, return the result": POST only.
+func TestConsoleOperationsInSpec(t *testing.T) {
 	doc, err := openapi3.NewLoader().LoadFromData(spec.OpenAPIYAML)
 	if err != nil {
 		t.Fatalf("load spec: %v", err)
 	}
-	for p, item := range doc.Paths.Map() {
-		if strings.Contains(strings.ToLower(p), "console") {
-			t.Errorf("spec path %s mentions console", p)
+	want := map[string]string{
+		"/v1/hosts/{host}/vms/{name}/console": "openVMConsole",
+		"/v1/metal/{name}/console":            "openMachineConsole",
+	}
+	for p, id := range want {
+		item := doc.Paths.Find(p)
+		if item == nil {
+			t.Errorf("spec has no path %s", p)
+			continue
 		}
-		for m, op := range item.Operations() {
-			if strings.Contains(strings.ToLower(op.OperationID), "console") {
-				t.Errorf("%s %s operationId %s mentions console", m, p, op.OperationID)
-			}
+		ops := item.Operations()
+		if len(ops) != 1 || ops["GET"] == nil || ops["GET"].OperationID != id {
+			t.Errorf("%s: want exactly GET %s, got %v", p, id, ops)
 		}
 	}
-	if strings.Contains(strings.ToLower(doc.Info.Description), "console") {
-		t.Errorf("info.description mentions console")
-	}
-}
-
-func TestConsoleRoutesGone(t *testing.T) {
-	h := handlerFor(&handlers{})
-	for _, p := range []string{"/v1/hosts/x/vms/x/console", "/v1/metal/x/console"} {
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, p, nil))
-		if rec.Code != http.StatusNotFound {
-			t.Errorf("GET %s = %d, want 404", p, rec.Code)
+	for _, p := range []string{"/v1/hosts/{host}/vms/{name}/exec", "/v1/metal/{name}/exec"} {
+		item := doc.Paths.Find(p)
+		if item == nil || len(item.Operations()) != 1 || item.Operations()["POST"] == nil {
+			t.Errorf("%s must offer POST only (no GET or Upgrade)", p)
 		}
 	}
 }

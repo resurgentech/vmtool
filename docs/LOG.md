@@ -446,3 +446,24 @@ are appended, never edited in; a hook refuses rewrites.
   unchanged. app's `Service.RemoteCmd` / `MachineRemoteCmd` pass it
   through; REST exec untouched.
 - Commits: the C25 commit on `clone-identity`.
+
+## 2026-11-17 — C23 WebSocket console for VMs and machines
+
+- `GET /v1/hosts/{host}/vms/{name}/console` (`openVMConsole`) and
+  `GET /v1/metal/{name}/console` (`openMachineConsole`), WebSocket
+  upgrades, workstation-only, behind the bearer middleware. Optional
+  `cols`/`rows` (1-65535, default 80x24). Exec paths get no GET.
+- Handshake refusals are JSON before the upgrade, in order: 401, 403
+  workstation, 403 any `Origin`, 426 not HTTP/1.1, 400 not an upgrade,
+  400 name/size, 404, 409 no address, 429 (16 consoles), 502 start.
+- ssh `-tt` (login shell, `vmtool.ShellCmd` / `MachineShellCmd` with
+  `WithTTY`) on a local pty (`creack/pty`, new session) with
+  `TERM=xterm-256color`, started before the upgrade through the guarded
+  constructor. Binary both ways; text = JSON `resize` control, bad text
+  ignored; >64 KiB in closes 1009; output chunks <=32 KiB. Close 4000
+  `exit N` on shell exit (output drained first), 4503 on shutdown, 1011
+  `console failed` / `ping timeout` (30 s ping and pong). Every ending
+  SIGKILLs the process group. Nothing from the stream is logged.
+- New deps: `github.com/coder/websocket` v1.8.14, `github.com/creack/pty`
+  v1.1.24. API stays 2.1.0.
+- Commits: the C23 commit on `clone-identity`.

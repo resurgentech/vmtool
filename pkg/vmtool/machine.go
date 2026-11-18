@@ -199,6 +199,13 @@ func MachineSSHCmd(m Machine, extraArgs ...string) *exec.Cmd {
 	return cmd
 }
 
+// MachineShellCmd builds an ssh command for the machine's login shell, with
+// no remote command and stdio left to the caller. WithTTY puts -tt before
+// the destination.
+func MachineShellCmd(m Machine, opts ...SSHOption) *exec.Cmd {
+	return sshCommandOpts(m.Host, m.Auth(), nil, nil, opts...)
+}
+
 // MachineRemoteCmd builds a non-interactive ssh command that runs argv
 // exactly on the machine: every argument is single-quoted (see quoteArgv),
 // because ssh joins its trailing arguments with spaces. connectTimeout (seconds) bounds the TCP connect; 0 means the

@@ -46,6 +46,8 @@ type handlers struct {
 	// (poolDirOf in images.go); poolMu guards it.
 	poolMu  sync.Mutex
 	poolDir string
+	// console is the open consoles and their limits (console.go).
+	console consoles
 }
 
 // guestSvc is h.svc with a Tunnel for this request: the running vmtool as

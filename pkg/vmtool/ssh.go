@@ -162,6 +162,14 @@ func SSHCmd(t Tunnel, host, name string, extraArgs ...string) (*exec.Cmd, error)
 	return cmd, nil
 }
 
+// ShellCmd builds an ssh command for the login shell of VM name on host,
+// through the tunnel, with no remote command. Unlike SSHCmd it leaves stdio
+// to the caller (the server's console gives it a local pty), and opts tune
+// ssh: WithTTY puts -tt before the destination.
+func ShellCmd(t Tunnel, host, name string, opts ...SSHOption) (*exec.Cmd, error) {
+	return vmSSH(t, host, name, nil, opts...)
+}
+
 // RemoteCmd builds a non-interactive ssh command that runs argv exactly on VM
 // name on host, through the tunnel. Every argument is single-quoted (see
 // quoteArgv), because ssh joins its trailing arguments with spaces and the

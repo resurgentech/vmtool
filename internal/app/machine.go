@@ -397,6 +397,20 @@ func (s *Service) MachineRemoteCmd(name string, argv []string, opts ...vmtool.SS
 	return vmtool.MachineRemoteCmd(*m, 0, argv, opts...), nil
 }
 
+// ConsoleMachine builds the command behind a console on machine name: ssh
+// -tt with no remote command (the login shell). Stdio and TERM are the
+// caller's. Nothing is started here.
+func (s *Service) ConsoleMachine(name string) (*exec.Cmd, error) {
+	if !vmtool.ValidMachineName(name) {
+		return nil, invalid("console", fmt.Errorf("invalid machine name %q", name))
+	}
+	m, err := loadMachine("console", name)
+	if err != nil {
+		return nil, err
+	}
+	return vmtool.MachineShellCmd(*m, vmtool.WithTTY()), nil
+}
+
 // MachineSSHCmd builds an interactive ssh command for CLI, TUI, and console.
 func (s *Service) MachineSSHCmd(name string, extraArgs ...string) (*exec.Cmd, error) {
 	m, err := loadMachine("machine_ssh", name)

@@ -64,6 +64,13 @@ port 22, hijacks the connection and relays raw bytes (`internal/server/tunnel.go
 wired through `tunnelMux`). It is still in the spec, so the exclusion register
 stays empty.
 
+`GET /v1/hosts/{host}/vms/{name}/console` (`openVMConsole`) and
+`GET /v1/metal/{name}/console` (`openMachineConsole`) are WebSocket upgrades
+served the same way (`internal/server/console.go`, wired through `tunnelMux`;
+both are in the spec and workstation-only). They run `ssh -tt` on a local pty
+and relay it as binary messages; the handshake checks, close codes and limits
+are in each operation's description. The full contract is step C24.
+
 ## URL versioning
 
 Paths are versioned: every route except the docs routes and `GET /version`

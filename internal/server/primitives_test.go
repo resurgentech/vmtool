@@ -450,8 +450,9 @@ func TestWorkstationOnlySet(t *testing.T) {
 	sort.Strings(got)
 	want := []string{
 		"addMachine", "createVM", "execMachine", "execVM", "getMachine",
-		"listMachines", "listPlaybooks", "rebootMachine", "removeMachine",
-		"resizeDisk", "runMachinePlaybook", "runPlaybook",
+		"listMachines", "listPlaybooks", "openMachineConsole", "openVMConsole",
+		"rebootMachine", "removeMachine", "resizeDisk", "runMachinePlaybook",
+		"runPlaybook",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("workstation-only operations\n got %v\nwant %v", got, want)

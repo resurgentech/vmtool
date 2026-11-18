@@ -395,6 +395,92 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+  /v1/hosts/{host}/vms/{name}/console:
+    parameters:
+      - $ref: '#/components/parameters/HostName'
+      - $ref: '#/components/parameters/VMName'
+    get:
+      operationId: openVMConsole
+      x-vmtool-workstation-only: true
+      summary: Open an interactive terminal on a VM (WebSocket)
+      description: >
+        A WebSocket (RFC 6455) over HTTP/1.1 that runs the target's login
+        shell on a terminal: `ssh -tt` with no remote command, on a local pty
+        of `cols` x `rows` (default 80x24). There is no command parameter.
+        Send the bearer token in the `Authorization` header of the handshake;
+        a handshake carrying any `Origin` header is refused (403), so a
+        browser cannot open a console. Typed input goes to the server as
+        binary messages; terminal output comes back as binary messages (at
+        most 32 KiB each); a text message is a JSON control message,
+        `{"event":"resize","cols":N,"rows":N}`, and a text message that is
+        not valid is ignored. An inbound message over 64 KiB closes the
+        socket with 1009. When the shell exits the server sends the
+        remaining output, then closes with code 4000 and reason `exit N`
+        (N is ssh's exit status). A server shutdown closes with 4503. The
+        server pings every 30 s and ends a console that does not answer.
+        When the socket closes for any reason the server kills the shell's
+        whole process group. At most 16 consoles run at once (429). Every
+        refusal is a JSON response sent before the upgrade, checked in this
+        order: bearer token (401), workstation role (403), `Origin` (403),
+        HTTP/1.1 (426), WebSocket upgrade headers (400), name, `cols` and
+        `rows` (400), target (unknown host or VM), address (409), console limit
+        (429), ssh or the pty failing to start (502). No subprotocol is
+        offered or required. Served by the workstation only: on a server
+        whose config.yml role is hypervisor this operation answers 403
+        "served by the workstation".
+      parameters:
+        - $ref: '#/components/parameters/ConsoleCols'
+        - $ref: '#/components/parameters/ConsoleRows'
+      responses:
+        '101':
+          description: >
+            Switching Protocols: the connection is now a WebSocket.
+          headers:
+            Connection:
+              schema: { type: string, enum: [Upgrade] }
+            Upgrade:
+              schema: { type: string, enum: [websocket] }
+        '400':
+          description: >
+            Not a WebSocket upgrade, a request body, an invalid name, or
+            `cols` or `rows` not an integer in 1-65535.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: >
+            The server's role is hypervisor (workstation only), or the
+            handshake carries an `Origin` header (browser access is not
+            allowed).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409':
+          description: The VM has no IP address.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '426':
+          description: Not HTTP/1.1 (for example HTTP/2). Retry over HTTP/1.1.
+          headers:
+            Upgrade:
+              schema: { type: string, enum: [websocket] }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          description: There are already 16 consoles open.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+        '502':
+          description: ssh or the local pty could not be started.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
   /v1/hosts/{host}/vms/{name}/playbook:
     parameters:
       - $ref: '#/components/parameters/HostName'
@@ -1056,6 +1142,86 @@ paths:
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
         '502': { $ref: '#/components/responses/Error' }
+  /v1/metal/{name}/console:
+    parameters:
+      - $ref: '#/components/parameters/MachineName'
+    get:
+      operationId: openMachineConsole
+      x-vmtool-workstation-only: true
+      summary: Open an interactive terminal on a machine (WebSocket)
+      description: >
+        A WebSocket (RFC 6455) over HTTP/1.1 that runs the target's login
+        shell on a terminal: `ssh -tt` with no remote command, on a local pty
+        of `cols` x `rows` (default 80x24). There is no command parameter.
+        Send the bearer token in the `Authorization` header of the handshake;
+        a handshake carrying any `Origin` header is refused (403), so a
+        browser cannot open a console. Typed input goes to the server as
+        binary messages; terminal output comes back as binary messages (at
+        most 32 KiB each); a text message is a JSON control message,
+        `{"event":"resize","cols":N,"rows":N}`, and a text message that is
+        not valid is ignored. An inbound message over 64 KiB closes the
+        socket with 1009. When the shell exits the server sends the
+        remaining output, then closes with code 4000 and reason `exit N`
+        (N is ssh's exit status). A server shutdown closes with 4503. The
+        server pings every 30 s and ends a console that does not answer.
+        When the socket closes for any reason the server kills the shell's
+        whole process group. At most 16 consoles run at once (429). Every
+        refusal is a JSON response sent before the upgrade, checked in this
+        order: bearer token (401), workstation role (403), `Origin` (403),
+        HTTP/1.1 (426), WebSocket upgrade headers (400), name, `cols` and
+        `rows` (400), target (unknown machine), address (409), console limit
+        (429), ssh or the pty failing to start (502). No subprotocol is
+        offered or required. Served by the workstation only: on a server
+        whose config.yml role is hypervisor this operation answers 403
+        "served by the workstation".
+      parameters:
+        - $ref: '#/components/parameters/ConsoleCols'
+        - $ref: '#/components/parameters/ConsoleRows'
+      responses:
+        '101':
+          description: >
+            Switching Protocols: the connection is now a WebSocket.
+          headers:
+            Connection:
+              schema: { type: string, enum: [Upgrade] }
+            Upgrade:
+              schema: { type: string, enum: [websocket] }
+        '400':
+          description: >
+            Not a WebSocket upgrade, a request body, an invalid name, or
+            `cols` or `rows` not an integer in 1-65535.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: >
+            The server's role is hypervisor (workstation only), or the
+            handshake carries an `Origin` header (browser access is not
+            allowed).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '426':
+          description: Not HTTP/1.1 (for example HTTP/2). Retry over HTTP/1.1.
+          headers:
+            Upgrade:
+              schema: { type: string, enum: [websocket] }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          description: There are already 16 consoles open.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+        '502':
+          description: ssh or the local pty could not be started.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
   /v1/metal/{name}/playbook:
     parameters:
       - $ref: '#/components/parameters/MachineName'
@@ -1125,6 +1291,18 @@ components:
       in: path
       required: true
       schema: { type: string }
+    ConsoleCols:
+      name: cols
+      in: query
+      required: false
+      description: Terminal width in columns, an integer 1-65535. Default 80.
+      schema: { type: string, pattern: '^[0-9]+$' }
+    ConsoleRows:
+      name: rows
+      in: query
+      required: false
+      description: Terminal height in rows, an integer 1-65535. Default 24.
+      schema: { type: string, pattern: '^[0-9]+$' }
   responses:
     Error:
       description: error

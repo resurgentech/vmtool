@@ -99,6 +99,29 @@ func (s *Service) RemoteCmd(ref VMRef, argv []string, opts ...vmtool.SSHOption) 
 	return c, nil
 }
 
+// ConsoleVM builds the command behind a console on VM ref: ssh -tt through
+// the tunnel with no remote command, so the guest runs the user's login
+// shell. It checks the ref and that the VM exists and has an address
+// (conflict otherwise). Stdio and TERM are the caller's: the server gives the
+// command a local pty and starts it. Nothing is started here.
+func (s *Service) ConsoleVM(_ context.Context, m Manager, ref VMRef) (*exec.Cmd, error) {
+	if err := validRef("console", ref); err != nil {
+		return nil, err
+	}
+	info, err := m.Info(ref.Name)
+	if err != nil {
+		return nil, wrap("console", err)
+	}
+	if info.IP == "" {
+		return nil, conflict("console", fmt.Errorf("VM %q has no IP address", ref.String()))
+	}
+	c, err := vmtool.ShellCmd(s.Tunnel, ref.Host, ref.Name, vmtool.WithTTY())
+	if err != nil {
+		return nil, wrap("console", err)
+	}
+	return c, nil
+}
+
 // WriteInventory writes the persistent Ansible inventory for VM ref at path
 // (host/vm, reached through the tunnel; no token is written). fallback is used
 // when no credentials are stored for the VM. A missing parent directory skips
