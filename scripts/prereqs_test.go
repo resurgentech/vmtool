@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/jaredeh/vmtool/internal/testexec"
 )
 
 // prereqs.sh <host> hands the playbook the hypervisor role and every layout
@@ -118,6 +120,134 @@ func TestJustPrereqsPassesLayout(t *testing.T) {
 		if !strings.Contains(string(out), w) {
 			t.Errorf("prereqs recipe lacks %q: %s", w, out)
 		}
+	}
+}
+
+// prereqsArgvStub is a stand-in prereqs.sh: it writes each argument it gets,
+// NUL-terminated, to the file named by $VMTOOL_TEST_PREREQS_ARGV.
+const prereqsArgvStub = `#!/bin/sh
+: > "$VMTOOL_TEST_PREREQS_ARGV"
+for a in "$@"; do
+	printf '%s\0' "$a" >> "$VMTOOL_TEST_PREREQS_ARGV"
+done
+`
+
+// justPrereqsArgv runs the real justfile's prereqs recipe with args as
+// separate argv elements (what a shell hands just after the user's quoting),
+// with {{ root }}/scripts/prereqs.sh being the stub, and returns the
+// arguments the stub received. Runs no Ansible and no real prereqs.sh.
+func justPrereqsArgv(t *testing.T, args ...string) []string {
+	t.Helper()
+	stub := testexec.Stub(t, map[string]string{"prereqs.sh": prereqsArgvStub})
+	root := t.TempDir()
+	jf, err := os.ReadFile("../justfile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "justfile"), jf, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(stub, filepath.Join(root, "scripts")); err != nil {
+		t.Fatal(err)
+	}
+	argvFile := filepath.Join(t.TempDir(), "argv")
+	cmd := exec.Command("just", append([]string{"--justfile", filepath.Join(root, "justfile"), "prereqs"}, args...)...)
+	cmd.Env = append(os.Environ(), "VMTOOL_TEST_PREREQS_ARGV="+argvFile)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("just prereqs %q: %v\n%s", args, err, out)
+	}
+	b, err := os.ReadFile(argvFile)
+	if err != nil {
+		t.Fatalf("stub prereqs.sh did not run: %v", err)
+	}
+	got := strings.Split(string(b), "\x00")
+	return got[:len(got)-1] // the last NUL terminates, it does not separate
+}
+
+func sameArgs(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+const docNvmeJSON = `{"vmtool_nvme_drives":["/dev/disk/by-id/nvme-A","/dev/disk/by-id/nvme-B"]}`
+
+// L9: `just prereqs` hands prereqs.sh each argument unchanged.
+func TestJustPrereqsPassesArgsVerbatim(t *testing.T) {
+	if _, err := exec.LookPath("just"); err != nil {
+		t.Skip("just not installed")
+	}
+	for _, args := range [][]string{
+		{"veritech02", "-e", docNvmeJSON},
+		{"PLACEHOLDER-HOST", "-e", "b c $HOME"},
+		{},
+	} {
+		if got := justPrereqsArgv(t, args...); !sameArgs(got, args) {
+			t.Errorf("just prereqs %q: prereqs.sh got %d args %q", args, len(got), got)
+		}
+	}
+}
+
+// L9: the NVMe command is documented the same, byte for byte, in the README,
+// the header of prereqs.sh and the header of nvme_stripe.yml, and works as
+// written.
+func TestPrereqsDocsAgree(t *testing.T) {
+	re := regexp.MustCompile(`just prereqs (\S+) -e '([^']*)'`)
+	var lines []string
+	var m []string
+	for _, f := range []string{"../README.md", "prereqs.sh", nvmeStripePath} {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var hits []string
+		for _, l := range strings.Split(string(b), "\n") {
+			l = strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(l), "#"))
+			if mm := re.FindStringSubmatch(l); mm != nil {
+				hits = append(hits, l)
+				m = mm
+			}
+		}
+		if len(hits) != 1 {
+			t.Errorf("%s: want exactly one `just prereqs <host> -e '<json>'` line, got %q", f, hits)
+			continue
+		}
+		lines = append(lines, hits[0])
+	}
+	if t.Failed() {
+		return
+	}
+	for _, l := range lines[1:] {
+		if l != lines[0] {
+			t.Fatalf("the documented commands differ:\n%s", strings.Join(lines, "\n"))
+		}
+	}
+	var v struct {
+		Drives []string `json:"vmtool_nvme_drives"`
+	}
+	if err := json.Unmarshal([]byte(m[2]), &v); err != nil {
+		t.Fatalf("documented JSON %q: %v", m[2], err)
+	}
+	if len(v.Drives) < 2 {
+		t.Errorf("documented vmtool_nvme_drives has %d drives, want at least 2", len(v.Drives))
+	}
+	for _, d := range v.Drives {
+		if !strings.HasPrefix(d, "/dev/disk/by-id/") {
+			t.Errorf("documented drive %q is not a /dev/disk/by-id/ path", d)
+		}
+	}
+	if _, err := exec.LookPath("just"); err != nil {
+		t.Skip("just not installed; the command was not run")
+	}
+	want := []string{m[1], "-e", m[2]}
+	if got := justPrereqsArgv(t, want...); !sameArgs(got, want) {
+		t.Errorf("the documented command reaches prereqs.sh as %q, want %q", got, want)
 	}
 }
 

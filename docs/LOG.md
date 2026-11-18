@@ -648,3 +648,18 @@ are appended, never edited in; a hook refuses rewrites.
   `ansible localhost -c local -m debug` on sample mdadm and pool XML.
 - Both red on the old file, green after; `just check` green.
 - Commits: the L8 commit on `clone-identity`.
+
+## 2026-11-18 — L9 `just prereqs` passes each argument through unchanged
+
+- The `prereqs` recipe has just's per-recipe `[positional-arguments]`
+  and ends `"{{ root }}/scripts/prereqs.sh" "$@"`, so the documented
+  `just prereqs veritech02 -e '{"vmtool_nvme_drives":[…]}'` reaches
+  prereqs.sh as three arguments instead of a brace-expanded, unquoted
+  JSON. No other recipe changed.
+- The header of `scripts/prereqs.sh` shows the same `just prereqs` line
+  as `README.md` and `nvme_stripe.yml`; `TestNvmeStripeWarnsDestructive`
+  lost its prereqs.sh exemption.
+- `TestJustPrereqsPassesArgsVerbatim` (the real justfile over a
+  `testexec.Stub` prereqs.sh) and `TestPrereqsDocsAgree`: red before,
+  green after; `just check` green.
+- Commits: the L9 commit on `clone-identity`.
