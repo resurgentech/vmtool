@@ -433,3 +433,16 @@ are appended, never edited in; a hook refuses rewrites.
 - Spec `ExtraVars` description states the rule; no version change
   (ships under 2.1.0).
 - Commits: the C21 commit on `clone-identity`.
+
+## 2026-11-17 — C25 `vmtool exec -t` / `vmtool metal exec -t`: a live terminal
+
+- `-t`/`--tty` on `exec` and `metal exec` runs ssh with `-tt` right
+  before the destination, the caller's terminal attached live (raw
+  mode, size and resizes forwarded by ssh). Without `-t` the argv is
+  unchanged; quoting is unchanged either way. A `-t` after the target
+  belongs to the remote command (`SetInterspersed(false)` kept).
+- pkg/vmtool: `SSHOption` / `WithTTY()`, a trailing variadic on
+  `RemoteCmd`, `MachineRemoteCmd`, `vmSSH`, `buildSSH`; `vmtool ssh`
+  unchanged. app's `Service.RemoteCmd` / `MachineRemoteCmd` pass it
+  through; REST exec untouched.
+- Commits: the C25 commit on `clone-identity`.

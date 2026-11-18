@@ -326,3 +326,65 @@ func TestQuotedLineRoundTripsThroughSh(t *testing.T) {
 		t.Fatalf("sh printed %q, want %q", out, want)
 	}
 }
+
+// ttyCases builds RemoteCmd and MachineRemoteCmd with and without WithTTY in
+// the sshpass form (default credentials) and the plain ssh form (a key).
+func ttyCases(t *testing.T, argv []string) map[string][2]*exec.Cmd {
+	t.Helper()
+	out := map[string][2]*exec.Cmd{}
+	for _, form := range []string{"sshpass", "key"} {
+		t.Chdir(t.TempDir())
+		if form == "key" {
+			for _, d := range []string{CredsDir("jetfire", "web"), MachineDir("nuc1")} {
+				if err := os.MkdirAll(d, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(d, "id_ed25519"), []byte("PLACEHOLDER-not-a-secret-1"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		plain, err := RemoteCmd(testTunnel(), "jetfire", "web", argv)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tty, err := RemoteCmd(testTunnel(), "jetfire", "web", argv, WithTTY())
+		if err != nil {
+			t.Fatal(err)
+		}
+		out["RemoteCmd/"+form] = [2]*exec.Cmd{plain, tty}
+		m := Machine{Name: "nuc1", Host: "10.0.0.42"}
+		out["MachineRemoteCmd/"+form] = [2]*exec.Cmd{
+			MachineRemoteCmd(m, 0, argv), MachineRemoteCmd(m, 0, argv, WithTTY()),
+		}
+	}
+	return out
+}
+
+// WithTTY puts -tt immediately before the destination and changes nothing
+// else: without it the argv has no -tt; with it, removing the -tt gives the
+// plain argv, so the quoted remote arguments are byte-identical.
+func TestRemoteCmdTTYOption(t *testing.T) {
+	argv := []string{"echo", "a b", "it's", "$HOME"}
+	for name, c := range ttyCases(t, argv) {
+		plain, tty := c[0].Args, c[1].Args
+		if slices.Contains(plain, "-tt") {
+			t.Errorf("%s: plain argv has -tt: %q", name, plain)
+		}
+		i := slices.Index(tty, "-tt")
+		if i < 0 {
+			t.Errorf("%s: no -tt with WithTTY: %q", name, tty)
+			continue
+		}
+		if tty[i+1] != plain[i] {
+			t.Errorf("%s: -tt is not immediately before the destination: %q", name, tty)
+		}
+		if got := slices.Delete(slices.Clone(tty), i, i+1); !slices.Equal(got, plain) {
+			t.Errorf("%s: argv differs beyond -tt\n tty   %q\n plain %q", name, tty, plain)
+		}
+		want := quoteArgv(argv)
+		if got := tty[len(tty)-len(want):]; !slices.Equal(got, want) {
+			t.Errorf("%s: tty remote args %q, want %q", name, got, want)
+		}
+	}
+}

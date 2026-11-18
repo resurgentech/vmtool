@@ -620,6 +620,7 @@ checking is disabled.
 }
 
 func execCmd(e *env) *cobra.Command {
+	var tty bool
 	cmd := &cobra.Command{
 		Use:   "exec <host/name> [--] <arg>...",
 		Short: "Run a program on a VM over SSH",
@@ -631,7 +632,15 @@ no shell parsing (spaces, quotes, $ and | are plain characters). For shell
 features, run a shell.
 
   vmtool exec jetfire/web uname -a
-  vmtool exec jetfire/web -- sh -c 'echo hi | wc -c'`,
+  vmtool exec jetfire/web -- sh -c 'echo hi | wc -c'
+
+-t / --tty gives the command a live terminal, like ssh -t or docker exec -it:
+your terminal goes into raw mode and its size and resizes are forwarded.
+Without a terminal on stdin (a pipe or a file) -t still forces a remote pty:
+the program sees a terminal, stdout and stderr are merged, input is echoed.
+Put -t before the VM; after it, -t belongs to the remote command.
+
+  vmtool exec -t jetfire/web -- top`,
 		Args:          cobra.MinimumNArgs(2),
 		SilenceErrors: true,
 		SilenceUsage:  true,
@@ -644,7 +653,7 @@ features, run a shell.
 				return fmt.Errorf("VM %q has no IP address", ref.String())
 			}
 
-			c, err := e.service("").RemoteCmd(ref, args[1:])
+			c, err := e.service("").RemoteCmd(ref, args[1:], ttyOpts(tty)...)
 			if err != nil {
 				return err
 			}
@@ -661,8 +670,18 @@ features, run a shell.
 			return err
 		}),
 	}
+	cmd.Flags().BoolVarP(&tty, "tty", "t", false, "force a remote terminal (ssh -tt) and attach yours live")
 	cmd.Flags().SetInterspersed(false)
 	return cmd
+}
+
+// ttyOpts is the ssh option for -t/--tty: none when off, so the command is
+// exactly the plain one.
+func ttyOpts(tty bool) []vmtool.SSHOption {
+	if tty {
+		return []vmtool.SSHOption{vmtool.WithTTY()}
+	}
+	return nil
 }
 
 func rebootCmd(e *env) *cobra.Command {

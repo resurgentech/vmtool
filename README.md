@@ -170,6 +170,7 @@ just install        # build, cert, config.yml, systemd unit (vmtool server over 
 ./vmtool exec jetfire/web uname -a                      # exact argv, no shell (was `cmd`; API 2.0.0)
 ./vmtool exec jetfire/web -- sh -c 'echo hi | wc -c'    # shell features: run a shell; prints 3
 ./vmtool exec jetfire/web -- sh -c 'cat > /p/.env' < .env   # the CLI passes your stdin through
+./vmtool exec -t jetfire/web -- top                     # -t: a live terminal (ssh -tt), like docker exec -it
 # REST: POST /v1/hosts/{h}/vms/{n}/exec and /v1/metal/{n}/exec take an optional
 # "stdin" string (API 2.1.0): text written to the command's stdin, then closed.
 # Never logged, never in an error or on a command line; bounded by the 1 MiB body limit.
@@ -306,6 +307,7 @@ ansible-playbook -i '10.0.0.42,' -u <admin> -K ansible/playbooks/prep_machine.ym
 ./vmtool metal add cloud1 203.0.113.7 --kind alien --commission  # cloned alien: new identity first
 ./vmtool metal ls                                         # probes each machine over SSH
 ./vmtool metal exec nuc1 uname -a
+./vmtool metal exec -t nuc1 -- top                        # -t: a live terminal (ssh -tt)
 ./vmtool metal playbook nuc1 vm_upgrade.yml
 ./vmtool metal reboot nuc1
 ./vmtool metal rm nuc1                                    # forget locally; the machine is untouched

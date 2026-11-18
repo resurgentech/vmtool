@@ -166,12 +166,38 @@ func SSHCmd(t Tunnel, host, name string, extraArgs ...string) (*exec.Cmd, error)
 // name on host, through the tunnel. Every argument is single-quoted (see
 // quoteArgv), because ssh joins its trailing arguments with spaces and the
 // guest's shell splits that line.
-func RemoteCmd(t Tunnel, host, name string, argv []string) (*exec.Cmd, error) {
-	return vmSSH(t, host, name, quoteArgv(argv))
+//
+// WithTTY asks for a live terminal (ssh -tt); see SSHOption.
+func RemoteCmd(t Tunnel, host, name string, argv []string, opts ...SSHOption) (*exec.Cmd, error) {
+	return vmSSH(t, host, name, quoteArgv(argv), opts...)
+}
+
+// SSHOption tunes how buildSSH assembles the ssh command. No options is the
+// plain command, so existing callers are unchanged.
+type SSHOption func(*sshOptions)
+
+type sshOptions struct {
+	tty bool
+}
+
+// WithTTY puts -tt before the destination: ssh forces a remote pty even when
+// its own stdin is not a terminal, puts the local terminal in raw mode when it
+// is one, and forwards the window size and every resize.
+func WithTTY() SSHOption { return func(o *sshOptions) { o.tty = true } }
+
+func applySSHOptions(opts []SSHOption) sshOptions {
+	var o sshOptions
+	for _, f := range opts {
+		f(&o)
+	}
+	return o
 }
 
 // quoteArg POSIX-single-quotes s: the shell reads it back as that one word.
-// A single quote inside s becomes '\'' (close, escaped quote, reopen).
+// A single quote inside s becomes these four characters (close, escaped
+// quote, reopen):
+//
+//	'\''
 func quoteArg(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
@@ -185,7 +211,7 @@ func quoteArgv(argv []string) []string {
 	return out
 }
 
-func vmSSH(t Tunnel, host, name string, remote []string) (*exec.Cmd, error) {
+func vmSSH(t Tunnel, host, name string, remote []string, sopts ...SSHOption) (*exec.Cmd, error) {
 	if err := validVMKey(host, name); err != nil {
 		return nil, err
 	}
@@ -194,7 +220,7 @@ func vmSSH(t Tunnel, host, name string, remote []string) (*exec.Cmd, error) {
 	}
 	auth := ResolveVMAuth(host, name, DefaultAuth())
 	opts := []string{"-o", "ProxyCommand=" + t.ProxyCommand(host, name)}
-	cmd := buildSSH(host+"/"+name, true, auth, opts, remote)
+	cmd := buildSSH(host+"/"+name, true, auth, opts, remote, sopts...)
 	cmd.Env = t.Environ(cmd.Environ())
 	return cmd, nil
 }
@@ -206,13 +232,14 @@ func sshCommand(ip string, auth Auth, remote []string) *exec.Cmd {
 // sshCommandOpts is sshCommand with extra ssh options placed before the
 // destination. It is the direct path (metal and alien machines): user@addr,
 // no tunnel.
-func sshCommandOpts(ip string, auth Auth, opts, remote []string) *exec.Cmd {
-	return buildSSH(ip, false, auth, opts, remote)
+func sshCommandOpts(ip string, auth Auth, opts, remote []string, sopts ...SSHOption) *exec.Cmd {
+	return buildSSH(ip, false, auth, opts, remote, sopts...)
 }
 
 // buildSSH assembles the ssh (or sshpass -e ssh) command. With loginFlag the
 // user is passed as -l and dest stays bare; otherwise it is user@dest.
-func buildSSH(dest string, loginFlag bool, auth Auth, opts, remote []string) *exec.Cmd {
+func buildSSH(dest string, loginFlag bool, auth Auth, opts, remote []string, sopts ...SSHOption) *exec.Cmd {
+	o := applySSHOptions(sopts)
 	args := []string{
 		"-o", "StrictHostKeyChecking=no",
 		"-o", "UserKnownHostsFile=/dev/null",
@@ -228,6 +255,9 @@ func buildSSH(dest string, loginFlag bool, auth Auth, opts, remote []string) *ex
 		} else {
 			dest = auth.User + "@" + dest
 		}
+	}
+	if o.tty {
+		args = append(args, "-tt")
 	}
 	args = append(args, dest)
 	args = append(args, remote...)

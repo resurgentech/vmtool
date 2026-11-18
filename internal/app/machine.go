@@ -388,12 +388,13 @@ func (s *Service) RebootMachine(_ context.Context, name string) (*MachineInfo, e
 
 // MachineRemoteCmd builds a non-interactive ssh command that runs argv, exactly
 // (each argument quoted), on machine name. Stdio is left unset for the caller.
-func (s *Service) MachineRemoteCmd(name string, argv []string) (*exec.Cmd, error) {
+// vmtool.WithTTY asks for a live terminal (ssh -tt).
+func (s *Service) MachineRemoteCmd(name string, argv []string, opts ...vmtool.SSHOption) (*exec.Cmd, error) {
 	m, err := loadMachine("machine_exec", name)
 	if err != nil {
 		return nil, err
 	}
-	return vmtool.MachineRemoteCmd(*m, 0, argv), nil
+	return vmtool.MachineRemoteCmd(*m, 0, argv, opts...), nil
 }
 
 // MachineSSHCmd builds an interactive ssh command for CLI, TUI, and console.

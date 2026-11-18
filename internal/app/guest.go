@@ -87,11 +87,12 @@ func (s *Service) SSHCmd(ref VMRef, extraArgs ...string) (*exec.Cmd, error) {
 
 // RemoteCmd builds a non-interactive ssh command that runs argv, exactly (each
 // argument quoted), on VM ref through the tunnel. Stdio is left unset for the caller.
-func (s *Service) RemoteCmd(ref VMRef, argv []string) (*exec.Cmd, error) {
+// vmtool.WithTTY asks for a live terminal (ssh -tt).
+func (s *Service) RemoteCmd(ref VMRef, argv []string, opts ...vmtool.SSHOption) (*exec.Cmd, error) {
 	if err := validRef("exec", ref); err != nil {
 		return nil, err
 	}
-	c, err := vmtool.RemoteCmd(s.Tunnel, ref.Host, ref.Name, argv)
+	c, err := vmtool.RemoteCmd(s.Tunnel, ref.Host, ref.Name, argv, opts...)
 	if err != nil {
 		return nil, wrap("exec", err)
 	}

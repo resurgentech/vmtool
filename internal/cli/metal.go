@@ -165,6 +165,7 @@ func metalSSHCmd(e *env) *cobra.Command {
 }
 
 func metalExecCmd(e *env) *cobra.Command {
+	var tty bool
 	cmd := &cobra.Command{
 		Use:   "exec <name> [--] <arg>...",
 		Short: "Run a program on a machine over SSH",
@@ -173,12 +174,20 @@ exit code. The arguments are the exact argv (no shell parsing); for shell
 features, run a shell.
 
   vmtool metal exec nuc1 uname -a
-  vmtool metal exec nuc1 -- sh -c 'echo hi | wc -c'`,
+  vmtool metal exec nuc1 -- sh -c 'echo hi | wc -c'
+
+-t / --tty gives the command a live terminal, like ssh -t: your terminal goes
+into raw mode and its size and resizes are forwarded. Without a terminal on
+stdin (a pipe or a file) -t still forces a remote pty: the program sees a
+terminal, stdout and stderr are merged, input is echoed. Put -t before the
+machine; after it, -t belongs to the remote command.
+
+  vmtool metal exec -t nuc1 -- top`,
 		Args:          cobra.MinimumNArgs(2),
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := e.service("").MachineRemoteCmd(args[0], args[1:])
+			c, err := e.service("").MachineRemoteCmd(args[0], args[1:], ttyOpts(tty)...)
 			if err != nil {
 				return err
 			}
@@ -191,6 +200,7 @@ features, run a shell.
 			return err
 		},
 	}
+	cmd.Flags().BoolVarP(&tty, "tty", "t", false, "force a remote terminal (ssh -tt) and attach yours live")
 	cmd.Flags().SetInterspersed(false)
 	return cmd
 }
