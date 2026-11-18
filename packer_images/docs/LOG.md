@@ -290,3 +290,18 @@ rewrites.
 - Not done (user-run): rebuilding the four 26.04 images and the clone
   checks; the 24.04 images pick it up at their next rebuild.
 - Commits: the I1 commit on `clone-identity` (vmtool repo).
+
+## 2026-11-18 — I1 checked on rebuilt images (XO)
+
+- All four 26.04 images rebuilt with the /tmp change and installed on
+  jetfire: `ubuntu2604`, `ubuntu2604_btrfs`, `ubuntu2604_btrfs_gui`,
+  `ubuntu2604_gui`. The first loop was terminated during the third build
+  (cause not found); the two GUI builds were run again.
+- One clone of each, checked and deleted: `/tmp` is on the root
+  filesystem (ext4 or btrfs), `tmp.mount` is masked and inactive, the rule
+  `D /tmp 1777 root root 30d` is in place, mode 1777, and a file left in
+  `/tmp` is gone after a reboot.
+- Hypervisors hold their own copies: veritech03 and veritech04 received
+  the new `ubuntu2604.qcow2` on first create (2026-11-18); veritech01 and
+  veritech02 still hold the earlier builds until their next create from
+  each image.
