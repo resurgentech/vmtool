@@ -25,6 +25,17 @@ func (ipFake) Info(string) (*vmtool.VMInfo, error) {
 // its arguments, one per line, to a file, and returns those lines.
 func runExec(t *testing.T, args ...string) []string {
 	t.Helper()
+	got, err := runExecErr(t, args...)
+	if err != nil {
+		t.Fatalf("%v: %v", args, err)
+	}
+	return got
+}
+
+// runExecErr is runExec that returns the Execute error instead of failing. The
+// lines are nil when the stub ssh never ran (its args file does not exist).
+func runExecErr(t *testing.T, args ...string) ([]string, error) {
+	t.Helper()
 	t.Setenv(config.TokenEnv, gateToken)
 	dir := writeWorkdir(t, "name: jetfire\n"+goodConfig(), "")
 	t.Chdir(dir)
@@ -47,13 +58,16 @@ func runExec(t *testing.T, args ...string) []string {
 	e.tunnelExe = "/opt/vmtool/vmtool"
 	root.SetArgs(args)
 	if err := root.Execute(); err != nil {
-		t.Fatalf("%v: %v", args, err)
+		if _, serr := os.Stat(log); serr == nil {
+			t.Fatalf("%v: stub ssh ran although Execute failed: %v", args, err)
+		}
+		return nil, err
 	}
 	b, err := os.ReadFile(log)
 	if err != nil {
 		t.Fatalf("stub ssh did not run: %v", err)
 	}
-	return strings.Split(strings.TrimSuffix(string(b), "\n"), "\n")
+	return strings.Split(strings.TrimSuffix(string(b), "\n"), "\n"), nil
 }
 
 func tail(a []string, n int) []string { return a[len(a)-n:] }
@@ -75,7 +89,7 @@ func TestExecTTYFlag(t *testing.T) {
 			target = "jetfire/vm"
 		}
 		got := runExec(t, with("-t", target, "--", "echo", "a b")...)
-		if !slices.Contains(got, "-tt") || got[len(got)-2] != "'echo'" || got[len(got)-1] != "'a b'" {
+		if !slices.Contains(got, "-tt") || !slices.Equal(quotedCommand(got), []string{"'echo'", "'a b'"}) || slices.Contains(got, "'--'") {
 			t.Errorf("%s -t: ssh args %q, want -tt and quoted argv", tc.name, got)
 		}
 		for i, a := range got {
@@ -84,7 +98,7 @@ func TestExecTTYFlag(t *testing.T) {
 			}
 		}
 		got = runExec(t, with(target, "--", "echo", "a b")...)
-		if slices.Contains(got, "-tt") || got[len(got)-1] != "'a b'" {
+		if slices.Contains(got, "-tt") || !slices.Equal(quotedCommand(got), []string{"'echo'", "'a b'"}) || slices.Contains(got, "'--'") {
 			t.Errorf("%s: plain ssh args %q", tc.name, got)
 		}
 		got = runExec(t, with(target, "ls", "-t")...)

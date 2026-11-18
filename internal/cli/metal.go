@@ -171,7 +171,8 @@ func metalExecCmd(e *env) *cobra.Command {
 		Short: "Run a program on a machine over SSH",
 		Long: `Run a program and pass through stdin, stdout, stderr, and the remote
 exit code. The arguments are the exact argv (no shell parsing); for shell
-features, run a shell.
+features, run a shell. -- right after the target ends vmtool's flags and is
+not sent; everything after it is the command, exactly.
 
   vmtool metal exec nuc1 uname -a
   vmtool metal exec nuc1 -- sh -c 'echo hi | wc -c'
@@ -183,11 +184,11 @@ terminal, stdout and stderr are merged, input is echoed. Put -t before the
 machine; after it, -t belongs to the remote command.
 
   vmtool metal exec -t nuc1 -- top`,
-		Args:          cobra.MinimumNArgs(2),
+		Args:          execArgs,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := e.service("").MachineRemoteCmd(args[0], args[1:], ttyOpts(tty)...)
+			c, err := e.service("").MachineRemoteCmd(args[0], execCommand(args), ttyOpts(tty)...)
 			if err != nil {
 				return err
 			}

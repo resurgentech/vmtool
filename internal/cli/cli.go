@@ -629,7 +629,8 @@ and the remote exit code. Uses .machines credentials when present.
 
 The arguments are the exact argv: each reaches the VM as one argument, with
 no shell parsing (spaces, quotes, $ and | are plain characters). For shell
-features, run a shell.
+features, run a shell. -- right after the target ends vmtool's flags and is
+not sent; everything after it is the command, exactly.
 
   vmtool exec jetfire/web uname -a
   vmtool exec jetfire/web -- sh -c 'echo hi | wc -c'
@@ -641,7 +642,7 @@ the program sees a terminal, stdout and stderr are merged, input is echoed.
 Put -t before the VM; after it, -t belongs to the remote command.
 
   vmtool exec -t jetfire/web -- top`,
-		Args:          cobra.MinimumNArgs(2),
+		Args:          execArgs,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
@@ -653,7 +654,7 @@ Put -t before the VM; after it, -t belongs to the remote command.
 				return fmt.Errorf("VM %q has no IP address", ref.String())
 			}
 
-			c, err := e.service("").RemoteCmd(ref, args[1:], ttyOpts(tty)...)
+			c, err := e.service("").RemoteCmd(ref, execCommand(args), ttyOpts(tty)...)
 			if err != nil {
 				return err
 			}

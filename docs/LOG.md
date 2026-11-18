@@ -480,3 +480,17 @@ are appended, never edited in; a hook refuses rewrites.
 - README: a console paragraph linking there. The two console operations'
   descriptions cross-link; the machine one no longer lists a 409.
 - Commits: the C24 commit on `clone-identity`.
+
+## 2026-11-18 — C26 `exec host/vm -- cmd`: the `--` after the target is the separator
+
+- `vmtool exec` and `vmtool metal exec` drop one `--` that sits directly
+  after the target; everything after it is the command, exactly. Any
+  other `--` is the command's. `exec -- T cmd` still works (pflag).
+- From C7 until C26 the documented form `exec … -- …` sent a literal `--`
+  to the guest as the first word of the command.
+- `exec T` and `exec T --` are the same usage error, "exec: no command
+  given after the target", raised before any lookup or ssh.
+- `internal/cli/exec_args.go` (`execCommand`, `execArgs`), used by both
+  commands; `Long` of both says it. README examples already matched.
+- Tests: `TestExecDash`, `TestExecNoCommand`, tightened `TestExecTTYFlag`.
+- Commits: the C26 commit on `clone-identity`.
