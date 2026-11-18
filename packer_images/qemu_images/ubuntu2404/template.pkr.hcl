@@ -56,6 +56,14 @@ build {
     destination = "/tmp/99-vmtool.cfg"
   }
 
+  # tmpfiles rule shared by every template: /tmp is emptied at every boot and
+  # aged at 30 days, as on 24.04. Installed by the network provisioner below.
+  # See files/00-vmtool-tmp.conf and CLAUDE.md "/tmp on disk".
+  provisioner "file" {
+    source      = "${path.root}/../../files/00-vmtool-tmp.conf"
+    destination = "/tmp/00-vmtool-tmp.conf"
+  }
+
   # The wildcard netplan is what makes the image portable: packer attaches the
   # NIC straight to pcie.0 (ens3), libvirt puts it behind a pcie-root-port
   # (enp1s0), so a config naming one interface is dead on the other host.
@@ -70,6 +78,7 @@ build {
       "sudo rm -f /etc/cloud/cloud.cfg.d/90-installer-network.cfg",
       "printf 'network: {config: disabled}\\n' | sudo tee /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg",
       "sudo install -m 0644 /tmp/99-vmtool.cfg /etc/cloud/cloud.cfg.d/99-vmtool.cfg",
+      "sudo install -m 0644 /tmp/00-vmtool-tmp.conf /etc/tmpfiles.d/00-vmtool-tmp.conf",
       "sudo install -m 0600 /tmp/99-wildcard.yaml /etc/netplan/99-wildcard.yaml",
     ]
   }
@@ -85,6 +94,11 @@ build {
       "sudo sed -i '/^GRUB_CMDLINE_LINUX_DEFAULT=/{s/\\bautoinstall\\b//g;s/\\bds=\\\\\\?\"[^\"]*\"//g;s/\\bds=nocloud[^ \"]*//g;s/  */ /g;s/=\" */=\"/;s/ *\"$/\"/}' /etc/default/grub",
       "sudo update-grub",
       "if ! sudo test -e /boot/efi/EFI/BOOT/BOOTX64.EFI; then sudo grub-install --target=x86_64-efi --efi-directory=/boot/efi --removable --no-nvram; fi",
+      # /tmp on disk: 26.04's systemd mounts it as a tmpfs (tmp.mount); masking
+      # shadows that unit with /dev/null (a harmless symlink on 24.04). No
+      # --now: stopping it would unmount /tmp under this very provisioner,
+      # whose script packer uploaded there. The clone's first boot has no tmpfs.
+      "sudo systemctl mask tmp.mount",
       "sudo apt-get clean",
       "sudo rm -f /root/.bash_history",
       "sudo sed -i '/^127[.]0[.]1[.]1[[:space:]]/d' /etc/hosts",

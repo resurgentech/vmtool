@@ -159,6 +159,38 @@ check:
             || fail "$1" "rolling iso_url (/current/) needs a file: checksum, not a pinned value"
     }
 
+    # I1: /tmp stays on disk (26.04's systemd would mount it as a tmpfs) and is
+    # emptied at every boot, as 24.04 does. The template masks tmp.mount in its
+    # last provisioner, before cloud-init clean, and without --now (the build
+    # VM's provisioner scripts live in /tmp). It installs the shared tmpfiles
+    # rule files/00-vmtool-tmp.conf, which must sort before the release's
+    # tmp.conf.
+    check_tmp_on_disk() {
+        local f="{{ images }}/$1/template.pkr.hcl" last pre
+        local install="sudo install -m 0644 /tmp/00-vmtool-tmp.conf /etc/tmpfiles.d/00-vmtool-tmp.conf"
+        local mask='"sudo systemctl mask tmp.mount",'
+        grep -q '\.\./\.\./files/00-vmtool-tmp\.conf' "$f" \
+            || fail "$1" "does not take the shared ../../files/00-vmtool-tmp.conf"
+        grep -qF "\"$install\"," "$f" \
+            || fail "$1" "does not install it to /etc/tmpfiles.d/00-vmtool-tmp.conf with mode 0644"
+        ! grep -q 'mask --now tmp\.mount' "$f" \
+            || fail "$1" "masks tmp.mount with --now (would unmount the build VM's /tmp under packer)"
+        last="$(last_provisioner "$f")"
+        if [[ "$last" == *"$mask"* ]]; then
+            pre="${last%%cloud-init clean*}"
+            [[ "$pre" == *"$mask"* ]] \
+                || fail "$1" "systemctl mask tmp.mount is not before cloud-init clean"
+        else
+            fail "$1" "last provisioner lacks \"sudo systemctl mask tmp.mount\" (/tmp would stay a tmpfs on 26.04)"
+        fi
+    }
+
+    if [[ -f "{{ root }}/files/00-vmtool-tmp.conf" ]]; then
+        grep -Eq '^D /tmp 1777 root root 30d$' "{{ root }}/files/00-vmtool-tmp.conf" \
+            || shape_failures+=("files/00-vmtool-tmp.conf lacks the line \"D /tmp 1777 root root 30d\"")
+    else
+        shape_failures+=("files/00-vmtool-tmp.conf is missing (the tmpfiles rule that empties /tmp at boot)")
+    fi
     [[ -f "{{ root }}/files/99-vmtool.cfg" ]] || shape_failures+=("files/99-vmtool.cfg is missing")
     if [[ -f "{{ root }}/files/99-wildcard.yaml" ]]; then
         grep -Eq '^[[:space:]]+dhcp-identifier:[[:space:]]*mac[[:space:]]*$' "{{ root }}/files/99-wildcard.yaml" \
@@ -167,7 +199,7 @@ check:
         shape_failures+=("files/99-wildcard.yaml is missing")
     fi
 
-    shape_checks=(check_efi_boot check_fallback_loader check_clean_for_cloud_init check_no_installer_hosts_line check_vmtool_cfg check_cloud_init_not_disabled check_netplan_shared check_rolling_url_checksum)
+    shape_checks=(check_efi_boot check_fallback_loader check_clean_for_cloud_init check_no_installer_hosts_line check_vmtool_cfg check_cloud_init_not_disabled check_netplan_shared check_rolling_url_checksum check_tmp_on_disk)
 
     for dir in "{{ images }}"/*/; do
         t="$(basename "$dir")"

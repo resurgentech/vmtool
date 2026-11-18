@@ -603,3 +603,15 @@ are appended, never edited in; a hook refuses rewrites.
 - The user-run checks on veritech02 (M1–M7) are not done; they are listed
   in the step's report.
 - Commits: the L6 commit on `clone-identity`.
+
+## 2026-11-18 — I1 Images keep /tmp on disk, emptied at boot, as on 24.04
+
+- All seven packer templates mask `tmp.mount` (no `--now`) in the last
+  provisioner and install the new shared `packer_images/files/00-vmtool-tmp.conf`
+  (`D /tmp 1777 root root 30d`) to `/etc/tmpfiles.d/`, so 26.04 images
+  keep /tmp on disk, emptied at every boot, as 24.04 does.
+- `just -f packer_images/justfile check` gains the shared-file check and
+  `check_tmp_on_disk`; red before, green after. `packer_images/CLAUDE.md`
+  has a "/tmp on disk" section; details in `packer_images/docs/LOG.md`.
+- Image rebuilds and clone checks are user-run and not done.
+- Commits: the I1 commit on `clone-identity`.

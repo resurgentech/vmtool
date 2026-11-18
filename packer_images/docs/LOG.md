@@ -263,3 +263,30 @@ rewrites.
 - Both test VMs deleted; the seven VMs of other sessions there were not
   touched. veritech04 still runs the old daemon; upgrading it is now a
   rollout item, not a check.
+
+## 2026-11-18 — I1 Images keep /tmp on disk, emptied at boot, as on 24.04
+
+- Why: 26.04's systemd mounts /tmp as a tmpfs (`tmp.mount`, `size=50%`,
+  `nr_inodes=1m`); runners on 26.04 VMs used up its inodes with the disk
+  half empty. User's rule: "2604 should match the 2404 rules".
+- New shared `files/00-vmtool-tmp.conf`: `D /tmp 1777 root root 30d`
+  (emptied at every boot, aged at 30 days). `00-` sorts it before the
+  release's `tmp.conf`, so its line wins. /var/tmp is untouched.
+- All seven templates: a `provisioner "file"` for it beside the
+  `99-vmtool.cfg` one; `sudo install -m 0644 ... /etc/tmpfiles.d/` right
+  after the `99-vmtool.cfg` install in the network provisioner; and
+  `"sudo systemctl mask tmp.mount",` in the last provisioner after the
+  BOOTX64.EFI guard, before `apt-get clean` (no `--now`: the build VM's
+  provisioner scripts live in /tmp). A no-op symlink on 24.04.
+- `just check`: a top-level check of the shared file and
+  `check_tmp_on_disk` per template (takes and installs the file; the
+  exact mask line in the last provisioner before `cloud-init clean`; no
+  `mask --now tmp.mount`). Red with one failure for the missing file and
+  three per template; green (`check: ok`) after. The ordering and
+  `--now` failures were also shown on a scratch copy.
+- `CLAUDE.md`: new section "/tmp on disk" (why, the rule, mask, the
+  `00-` file, the expected journal line, the one-line remedy for
+  existing VMs), the provisioner order, the tree and the check list.
+- Not done (user-run): rebuilding the four 26.04 images and the clone
+  checks; the 24.04 images pick it up at their next rebuild.
+- Commits: the I1 commit on `clone-identity` (vmtool repo).
