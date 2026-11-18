@@ -1,6 +1,11 @@
 package scripts_test
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -463,31 +468,198 @@ func yamlStrings(v any) []string {
 	return nil
 }
 
-// A regex back-reference reaches Jinja as '\\1' (Jinja unescapes string
-// literals, so a lone '\1' becomes chr(1) and Ansible's regex_search refuses
-// it). Pinned on the YAML-decoded value, so a double-quoted scalar that eats
-// one backslash is caught.
-func TestNvmeStripeBackrefsSurviveYAML(t *testing.T) {
-	b, err := os.ReadFile(nvmeStripePath)
+// ansibleYAMLStrings decodes every *.yml under ../ansible (all documents of
+// each) and returns its string scalars, as Jinja receives them, per file.
+func ansibleYAMLStrings(t *testing.T) map[string][]string {
+	t.Helper()
+	out := map[string][]string{}
+	err := filepath.WalkDir("../ansible", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(p, ".yml") {
+			return err
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		dec := yaml.NewDecoder(bytes.NewReader(b))
+		for {
+			var doc any
+			if err := dec.Decode(&doc); err == io.EOF {
+				break
+			} else if err != nil {
+				return fmt.Errorf("%s: %w", p, err)
+			}
+			out[p] = append(out[p], yamlStrings(doc)...)
+		}
+		return nil
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var doc any
-	if err := yaml.Unmarshal(b, &doc); err != nil {
-		t.Fatal(err)
+	if len(out) == 0 {
+		t.Fatal("no *.yml under ../ansible")
 	}
-	lone := regexp.MustCompile(`(^|[^\\])\\[0-9]`)
+	return out
+}
+
+// L8: the escaping class that broke the first real run. A YAML-decoded string
+// that calls a regex_ filter must not hold two consecutive backslashes (a
+// decoded '\\1' or '\\s' is what failed on ansible-core 2.21.5), and
+// nvme_stripe.yml uses no back-reference at all, because how one must be
+// escaped differs between Ansible versions.
+func TestNvmeStripeRegexShape(t *testing.T) {
+	all := ansibleYAMLStrings(t)
 	n := 0
-	for _, s := range yamlStrings(doc) {
-		if !strings.Contains(s, "regex_search(") {
-			continue
-		}
-		n++
-		if lone.MatchString(s) {
-			t.Errorf("Jinja sees a lone back-reference (becomes chr(1)): %s", s)
+	for p, strs := range all {
+		for _, s := range strs {
+			if !strings.Contains(s, "regex_") {
+				continue
+			}
+			n++
+			if strings.Contains(s, `\\`) {
+				t.Errorf("%s: a regex_ expression reaches Jinja with two consecutive backslashes: %s", p, s)
+			}
 		}
 	}
 	if n == 0 {
-		t.Fatal("no regex_search found; the test no longer looks at anything")
+		t.Fatal("no regex_ filter found under ansible/; the test no longer looks at anything")
+	}
+	backref := regexp.MustCompile(`\\[0-9]|\\g<`)
+	strs := all[nvmeStripePath]
+	if len(strs) == 0 {
+		t.Fatal("nvme_stripe.yml not decoded")
+	}
+	for _, s := range strs {
+		if backref.MatchString(s) {
+			t.Errorf("nvme_stripe.yml: a string holds a regex back-reference: %s", s)
+		}
+	}
+}
+
+// nvmeTaskNamed returns the task of nvme_stripe.yml with that exact name.
+func nvmeTaskNamed(t *testing.T, name string) botTask {
+	t.Helper()
+	for _, tk := range nvmeTasks(t) {
+		if tk.name == name {
+			return tk
+		}
+	}
+	t.Fatalf("nvme_stripe.yml has no task %q", name)
+	return botTask{}
+}
+
+func taskVar(t *testing.T, tk botTask, name string) string {
+	t.Helper()
+	vars, _ := tk.body["vars"].(map[string]any)
+	s, _ := vars[name].(string)
+	if s == "" {
+		t.Fatalf("task %q has no vars.%s", tk.name, name)
+	}
+	return s
+}
+
+// ansibleDebugVar evaluates vars[name] with `ansible localhost -c local -m
+// debug` (no host, no become, read-only) and returns the rendered value.
+func ansibleDebugVar(t *testing.T, name string, vars map[string]any) (any, bool) {
+	t.Helper()
+	b, err := json.Marshal(vars)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vf := filepath.Join(t.TempDir(), "v.json")
+	if err := os.WriteFile(vf, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("ansible", "localhost", "-i", "localhost,", "-c", "local",
+		"-m", "ansible.builtin.debug", "-a", "var="+name, "-e", "@"+vf)
+	cmd.Env = ansibleEnv(t)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		t.Errorf("evaluate %s: %v\n%s%s", name, err, out, stderr.String())
+		return nil, false
+	}
+	i := bytes.Index(out, []byte("=> "))
+	var res map[string]any
+	if i < 0 || json.Unmarshal(out[i+3:], &res) != nil {
+		t.Errorf("evaluate %s: unexpected output\n%s%s", name, out, stderr.String())
+		return nil, false
+	}
+	v, ok := res[name]
+	if !ok {
+		t.Errorf("evaluate %s: not in output\n%s", name, out)
+		return nil, false
+	}
+	return v, true
+}
+
+func wantEval(t *testing.T, label, name string, vars map[string]any, want any) {
+	t.Helper()
+	got, ok := ansibleDebugVar(t, name, vars)
+	if ok && got != want {
+		t.Errorf("%s: %s = %#v, want %#v", label, name, got, want)
+	}
+}
+
+const (
+	nvmeConfTask = "Record the array in /etc/mdadm/mdadm.conf"
+	nvmePoolTask = "Refuse a {{ vmtool_nvme_pool }} pool that is something else"
+	sampleUUID   = "0a1b2c3d:4e5f6a7b:8c9d0e1f:2a3b4c5d"
+)
+
+func samplePoolXML(typ, source string) string {
+	return "<pool type='" + typ + "'>\n  <name>nvme</name>\n  <uuid>00000000-0000-0000-0000-000000000000</uuid>\n" +
+		"  <capacity unit='bytes'>0</capacity>\n  <source>\n" + source + "  </source>\n" +
+		"  <target>\n    <path>/dev/vg-test</path>\n  </target>\n</pool>\n"
+}
+
+// L8: the very expressions of nvme_stripe.yml, evaluated by the installed
+// Ansible on fixed sample input. Opt-in (the gate never starts a real
+// ansible); localhost over the local connection, nothing is changed.
+func TestNvmeStripeExpressionsEvaluate(t *testing.T) {
+	if os.Getenv("VMTOOL_TEST_ANSIBLE_SYNTAX") != "1" {
+		t.Skip("set VMTOOL_TEST_ANSIBLE_SYNTAX=1 to evaluate the expressions with ansible")
+	}
+	if _, err := exec.LookPath("ansible"); err != nil {
+		t.Skip("ansible not on PATH")
+	}
+
+	conf := nvmeTaskNamed(t, nvmeConfTask)
+	uuid := taskVar(t, conf, "_uuid")
+	li, _ := conf.body["ansible.builtin.lineinfile"].(map[string]any)
+	re, _ := li["regexp"].(string)
+	if re == "" {
+		t.Fatal("mdadm.conf task has no regexp")
+	}
+	line := "ARRAY /dev/md/vg-test metadata=1.2 name=PLACEHOLDER-HOST:vg-test UUID=" + sampleUUID
+	withUUID := map[string]any{"_uuid": uuid, "_regexp": re, "vmtool_nvme_detail": map[string]any{"stdout": line}}
+	wantEval(t, "ARRAY line", "_uuid", withUUID, sampleUUID)
+	wantEval(t, "ARRAY line", "_regexp", withUUID, `^ARRAY\s.*UUID=`+sampleUUID)
+	noUUID := map[string]any{"_uuid": uuid, "vmtool_nvme_detail": map[string]any{"stdout": "ARRAY /dev/md/vg-test metadata=1.2 name=PLACEHOLDER-HOST:vg-test"}}
+	wantEval(t, "no UUID", "_uuid", noUUID, "")
+
+	pool := nvmeTaskNamed(t, nvmePoolTask)
+	typ, src := taskVar(t, pool, "_type"), taskVar(t, pool, "_src")
+	whens := whenList(pool.body["when"])
+	if len(whens) != 3 || norm(whens[2]) != "_type != 'logical' or _src != vmtool_nvme_vg" {
+		t.Fatalf("pool refusal's third when item = %v", whens)
+	}
+	refuse := "{{ " + whens[2] + " }}"
+	for _, c := range []struct {
+		label, xml, typ, src string
+		refuse               bool
+	}{
+		{"logical over vg-test", samplePoolXML("logical", "    <device path='/dev/md/vg-test'/>\n    <name>vg-test</name>\n    <format type='lvm2'/>\n"), "logical", "vg-test", false},
+		{"dir pool", samplePoolXML("dir", ""), "dir", "", true},
+		{"logical over other-vg", samplePoolXML("logical", "    <device path='/dev/md/other-vg'/>\n    <name>other-vg</name>\n    <format type='lvm2'/>\n"), "logical", "other-vg", true},
+	} {
+		vars := map[string]any{
+			"_type": typ, "_src": src, "_refuse": refuse, "vmtool_nvme_vg": "vg-test",
+			"vmtool_nvme_pool_xml": map[string]any{"stdout": c.xml},
+		}
+		wantEval(t, c.label, "_type", vars, c.typ)
+		wantEval(t, c.label, "_src", vars, c.src)
+		wantEval(t, c.label, "_refuse", vars, c.refuse)
 	}
 }

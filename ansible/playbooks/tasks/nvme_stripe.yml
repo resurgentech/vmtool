@@ -334,9 +334,11 @@
     regexp: '^ARRAY\s.*UUID={{ _uuid }}'
     line: "{{ vmtool_nvme_detail.stdout_lines | select('match', '^ARRAY') | first }}"
   vars:
-    # Block scalars, not double quotes: YAML must not unescape the '\\1' Jinja sees.
+    # No back-reference: how one must be escaped differs between Ansible
+    # versions, so the match is cut down with regex_replace instead. Block
+    # scalar, so YAML hands Jinja the text as written.
     _uuid: >-
-      {{ vmtool_nvme_detail.stdout | regex_search('UUID=([0-9a-f:]+)', '\\1') | default([''], true) | first }}
+      {{ vmtool_nvme_detail.stdout | regex_search('UUID=[0-9a-f:]+') | default('', true) | regex_replace('^UUID=', '') }}
   register: vmtool_nvme_conf
   when:
     - vmtool_nvme_drives | length > 0
@@ -376,11 +378,13 @@
       'logical' over {{ vmtool_nvme_vg }}. Nothing was changed; remove or repoint
       that pool yourself.
   vars:
-    # Block scalars, not double quotes: YAML must not unescape the '\\1' Jinja sees.
+    # No back-references: how one must be escaped differs between Ansible
+    # versions, so each match is cut down with regex_replace instead. Block
+    # scalars, so YAML hands Jinja the text as written.
     _type: >-
-      {{ vmtool_nvme_pool_xml.stdout | regex_search("<pool\\s+type='([^']*)'", '\\1') | default([''], true) | first }}
+      {{ vmtool_nvme_pool_xml.stdout | regex_search("<pool\s+type='[^']*'") | default('', true) | regex_replace("^<pool\s+type='", '') | regex_replace("'$", '') }}
     _src: >-
-      {{ vmtool_nvme_pool_xml.stdout | regex_search('<source>[\\s\\S]*?<name>([^<]*)</name>', '\\1') | default([''], true) | first | trim }}
+      {{ vmtool_nvme_pool_xml.stdout | regex_search('<source>[\s\S]*?<name>[^<]*</name>') | default('', true) | regex_replace('^[\s\S]*<name>', '') | regex_replace('</name>$', '') | trim }}
   when:
     - vmtool_nvme_drives | length > 0
     - vmtool_nvme_pool_info.rc == 0

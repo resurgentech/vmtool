@@ -632,3 +632,19 @@ are appended, never edited in; a hook refuses rewrites.
 - Test `TestDiskHelpNamesPoolKinds` (`internal/cli/pool_test.go`): red
   on today's text (11 failures), green after; `just check` green.
 - Commits: the L7 commit on `clone-identity`.
+
+## 2026-11-18 — L8 NVMe stripe: no regex back-references
+
+- The first real run on ansible-core 2.21.5 failed in `_uuid`, `_type`
+  and `_src` (`'NoneType' object has no attribute 'group'`): the decoded
+  `'\\1'` and `\\s` were wrong there (L5's escaping decision). The three
+  vars in `nvme_stripe.yml` now match without a group and cut the match
+  down with `regex_replace`; no task, `when` or module argument changed.
+- `TestNvmeStripeRegexShape` (in the gate, no Ansible) replaces
+  `TestNvmeStripeBackrefsSurviveYAML`: no decoded `regex_` string under
+  `ansible/` holds `\\`, and `nvme_stripe.yml` holds no back-reference.
+- `TestNvmeStripeExpressionsEvaluate` (opt-in,
+  `VMTOOL_TEST_ANSIBLE_SYNTAX=1`) evaluates the very strings with
+  `ansible localhost -c local -m debug` on sample mdadm and pool XML.
+- Both red on the old file, green after; `just check` green.
+- Commits: the L8 commit on `clone-identity`.
