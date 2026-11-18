@@ -114,7 +114,7 @@ func (h *handlers) ExecMachine(ctx context.Context, req api.ExecMachineRequestOb
 	if req.Body == nil || len(req.Body.Command) == 0 {
 		return api.ExecMachine400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: "command is required"}}, nil
 	}
-	res, err := h.svc.ExecMachine(ctx, req.Name, req.Body.Command)
+	res, err := h.svc.ExecMachine(ctx, req.Name, req.Body.Command, stdinOf(req.Body.Stdin))
 	if err != nil {
 		switch kindOf(err) {
 		case app.KindInvalid:

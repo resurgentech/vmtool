@@ -403,3 +403,16 @@ are appended, never edited in; a hook refuses rewrites.
 - `info.version` 2.0.0, so `/version` reports API 2.0.0; C13's
   createVM change ships under it.
 - Commits: the C7 commit on `clone-identity`.
+
+## 2026-11-17 — C20 REST `exec` takes an optional `stdin` (API 2.1.0)
+
+- `ExecRequest.stdin` (optional string): written to the command's
+  standard input, then closed; absent or empty is an empty stdin as
+  before. Never logged, never in an error or argv; bounded by the 1 MiB
+  body limit. Both exec operations carry a `with_stdin` example.
+- app: `ExecVM(ctx, m, ref, argv, stdin)` and `ExecMachine(ctx, name,
+  argv, stdin)`; `runRemote` no longer forces `Stdin = nil` (probe and
+  reboot still get /dev/null). Password machines carry it through
+  `sshpass -e ssh`.
+- `info.version` 2.1.0; tranches 4 and 5 ship under it.
+- Commits: the C20 commit on `clone-identity`.

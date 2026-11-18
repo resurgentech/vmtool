@@ -164,7 +164,7 @@ func TestMachinePlaybookGuards(t *testing.T) {
 		func() error { _, err := s.GetMachine(context.Background(), "nuc1"); return err },
 		func() error { _, err := s.RebootMachine(context.Background(), "nuc1"); return err },
 		func() error {
-			_, err := s.ExecMachine(context.Background(), "nuc1", []string{"true"})
+			_, err := s.ExecMachine(context.Background(), "nuc1", []string{"true"}, "")
 			return err
 		},
 		func() error { _, err := s.MachineSSHCmd("nuc1"); return err },

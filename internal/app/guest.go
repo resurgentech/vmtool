@@ -6,13 +6,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/jaredeh/vmtool/pkg/vmtool"
 )
 
 // ExecVM runs argv, exactly, on VM ref over SSH and returns the result. Every
-// argument reaches the guest as one argument; a shell only when argv is `sh -c`.
-func (s *Service) ExecVM(_ context.Context, m Manager, ref VMRef, argv []string) (*ExecResult, error) {
+// argument reaches the guest as one argument; a shell only when argv is `sh -c`. stdin is written to the command's
+// standard input, then closed; it is never logged or put in an error.
+func (s *Service) ExecVM(_ context.Context, m Manager, ref VMRef, argv []string, stdin string) (*ExecResult, error) {
 	if len(argv) == 0 {
 		return nil, invalid("exec", fmt.Errorf("command is required"))
 	}
@@ -30,6 +32,7 @@ func (s *Service) ExecVM(_ context.Context, m Manager, ref VMRef, argv []string)
 	if err != nil {
 		return nil, wrap("exec", err)
 	}
+	c.Stdin = strings.NewReader(stdin)
 	return runRemote("exec", c, 0)
 }
 

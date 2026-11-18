@@ -350,12 +350,20 @@ func (h *handlers) SetAutostart(ctx context.Context, req api.SetAutostartRequest
 	return api.SetAutostart200JSONResponse(toAPI(v.(*vmtool.VMInfo))), nil
 }
 
+// stdinOf is an exec request's stdin text, "" when absent.
+func stdinOf(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
 func (h *handlers) ExecVM(ctx context.Context, req api.ExecVMRequestObject) (api.ExecVMResponseObject, error) {
 	if req.Body == nil || len(req.Body.Command) == 0 {
 		return api.ExecVM400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: "command is required"}}, nil
 	}
 	v, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
-		return h.guestSvc(ctx).ExecVM(ctx, m, app.VMRef{Host: req.Host, Name: req.Name}, req.Body.Command)
+		return h.guestSvc(ctx).ExecVM(ctx, m, app.VMRef{Host: req.Host, Name: req.Name}, req.Body.Command, stdinOf(req.Body.Stdin))
 	})
 	if err != nil {
 		switch kindOf(err) {

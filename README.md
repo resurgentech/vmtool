@@ -169,6 +169,10 @@ just install        # build, cert, config.yml, systemd unit (vmtool server over 
 ./vmtool reboot jetfire/web                             # ACPI reboot, stays defined
 ./vmtool exec jetfire/web uname -a                      # exact argv, no shell (was `cmd`; API 2.0.0)
 ./vmtool exec jetfire/web -- sh -c 'echo hi | wc -c'    # shell features: run a shell; prints 3
+./vmtool exec jetfire/web -- sh -c 'cat > /p/.env' < .env   # the CLI passes your stdin through
+# REST: POST /v1/hosts/{h}/vms/{n}/exec and /v1/metal/{n}/exec take an optional
+# "stdin" string (API 2.1.0): text written to the command's stdin, then closed.
+# Never logged, never in an error or on a command line; bounded by the 1 MiB body limit.
 ./vmtool list                                           # every host (5 s each; a dead host is an ERROR row)
 ./vmtool list jetfire                                   # one host
 ./vmtool hosts                                          # reachability, API version, cert days left

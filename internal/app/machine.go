@@ -97,7 +97,6 @@ func (r probeResult) ubuntuCompatible() bool {
 // left to the caller: it is ssh's own failure, or a remote command's choice.
 func runRemote(op string, c *exec.Cmd, timeout time.Duration) (*ExecResult, error) {
 	var stdout, stderr bytes.Buffer
-	c.Stdin = nil
 	c.Stdout = &stdout
 	c.Stderr = &stderr
 	if err := c.Start(); err != nil {
@@ -345,8 +344,10 @@ func (s *Service) RunMachinePlaybook(_ context.Context, name, playbook string, e
 	return &res, err
 }
 
-// ExecMachine runs argv, exactly, on machine name over SSH.
-func (s *Service) ExecMachine(_ context.Context, name string, argv []string) (*ExecResult, error) {
+// ExecMachine runs argv, exactly, on machine name over SSH. stdin is
+// written to the command's standard input, then closed; it is never logged or
+// put in an error.
+func (s *Service) ExecMachine(_ context.Context, name string, argv []string, stdin string) (*ExecResult, error) {
 	const op = "machine_exec"
 	if len(argv) == 0 {
 		return nil, invalid(op, fmt.Errorf("command is required"))
@@ -355,7 +356,9 @@ func (s *Service) ExecMachine(_ context.Context, name string, argv []string) (*E
 	if err != nil {
 		return nil, err
 	}
-	return runRemote(op, vmtool.MachineRemoteCmd(*m, 0, argv), 0)
+	c := vmtool.MachineRemoteCmd(*m, 0, argv)
+	c.Stdin = strings.NewReader(stdin)
+	return runRemote(op, c, 0)
 }
 
 // RebootMachine schedules a reboot one second out so ssh returns cleanly

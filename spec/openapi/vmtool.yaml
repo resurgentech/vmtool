@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: vmtool API
-  version: 2.0.0
+  version: 2.1.0
   description: >
     HTTP surface of `vmtool server`. Spec-first: models, stdlib ServerInterface,
     embedded spec, and a test client are generated from this file. Metal and
@@ -306,8 +306,16 @@ paths:
         content:
           application/json:
             schema: { $ref: '#/components/schemas/ExecRequest' }
-            example:
-              command: [sh, -c, echo hi | wc -c]
+            examples:
+              plain:
+                summary: No standard input
+                value:
+                  command: [sh, -c, echo hi | wc -c]
+              with_stdin:
+                summary: Text on standard input
+                value:
+                  command: [sh, -c, "umask 077; cat > /p/.env.new && mv /p/.env.new /p/.env"]
+                  stdin: "KEY=PLACEHOLDER\n"
       responses:
         '200':
           description: remote result
@@ -1026,8 +1034,16 @@ paths:
         content:
           application/json:
             schema: { $ref: '#/components/schemas/ExecRequest' }
-            example:
-              command: [sh, -c, echo hi | wc -c]
+            examples:
+              plain:
+                summary: No standard input
+                value:
+                  command: [sh, -c, echo hi | wc -c]
+              with_stdin:
+                summary: Text on standard input
+                value:
+                  command: [sh, -c, "umask 077; cat > /p/.env.new && mv /p/.env.new /p/.env"]
+                  stdin: "KEY=PLACEHOLDER\n"
       responses:
         '200':
           description: remote result
@@ -1306,6 +1322,15 @@ components:
             shell unless the program is one (`sh -c`).
           items: { type: string }
           minItems: 1
+        stdin:
+          type: string
+          description: >
+            Text written to the command's standard input, which is then
+            closed. Absent or empty means an empty standard input (as before).
+            vmtool never logs it, never puts it in an error and never puts it
+            on a command line. Text only, bounded by the server's 1 MiB
+            request limit. The command's own output is returned as is: a
+            command that prints its input returns it.
     ExecResult:
       type: object
       required: [exit_code, stdout, stderr]
