@@ -111,3 +111,108 @@ func TestHypervisorPoolName(t *testing.T) {
 		t.Fatalf("HypervisorPool = %q", vmtool.HypervisorPool)
 	}
 }
+
+func fakeResolver(f *poolFake, role string) *Resolver {
+	return NewWith("box", role, []string{"far", "plain"}, func() (app.Manager, func(), error) { return f, func() {}, nil })
+}
+
+func resolveOne(t *testing.T, r *Resolver, host string) app.Manager {
+	t.Helper()
+	m, done, err := r.WithToken("x").Resolve(host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(done)
+	return m
+}
+
+// default_pool applies to the four VM-disk operations only, an empty pool
+// only, and wins over the hypervisor's vmtool; RefreshPool, DeleteImage and
+// MigrateDisk keep today's behaviour.
+func TestDefaultPoolLocal(t *testing.T) {
+	for _, tc := range []struct {
+		role, pool string
+		want       []string
+	}{
+		{config.RoleWorkstation, "", []string{"CloneImage nvme", "CreateVolume nvme", "AddDisk nvme", "DeleteImage ", "MigrateDisk ", "Define nvme ", "RefreshPool "}},
+		{config.RoleWorkstation, "tp", []string{"CloneImage tp", "CreateVolume tp", "AddDisk tp", "DeleteImage tp", "MigrateDisk tp", "Define tp ", "RefreshPool tp"}},
+		{config.RoleHypervisor, "", []string{"CloneImage nvme", "CreateVolume nvme", "AddDisk nvme", "DeleteImage vmtool", "MigrateDisk vmtool", "Define nvme ", "RefreshPool vmtool"}},
+		{config.RoleHypervisor, "tp", []string{"CloneImage tp", "CreateVolume tp", "AddDisk tp", "DeleteImage tp", "MigrateDisk tp", "Define tp ", "RefreshPool tp"}},
+	} {
+		t.Run(tc.role+"/"+tc.pool, func(t *testing.T) {
+			f := &poolFake{}
+			r := fakeResolver(f, tc.role).WithDefaultPools("nvme", nil)
+			exercise(t, resolveOne(t, r, "box"), tc.pool)
+			if got, want := strings.Join(f.calls, "|"), strings.Join(tc.want, "|"); got != want {
+				t.Errorf("fake saw\n%q\nwant\n%q", f.calls, tc.want)
+			}
+		})
+	}
+}
+
+// Define leaves ExtraDiskPool alone: empty still means "same as Pool", which
+// is now the default pool.
+func TestDefaultPoolExtraDiskPool(t *testing.T) {
+	f := &poolFake{}
+	m := resolveOne(t, fakeResolver(f, config.RoleWorkstation).WithDefaultPools("nvme", nil), "box")
+	if err := m.Define(vmtool.VMConfig{Name: "w", ExtraDiskPool: "slow"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.calls[0]; got != "Define nvme slow" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+// A remote host's default_pool wraps only that host's Manager.
+func TestDefaultPoolRemote(t *testing.T) {
+	far, plain := &poolFake{}, &poolFake{}
+	r := fakeResolver(&poolFake{}, config.RoleWorkstation).
+		WithDefaultPools("", map[string]string{"far": "nvme"}).
+		WithRemote(func(host, token string) (app.Manager, func(), error) {
+			if host == "far" {
+				return far, func() {}, nil
+			}
+			return plain, func() {}, nil
+		})
+	exercise(t, resolveOne(t, r, "far"), "")
+	exercise(t, resolveOne(t, r, "plain"), "")
+	if got, want := strings.Join(far.calls, "|"), "CloneImage nvme|CreateVolume nvme|AddDisk nvme|DeleteImage |MigrateDisk |Define nvme |RefreshPool "; got != want {
+		t.Errorf("far saw %q", far.calls)
+	}
+	if got, want := strings.Join(plain.calls, "|"), "CloneImage |CreateVolume |AddDisk |DeleteImage |MigrateDisk |Define  |RefreshPool "; got != want {
+		t.Errorf("plain saw %q", plain.calls)
+	}
+}
+
+// New copies default_pool from the config: top level for the local host,
+// hosts.<name> for a remote.
+func TestNewAppliesDefaultPools(t *testing.T) {
+	cfg := &config.Config{Name: "box", Role: config.RoleWorkstation, DefaultPool: "nvme",
+		Hosts: map[string]config.Host{"far": {Address: "a", DefaultPool: "fast"}}}
+	r := New(cfg)
+	if r.defaultPool != "nvme" || r.hostPools["far"] != "fast" {
+		t.Fatalf("resolver pools: %q %v", r.defaultPool, r.hostPools)
+	}
+}
+
+// refreshFake is a workstation libvirt Manager that has RefreshPools (C8).
+type refreshFake struct {
+	poolFake
+	refreshed int
+}
+
+func (f *refreshFake) RefreshPools() error { f.refreshed++; return nil }
+
+// The default_pool wrapper keeps the workstation's pool refresh (C8) that
+// app.FindLocalImage looks for, so an image miss still rescans the pools.
+func TestDefaultPoolKeepsRefreshPools(t *testing.T) {
+	f := &refreshFake{}
+	var m app.Manager = defaultPools{f, "nvme"}
+	r, ok := m.(interface{ RefreshPools() error })
+	if !ok {
+		t.Fatal("defaultPools hides RefreshPools")
+	}
+	if err := r.RefreshPools(); err != nil || f.refreshed != 1 {
+		t.Fatalf("RefreshPools: err %v, refreshed %d", err, f.refreshed)
+	}
+}

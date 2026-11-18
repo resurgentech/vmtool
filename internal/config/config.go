@@ -54,6 +54,8 @@ var (
 	ErrTokenMismatch = errors.New("token does not match token_sha256 in config.yml")
 )
 
+var poolRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
 var hashRE = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // hostnameFn is os.Hostname; tests replace it.
@@ -68,6 +70,10 @@ type Config struct {
 	TLSCert     string          `yaml:"tls_cert"`
 	TLSKey      string          `yaml:"tls_key"`
 	Hosts       map[string]Host `yaml:"hosts"`
+	// DefaultPool is the pool new VM disks of the local host go to when a
+	// request names none (a plain pool name). Optional; a remote host's is
+	// hosts.<name>.default_pool. Images stay in the cache pool.
+	DefaultPool string `yaml:"default_pool"`
 	// IPWaitSeconds and SSHWaitSeconds bound create's wait for an address and
 	// for SSH. 0 or absent is DefaultWait; otherwise 1..MaxWaitSeconds.
 	// Create runs on the workstation, so only its config.yml governs; a
@@ -83,6 +89,9 @@ type Host struct {
 	Address string `yaml:"address"`
 	SSHUser string `yaml:"ssh_user"`
 	Port    int    `yaml:"port"`
+	// DefaultPool is where new VM disks on this host go when a request names
+	// no pool (a plain pool name). Optional.
+	DefaultPool string `yaml:"default_pool"`
 }
 
 // IPWait is how long create waits for an address.
@@ -204,6 +213,9 @@ func (c *Config) finish() error {
 	if c.TokenSHA256 != "" && !hashRE.MatchString(c.TokenSHA256) {
 		return errors.New("token_sha256 must be 64 lowercase hex characters")
 	}
+	if c.DefaultPool != "" && !poolRE.MatchString(c.DefaultPool) {
+		return errors.New("default_pool must be a plain pool name (letters, digits, '.', '_', '-'; not starting with a punctuation mark)")
+	}
 	if err := dotFree(c.Name); err != nil {
 		return err
 	}
@@ -222,6 +234,9 @@ func (c *Config) finish() error {
 		}
 		if name == short || name == c.Name {
 			return fmt.Errorf("host %q has the same name as the local host", name)
+		}
+		if h.DefaultPool != "" && !poolRE.MatchString(h.DefaultPool) {
+			return fmt.Errorf("hosts.%s.default_pool must be a plain pool name (letters, digits, '.', '_', '-'; not starting with a punctuation mark)", name)
 		}
 		if h.Address == "" {
 			return fmt.Errorf("host %q: address is required", name)

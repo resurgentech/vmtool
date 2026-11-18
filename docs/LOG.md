@@ -550,3 +550,18 @@ are appended, never edited in; a hook refuses rewrites.
   exactly `<logical pool path>/<name>` and exists; dir pools keep the
   resolved comparison.
 - Commits: the L3 commit on `clone-identity`.
+
+## 2026-11-18 — L4 A host's default pool for new VM disks
+
+- Workstation `config.yml`: optional `default_pool` (the local host) and
+  `hosts.<name>.default_pool` (a remote host), a plain pool name; a bad
+  value is a load error naming the key.
+- `internal/hosts`: a `defaultPools` wrapper sends an empty pool to that
+  pool for the clone target, `CreateVolume`, `AddDisk` and Define's
+  `Pool` only; a named pool wins; images, `ListPools`, migrate and resize
+  are unchanged. On a hypervisor it sits outside `hypervisorPools`, so
+  `vmtool` stays the image-cache pool. For a remote host the workstation
+  fills the pool before the request. The wrapper keeps the workstation's
+  pool refresh (C8) and the image cache's `RefreshPool` visible.
+- README: the key, its scope and where it lives.
+- Commits: the L4 commit on `clone-identity`.

@@ -182,6 +182,33 @@ just install        # build, cert, config.yml, systemd unit (vmtool server over 
 ./vmtool server                                         # HTTPS REST on 127.0.0.1:9473; GET / is Swagger UI
 ```
 
+### A host's default pool for new VM disks (`default_pool`)
+
+When a request names no pool (the CLI and the TUI's "(host default)" send
+none), a new VM disk goes to the host's default pool: `default` on a
+workstation, `vmtool` on a hypervisor. To send them elsewhere, for example a
+logical pool over an NVMe stripe, set `default_pool` in the **workstation's**
+`config.yml` (`just deploy` rewrites a hypervisor's `config.yml`, so a key
+kept there would be lost):
+
+```yaml
+default_pool: nvme              # this host's own new VM disks
+hosts:
+  veritech02:
+    address: veritech02.example
+    ssh_user: ubuntu
+    default_pool: nvme          # new VM disks created on veritech02
+```
+
+Scope: where new VM disks go; images stay in the cache pool. It applies to an
+empty pool only, and only to the clone target, the extra disk and `add-disk`
+(`CreateVolume`, `AddDisk`) and the domain's `Pool`; a named pool always wins.
+Image upload, listing and delete, `ListPools`, `migrate-disk` and resize are
+unchanged. On a hypervisor `default_pool` wins over `vmtool` for disks while
+`vmtool` stays the image-cache pool. The value is a plain pool name
+(`^[A-Za-z0-9][A-Za-z0-9._-]*$`); anything else is a config load error naming
+the key.
+
 ### Waits at create (`--no-wait`)
 
 `create` returns when the VM is usable: it waits for the guest's address, then

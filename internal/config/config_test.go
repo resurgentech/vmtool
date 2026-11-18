@@ -298,3 +298,35 @@ func TestLoadRefusesDottedHostNames(t *testing.T) {
 		}
 	}
 }
+
+func TestDefaultPool(t *testing.T) {
+	setHost(t, "jetfire")
+	dir := t.TempDir()
+	writeFile(t, dir, "config.yml", "default_pool: nvme\nhosts:\n  h1: { address: a, ssh_user: u, default_pool: fast.1 }\n  h2: { address: b, ssh_user: u }\n")
+	c, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.DefaultPool != "nvme" || c.Hosts["h1"].DefaultPool != "fast.1" || c.Hosts["h2"].DefaultPool != "" {
+		t.Fatalf("default pools: %q %+v", c.DefaultPool, c.Hosts)
+	}
+}
+
+func TestDefaultPoolValidation(t *testing.T) {
+	setHost(t, "jetfire")
+	for name, tc := range map[string]struct{ body, key string }{
+		"top slash":   {"default_pool: a/b\n", "default_pool"},
+		"top leading": {"default_pool: -x\n", "default_pool"},
+		"top space":   {"default_pool: 'a b'\n", "default_pool"},
+		"host slash":  {"hosts:\n  h1: { address: a, ssh_user: u, default_pool: ../x }\n", "hosts.h1.default_pool"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeFile(t, dir, "config.yml", tc.body)
+			_, err := Load(dir)
+			if err == nil || !strings.Contains(err.Error(), tc.key) {
+				t.Fatalf("want error naming %s, got %v", tc.key, err)
+			}
+		})
+	}
+}

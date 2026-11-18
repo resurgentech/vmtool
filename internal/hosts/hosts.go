@@ -62,6 +62,10 @@ type Resolver struct {
 	remote     RemoteConnector
 	token      string
 	localCert  string // the local daemon certificate file, for Status
+	// defaultPool and hostPools are config.yml's default_pool for the local
+	// host and for each remote host: where an empty pool sends a new VM disk.
+	defaultPool string
+	hostPools   map[string]string
 }
 
 // New builds the resolver for cfg: the local libvirt and, for every hosts:
@@ -88,6 +92,13 @@ func New(cfg *config.Config, opts ...remote.Option) *Resolver {
 	r := NewWith(name, role, others, libvirtLocalNamed(name))
 	if cfg != nil && cfg.TLSCert != "" {
 		r = r.WithLocalCert(cfg.Path(cfg.TLSCert))
+	}
+	if cfg != nil {
+		pools := map[string]string{}
+		for n, h := range cfg.Hosts {
+			pools[n] = h.DefaultPool
+		}
+		r = r.WithDefaultPools(cfg.DefaultPool, pools)
 	}
 	return r.WithRemote(func(host, token string) (app.Manager, func(), error) {
 		m, err := remote.New(host, addrs[host], token, opts...)
@@ -146,6 +157,16 @@ func libvirtLocalNamed(name string) Connector {
 	}
 }
 
+// WithDefaultPools returns a copy of r that sends an empty pool of a new VM
+// disk to local on the local host and to remote[host] on a remote one (an
+// empty or missing entry changes nothing). See defaultPools.
+func (r *Resolver) WithDefaultPools(local string, remote map[string]string) *Resolver {
+	c := *r
+	c.defaultPool = local
+	c.hostPools = remote
+	return &c
+}
+
 // Local is the name this server calls itself.
 func (r *Resolver) Local() string { return r.name }
 
@@ -202,12 +223,19 @@ func (r *Resolver) Resolve(host string) (app.Manager, func(), error) {
 		if err == nil && m != nil && r.role == config.RoleHypervisor {
 			m = hypervisorPools{m}
 		}
+		if err == nil && m != nil && r.defaultPool != "" {
+			m = defaultPools{m, r.defaultPool}
+		}
 		return m, done, err
 	}
 	if r.token == "" {
 		return nil, nil, fmt.Errorf("host %q: no token to authenticate to its daemon", host)
 	}
-	return r.remote(host, r.token)
+	m, done, err := r.remote(host, r.token)
+	if p := r.hostPools[host]; err == nil && m != nil && p != "" {
+		m = defaultPools{m, p}
+	}
+	return m, done, err
 }
 
 // Check reports whether Resolve serves host, without building a Manager: an
@@ -337,6 +365,60 @@ func (h hypervisorPools) Define(cfg vmtool.VMConfig) error {
 func (h hypervisorPools) RefreshPool(pool string) error {
 	if r, ok := h.Manager.(interface{ RefreshPool(string) error }); ok {
 		return r.RefreshPool(hvPool(pool))
+	}
+	return nil
+}
+
+// defaultPools applies a host's config.yml default_pool: an empty pool becomes
+// pool for the operations that put a new VM disk somewhere (CloneImage target,
+// CreateVolume, AddDisk, Define's Pool). Everything else (images, ListPools,
+// MigrateDisk, resize, RefreshPool) is untouched, so on a hypervisor, where it
+// wraps hypervisorPools, the image cache keeps its vmtool default. Define's
+// ExtraDiskPool stays as sent: empty already means "same as Pool".
+type defaultPools struct {
+	app.Manager
+	pool string
+}
+
+func (d defaultPools) or(pool string) string {
+	if pool == "" {
+		return d.pool
+	}
+	return pool
+}
+
+func (d defaultPools) CreateVolume(pool, name string, sizeGB uint) (string, error) {
+	return d.Manager.CreateVolume(d.or(pool), name, sizeGB)
+}
+
+func (d defaultPools) AddDisk(name string, sizeGB uint, pool string) (*vmtool.DiskDevice, error) {
+	return d.Manager.AddDisk(name, sizeGB, d.or(pool))
+}
+
+func (d defaultPools) CloneImage(basePath, newName, targetPool string, sizeBytes uint64) (string, error) {
+	return d.Manager.CloneImage(basePath, newName, d.or(targetPool), sizeBytes)
+}
+
+func (d defaultPools) Define(cfg vmtool.VMConfig) error {
+	cfg.Pool = d.or(cfg.Pool)
+	return d.Manager.Define(cfg)
+}
+
+// RefreshPools keeps the workstation's pool rescan (C8) visible to
+// app.FindLocalImage. A Manager without it (a remote host, or
+// hypervisorPools on a daemon, which never refreshes) gets a no-op; the
+// daemon calls FindLocalImage with refresh off, so it is never used there.
+func (d defaultPools) RefreshPools() error {
+	if r, ok := d.Manager.(interface{ RefreshPools() error }); ok {
+		return r.RefreshPools()
+	}
+	return nil
+}
+
+// RefreshPool keeps the optional interface the image cache uses visible.
+func (d defaultPools) RefreshPool(pool string) error {
+	if r, ok := d.Manager.(interface{ RefreshPool(string) error }); ok {
+		return r.RefreshPool(pool)
 	}
 	return nil
 }
