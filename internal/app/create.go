@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/jaredeh/vmtool/pkg/vmtool"
 )
@@ -200,9 +201,15 @@ func (s *Service) CreateVM(ctx context.Context, m Manager, in CreateVMInput) (*v
 	}
 	// Resolved here and sent explicitly to Define, so the host never guesses.
 	// unsafe on a --noclone base image would risk the image itself.
+	// A clone's default depends on the pool it lands in (cloneCacheDefault);
+	// the pools are listed before cloning so a failure leaves no orphan volume.
 	cfg.DiskCache = in.DiskCache
+	var pools []vmtool.PoolInfo
 	if cfg.DiskCache == "" && !in.Noclone {
-		cfg.DiskCache = vmtool.DiskCacheUnsafe
+		var err error
+		if pools, err = m.ListPools(); err != nil {
+			return nil, wrap("create", fmt.Errorf("list storage pools: %w", err))
+		}
 	}
 	cfg.ExtraDiskSizeGB = in.ExtraDiskSizeGB
 	cfg.ExtraDiskPool = in.ExtraDiskPool
@@ -214,13 +221,16 @@ func (s *Service) CreateVM(ctx context.Context, m Manager, in CreateVMInput) (*v
 			return nil, wrap("create", err)
 		}
 		emit(in, "clone", "start", "cloning image", "")
-		cloned, err := m.CloneImage(cfg.DiskPath, cfg.Name, cfg.Pool)
+		cloned, err := m.CloneImage(cfg.DiskPath, cfg.Name, cfg.Pool, uint64(cfg.DiskSizeGB)*1024*1024*1024)
 		if err != nil {
 			emit(in, "clone", "error", err.Error(), "")
 			return nil, wrap("create", err)
 		}
 		cfg.DiskPath = cloned
-		emit(in, "clone", "done", fmt.Sprintf("cloned → %s.qcow2", cfg.Name), "")
+		if cfg.DiskCache == "" {
+			cfg.DiskCache = cloneCacheDefault(pools, cloned)
+		}
+		emit(in, "clone", "done", fmt.Sprintf("cloned → %s", filepath.Base(cloned)), "")
 	}
 
 	if cfg.DiskSizeGB > 0 {
@@ -372,4 +382,18 @@ func (s *Service) CreateVM(ctx context.Context, m Manager, in CreateVMInput) (*v
 		return nil, wrap("create", err)
 	}
 	return info, nil
+}
+
+// cloneCacheDefault is the cache mode for a new clone when none was asked
+// for: none for an LV in a logical pool (the host's O_DIRECT path, no double
+// caching), unsafe (C10) for anything else. The clone's pool is the one whose
+// path is the directory of clonedPath.
+func cloneCacheDefault(pools []vmtool.PoolInfo, clonedPath string) string {
+	dir := filepath.Dir(filepath.Clean(clonedPath))
+	for _, p := range pools {
+		if p.Type == "logical" && p.Path != "" && filepath.Clean(p.Path) == dir {
+			return vmtool.DiskCacheNone
+		}
+	}
+	return vmtool.DiskCacheUnsafe
 }

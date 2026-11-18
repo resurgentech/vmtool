@@ -19,7 +19,7 @@ type poolFake struct {
 
 func (f *poolFake) rec(format string, a ...any) { f.calls = append(f.calls, fmt.Sprintf(format, a...)) }
 
-func (f *poolFake) CloneImage(base, name, pool string) (string, error) {
+func (f *poolFake) CloneImage(base, name, pool string, _ uint64) (string, error) {
 	f.rec("CloneImage %s", pool)
 	return "", nil
 }
@@ -41,7 +41,7 @@ func (f *poolFake) RefreshPool(pool string) error { f.rec("RefreshPool %s", pool
 
 func exercise(t *testing.T, m app.Manager, pool string) {
 	t.Helper()
-	if _, err := m.CloneImage("/b", "web", pool); err != nil {
+	if _, err := m.CloneImage("/b", "web", pool, 0); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := m.CreateVolume(pool, "v", 1); err != nil {

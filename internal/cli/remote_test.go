@@ -76,9 +76,11 @@ func (c cliFake) CreatePool(name, path string) error {
 	c.rec("CreatePool " + name + " " + path)
 	return nil
 }
-func (c cliFake) CloneImage(string, string, string) (string, error) { return "", c.rec("CloneImage") }
-func (c cliFake) ResizeVolume(string, uint64) error                 { return c.rec("ResizeVolume") }
-func (c cliFake) Define(vmtool.VMConfig) error                      { return c.rec("Define") }
+func (c cliFake) CloneImage(string, string, string, uint64) (string, error) {
+	return "", c.rec("CloneImage")
+}
+func (c cliFake) ResizeVolume(string, uint64) error { return c.rec("ResizeVolume") }
+func (c cliFake) Define(vmtool.VMConfig) error      { return c.rec("Define") }
 
 var _ app.Manager = cliFake{}
 

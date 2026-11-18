@@ -20,9 +20,9 @@ type nwVMs struct {
 }
 
 func (f *nwVMs) rec(s string) { f.calls = append(f.calls, s) }
-func (f *nwVMs) CloneImage(b, n, p string) (string, error) {
+func (f *nwVMs) CloneImage(b, n, p string, sz uint64) (string, error) {
 	f.rec("CloneImage")
-	return f.createVMs.CloneImage(b, n, p)
+	return f.createVMs.CloneImage(b, n, p, sz)
 }
 func (f *nwVMs) Define(vmtool.VMConfig) error { f.rec("Define"); return nil }
 func (f *nwVMs) Start(string) error           { f.rec("Start"); return nil }

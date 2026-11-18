@@ -500,10 +500,18 @@ func (m *Manager) CreatePool(name, path string) error {
 	})
 }
 
-func (m *Manager) CloneImage(basePath, newName, targetPool string) (string, error) {
+func (m *Manager) CloneImage(basePath, newName, targetPool string, sizeBytes uint64) (string, error) {
 	var v api.PathResult
+	var size *int64
+	if sizeBytes > 0 {
+		if sizeBytes > math.MaxInt64 {
+			return "", fail(app.KindInvalid, fmt.Errorf("%s: size %d bytes is too large", m.name, sizeBytes))
+		}
+		s := int64(sizeBytes)
+		size = &s
+	}
 	if err := m.call("cloneVolume", m.long, &v, func(ctx context.Context) (*http.Response, error) {
-		return m.client.CloneVolume(ctx, m.name, api.CloneVolumeRequest{BasePath: basePath, NewName: newName, TargetPool: nonEmpty(targetPool)})
+		return m.client.CloneVolume(ctx, m.name, api.CloneVolumeRequest{BasePath: basePath, NewName: newName, TargetPool: nonEmpty(targetPool), SizeBytes: size})
 	}); err != nil {
 		return "", err
 	}

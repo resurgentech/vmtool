@@ -48,6 +48,11 @@ const (
 // A pool with no path is skipped. Failing to list pools is not an
 // errOutsidePool. The check is a point-in-time one: a symlink created between
 // the check and the libvirt call is not caught.
+//
+// A pool of type logical is the exception: its volumes are /dev/<vg>/<lv>,
+// symlinks to /dev/dm-N, which resolving would turn into a path outside the
+// pool. There p is accepted unresolved when it is exactly <pool path>/<one
+// plain name> and exists (see logicalVolume).
 func inPool(m app.Manager, p string) error {
 	if p == "" || !filepath.IsAbs(p) {
 		return fmt.Errorf("%w: %q must be an absolute path", errOutsidePool, p)
@@ -57,12 +62,17 @@ func inPool(m app.Manager, p string) error {
 	if err != nil {
 		return fmt.Errorf("list storage pools: %w", err)
 	}
+	for _, pool := range pools {
+		if logicalVolume(pool, p) {
+			return nil
+		}
+	}
 	rp, err := resolveExisting(p)
 	if err != nil {
 		return fmt.Errorf("%w: %q: %v", errOutsidePool, p, err)
 	}
 	for _, pool := range pools {
-		if pool.Path == "" {
+		if pool.Path == "" || pool.Type == "logical" {
 			continue
 		}
 		pp, err := resolveExisting(filepath.Clean(pool.Path))
@@ -76,6 +86,20 @@ func inPool(m app.Manager, p string) error {
 		return nil
 	}
 	return fmt.Errorf("%w: %q", errOutsidePool, p)
+}
+
+// logicalVolume reports whether the cleaned absolute path p is a volume of the
+// logical pool: its directory is exactly the pool's path, its name is one
+// plain component, and it exists (as a link or not).
+func logicalVolume(pool vmtool.PoolInfo, p string) bool {
+	if pool.Type != "logical" || pool.Path == "" || filepath.Dir(p) != filepath.Clean(pool.Path) {
+		return false
+	}
+	if name := filepath.Base(p); name == "." || name == ".." || name == string(filepath.Separator) {
+		return false
+	}
+	_, err := os.Lstat(p)
+	return err == nil
 }
 
 // poolPath validates p with inPool and returns the cleaned form, which is
@@ -178,6 +202,8 @@ func (h *handlers) CloneVolume(ctx context.Context, req api.CloneVolumeRequestOb
 		bad = badName("new_name", b.NewName)
 	case !xmlSafe(derefStr(b.TargetPool)):
 		bad = errors.New("target_pool contains invalid characters")
+	case b.SizeBytes != nil && *b.SizeBytes < 1:
+		bad = errors.New("size_bytes must be at least 1")
 	}
 	if bad != nil {
 		return api.CloneVolume400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: bad.Error()}}, nil
@@ -187,7 +213,11 @@ func (h *handlers) CloneVolume(ctx context.Context, req api.CloneVolumeRequestOb
 		if err != nil {
 			return nil, err
 		}
-		return m.CloneImage(base, b.NewName, derefStr(b.TargetPool))
+		var size uint64
+		if b.SizeBytes != nil {
+			size = uint64(*b.SizeBytes)
+		}
+		return m.CloneImage(base, b.NewName, derefStr(b.TargetPool), size)
 	})
 	if err != nil {
 		switch primKind(err) {

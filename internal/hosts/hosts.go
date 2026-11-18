@@ -322,8 +322,8 @@ func (h hypervisorPools) DeleteImage(name, pool string) error {
 	return h.Manager.DeleteImage(name, hvPool(pool))
 }
 
-func (h hypervisorPools) CloneImage(basePath, newName, targetPool string) (string, error) {
-	return h.Manager.CloneImage(basePath, newName, hvPool(targetPool))
+func (h hypervisorPools) CloneImage(basePath, newName, targetPool string, sizeBytes uint64) (string, error) {
+	return h.Manager.CloneImage(basePath, newName, hvPool(targetPool), sizeBytes)
 }
 
 // Define fills Pool only; an empty ExtraDiskPool means "same as Pool".

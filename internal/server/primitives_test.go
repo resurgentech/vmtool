@@ -30,8 +30,9 @@ type fakeMgr struct {
 	imagePath string
 	volPath   string
 	ip        string
-	err       error // returned by every primitive when set
-	poolsErr  error // returned by ListPools
+	err       error  // returned by every primitive when set
+	poolsErr  error  // returned by ListPools
+	cloneSize uint64 // the sizeBytes CloneImage was last given
 
 	defined vmtool.VMConfig
 	waited  time.Duration
@@ -88,7 +89,8 @@ func (f *fakeMgr) ListPools() ([]vmtool.PoolInfo, error) {
 	return f.pools, f.poolsErr
 }
 func (f *fakeMgr) CreatePool(n, p string) error { f.rec("CreatePool %s %s", n, p); return f.err }
-func (f *fakeMgr) CloneImage(base, n, pool string) (string, error) {
+func (f *fakeMgr) CloneImage(base, n, pool string, size uint64) (string, error) {
+	f.cloneSize = size
 	f.rec("CloneImage %s %s %s", base, n, pool)
 	return f.volPath, f.err
 }

@@ -15,7 +15,7 @@ type poolVMs struct {
 	pools []string
 }
 
-func (f *poolVMs) CloneImage(base, name, pool string) (string, error) {
+func (f *poolVMs) CloneImage(base, name, pool string, _ uint64) (string, error) {
 	f.pools = append(f.pools, "clone "+pool)
 	return "/pool/" + name + ".qcow2", nil
 }

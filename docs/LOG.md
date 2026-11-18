@@ -531,3 +531,22 @@ are appended, never edited in; a hook refuses rewrites.
 - migrate-disk refuses a block `vda` or a logical target before stopping
   the VM.
 - Commits: the L2 commit on `clone-identity`.
+
+## 2026-11-18 — L3 Create clones into a logical pool by conversion
+
+- `CloneImage(base, name, pool, sizeBytes)`: into a `logical` pool it
+  makes an LV named `<vm>` (no suffix, no format, capacity = allocation
+  = max(image, size), in bytes) through `StorageVolCreateXMLFrom`, so
+  libvirtd converts qcow2 to raw as root. Dir pools: today's XML; size
+  ignored.
+- Spec: optional `CloneVolumeRequest.size_bytes` (min 1); `.qcow2` names
+  apply to dir pools only. Still API 2.2.0. The remote client sends it
+  only when > 0; the server passes it on (400 below 1).
+- create passes `--disk-size` to the clone. A clone with no
+  `--disk-cache` lists pools first (a failure stops create before the
+  clone) and gets cache `none` in a logical pool, `unsafe` elsewhere
+  (C10). The clone event names the real volume.
+- The daemon's path check accepts an LV path unresolved when it is
+  exactly `<logical pool path>/<name>` and exists; dir pools keep the
+  resolved comparison.
+- Commits: the L3 commit on `clone-identity`.

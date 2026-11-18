@@ -15,14 +15,25 @@ type createVMs struct {
 	Manager
 	ip      string
 	deleted []string
+
+	// Clone and pool listing, for the cache default and the clone size.
+	pools     []vmtool.PoolInfo
+	poolsErr  error
+	clonePath string // returned by CloneImage; "" is /pool/<name>.qcow2
+	cloneSize uint64 // the sizeBytes CloneImage was last given
 }
 
 func (f *createVMs) ImagePath(name string) (string, error) { return "/pool/" + name, nil }
-func (f *createVMs) CloneImage(base, name, pool string) (string, error) {
+func (f *createVMs) CloneImage(base, name, pool string, size uint64) (string, error) {
+	f.cloneSize = size
+	if f.clonePath != "" {
+		return f.clonePath, nil
+	}
 	return "/pool/" + name + ".qcow2", nil
 }
-func (f *createVMs) Define(vmtool.VMConfig) error { return nil }
-func (f *createVMs) Start(string) error           { return nil }
+func (f *createVMs) ListPools() ([]vmtool.PoolInfo, error) { return f.pools, f.poolsErr }
+func (f *createVMs) Define(vmtool.VMConfig) error          { return nil }
+func (f *createVMs) Start(string) error                    { return nil }
 func (f *createVMs) WaitForIP(string, time.Duration) (string, error) {
 	return f.ip, nil
 }

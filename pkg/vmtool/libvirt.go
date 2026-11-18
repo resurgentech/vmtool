@@ -463,8 +463,35 @@ func (m *Manager) Undefine(name string) error {
 	return dom.UndefineFlags(libvirt.DOMAIN_UNDEFINE_NVRAM)
 }
 
-// CloneImage clones basePath into targetPool under newName.qcow2 and returns the new volume path.
-func (m *Manager) CloneImage(basePath, newName, targetPool string) (string, error) {
+// cloneVolumeXML returns the new volume's name and XML for a clone into a pool
+// of poolType. A logical pool gets an LV named newName with no format and
+// capacity = allocation = max(imageCap, sizeBytes), in bytes (libvirtd
+// converts the qcow2 to raw; an allocation below capacity would make a slow
+// snapshot LV). Any other pool gets <newName>.qcow2 at the image's capacity
+// (sizeBytes is ignored; the app's resize step grows the qcow2).
+func cloneVolumeXML(poolType, newName string, imageCap, sizeBytes uint64) (string, string) {
+	if poolType == poolTypeLogical {
+		c := max(imageCap, sizeBytes)
+		return newName, fmt.Sprintf(`<volume>
+  <name>%s</name>
+  <capacity unit='bytes'>%d</capacity>
+  <allocation unit='bytes'>%d</allocation>
+</volume>`, newName, c, c)
+	}
+	volName := newName + ".qcow2"
+	return volName, fmt.Sprintf(`<volume>
+  <name>%s</name>
+  <capacity>%d</capacity>
+  <target>
+    <format type='qcow2'/>
+  </target>
+</volume>`, volName, imageCap)
+}
+
+// CloneImage clones basePath into targetPool and returns the new volume path.
+// A dir pool gets <newName>.qcow2; a logical pool gets an LV named newName of
+// max(image capacity, sizeBytes), converted to raw by libvirtd.
+func (m *Manager) CloneImage(basePath, newName, targetPool string, sizeBytes uint64) (string, error) {
 	srcVol, err := m.conn.LookupStorageVolByPath(basePath)
 	if err != nil {
 		return "", fmt.Errorf("looking up base image at %q: %w", basePath, err)
@@ -485,14 +512,11 @@ func (m *Manager) CloneImage(basePath, newName, targetPool string) (string, erro
 	}
 	defer pool.Free()
 
-	volName := newName + ".qcow2"
-	volXML := fmt.Sprintf(`<volume>
-  <name>%s</name>
-  <capacity>%d</capacity>
-  <target>
-    <format type='qcow2'/>
-  </target>
-</volume>`, volName, srcInfo.Capacity)
+	poolType := ""
+	if x, err := pool.GetXMLDesc(0); err == nil {
+		poolType = parsePoolType(x)
+	}
+	_, volXML := cloneVolumeXML(poolType, newName, srcInfo.Capacity, sizeBytes)
 
 	newVol, err := pool.StorageVolCreateXMLFrom(volXML, srcVol, 0)
 	if err != nil {
@@ -512,7 +536,7 @@ func (m *Manager) CloneImage(basePath, newName, targetPool string) (string, erro
 // It will be replaced with the path to the cloned volume.
 func (m *Manager) Create(cfg VMConfig) error {
 	if !cfg.Noclone {
-		clonedPath, err := m.CloneImage(cfg.DiskPath, cfg.Name, cfg.Pool)
+		clonedPath, err := m.CloneImage(cfg.DiskPath, cfg.Name, cfg.Pool, uint64(cfg.DiskSizeGB)*1024*1024*1024)
 		if err != nil {
 			return fmt.Errorf("cloning image: %w", err)
 		}

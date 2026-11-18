@@ -32,7 +32,7 @@ type Manager interface {
 	DeleteImage(name, pool string) error
 	ListPools() ([]vmtool.PoolInfo, error)
 	CreatePool(name, path string) error
-	CloneImage(basePath, newName, targetPool string) (string, error)
+	CloneImage(basePath, newName, targetPool string, sizeBytes uint64) (string, error)
 	ResizeVolume(volPath string, sizeBytes uint64) error
 	Define(cfg vmtool.VMConfig) error
 }

@@ -1665,15 +1665,16 @@ components:
       required: [name, size_gb]
       properties:
         pool: { type: string, description: "storage pool; omitted is the host's default pool (`default` on a workstation, `vmtool` on a hypervisor)" }
-        name: { type: string, description: "plain file name; .qcow2 is appended if missing" }
+        name: { type: string, description: "plain file name; in a dir pool .qcow2 is appended if missing, in a logical pool the volume has no suffix (a given .qcow2 is dropped)" }
         size_gb: { type: integer, minimum: 1 }
     CloneVolumeRequest:
       type: object
       required: [base_path, new_name]
       properties:
         base_path: { type: string, description: "volume to clone; must resolve inside a storage pool" }
-        new_name: { type: string, description: "plain name; the clone is {new_name}.qcow2" }
+        new_name: { type: string, description: "plain name; in a dir pool the clone is {new_name}.qcow2, in a logical pool it is a volume named {new_name}" }
         target_pool: { type: string, description: "omitted is the host's default pool (`default` on a workstation, `vmtool` on a hypervisor)" }
+        size_bytes: { type: integer, format: int64, minimum: 1, description: "the new volume's size when larger than the image's; used by logical pools, ignored by dir pools" }
     ResizeVolumeRequest:
       type: object
       required: [path, size_bytes]

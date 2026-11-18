@@ -222,7 +222,7 @@ func TestTimeouts(t *testing.T) {
 		t.Errorf("timeout kind: %v", err)
 	}
 
-	if p, err := m.CloneImage("/pool/base.qcow2", "web", "default"); err != nil || p != "/pool/web.qcow2" {
+	if p, err := m.CloneImage("/pool/base.qcow2", "web", "default", 0); err != nil || p != "/pool/web.qcow2" {
 		t.Errorf("CloneImage = %q, %v (long timeout)", p, err)
 	}
 	if err := m.ResizeVolume("/pool/web.qcow2", 1<<30); err != nil {

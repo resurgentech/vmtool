@@ -37,6 +37,8 @@ type rtMgr struct {
 	info    vmtool.VMInfo
 	vms     []vmtool.VMInfo
 	defined vmtool.VMConfig
+
+	cloneSize uint64 // the sizeBytes CloneImage was last given
 }
 
 func (f *rtMgr) rec(format string, a ...any) {
@@ -113,7 +115,10 @@ func (f *rtMgr) ListPools() ([]vmtool.PoolInfo, error) {
 	return []vmtool.PoolInfo{{Name: vmtool.HypervisorPool, Path: f.pool, Active: true}, {Name: "cold", Path: "/nonexistent-cold", Active: false}}, nil
 }
 func (f *rtMgr) CreatePool(n, p string) error { f.rec("CreatePool %s %s", n, p); return nil }
-func (f *rtMgr) CloneImage(base, n, pool string) (string, error) {
+func (f *rtMgr) CloneImage(base, n, pool string, size uint64) (string, error) {
+	f.mu.Lock()
+	f.cloneSize = size
+	f.mu.Unlock()
 	f.rec("CloneImage %s %s %s", base, n, pool)
 	return filepath.Join(f.pool, n+".qcow2"), nil
 }
@@ -300,10 +305,19 @@ func TestRemoteManagerEveryMethod(t *testing.T) {
 	if want, _ := fm.ListPools(); !reflect.DeepEqual(pools, want) {
 		t.Errorf("ListPools = %+v, want %+v", pools, want)
 	}
-	p, err = m.CloneImage(filepath.Join(fm.pool, "base.qcow2"), "web", "default")
+	p, err = m.CloneImage(filepath.Join(fm.pool, "base.qcow2"), "web", "default", 0)
 	check("CloneImage", err, "CloneImage "+filepath.Join(fm.pool, "base.qcow2")+" web default")
 	if p != vol {
 		t.Errorf("CloneImage = %q", p)
+	}
+	// size_bytes reaches the hypervisor's Manager; 0 is not sent and arrives as 0.
+	if fm.cloneSize != 0 {
+		t.Errorf("CloneImage size 0 arrived as %d", fm.cloneSize)
+	}
+	_, err = m.CloneImage(filepath.Join(fm.pool, "base.qcow2"), "web", "default", 5<<30)
+	check("CloneImage sized", err, "CloneImage "+filepath.Join(fm.pool, "base.qcow2")+" web default")
+	if fm.cloneSize != 5<<30 {
+		t.Errorf("CloneImage size 5GiB arrived as %d", fm.cloneSize)
 	}
 
 	cfg := vmtool.VMConfig{

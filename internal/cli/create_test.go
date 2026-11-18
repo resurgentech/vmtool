@@ -51,14 +51,15 @@ func (l *createLog) has(s string) bool {
 }
 
 func (c createFake) ImagePath(n string) (string, error) { return "/pool/" + n, nil }
-func (c createFake) CloneImage(_, n, _ string) (string, error) {
+func (c createFake) CloneImage(_, n, _ string, _ uint64) (string, error) {
 	return "/pool/" + n + ".qcow2", nil
 }
-func (c createFake) ResizeVolume(string, uint64) error { return nil }
-func (c createFake) Define(vmtool.VMConfig) error      { c.log.add("Define"); return nil }
-func (c createFake) Start(string) error                { c.log.add("Start"); return nil }
-func (c createFake) Destroy(string) error              { c.log.add("Destroy"); return nil }
-func (c createFake) Delete(string, bool) error         { c.log.add("Delete"); return nil }
+func (c createFake) ListPools() ([]vmtool.PoolInfo, error) { return nil, nil }
+func (c createFake) ResizeVolume(string, uint64) error     { return nil }
+func (c createFake) Define(vmtool.VMConfig) error          { c.log.add("Define"); return nil }
+func (c createFake) Start(string) error                    { c.log.add("Start"); return nil }
+func (c createFake) Destroy(string) error                  { c.log.add("Destroy"); return nil }
+func (c createFake) Delete(string, bool) error             { c.log.add("Delete"); return nil }
 func (c createFake) WaitForIP(_ string, d time.Duration) (string, error) {
 	c.log.add("WaitForIP")
 	c.log.mu.Lock()
