@@ -1185,7 +1185,12 @@ func resizeDiskCmd(e *env) *cobra.Command {
 If the VM is running, also notifies the guest of the new size and expands
 the root partition and filesystem via SSH.
 
-A disk in a logical pool (an LV) cannot be grown: it is sized at create
+A disk on a thin pool (a thin LV) grows at once: the volume is extended and,
+if the VM is running, the VM is told. The pool must have room (data and
+metadata use under 80 %, promised sizes within 4x the pool); otherwise it is
+refused with the numbers.
+
+A disk in a thick logical pool (an LV) cannot be grown: it is sized at create
 (--disk-size). resize-disk refuses it before touching the VM.`,
 		Args: cobra.ExactArgs(2),
 		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
@@ -1229,7 +1234,9 @@ func addDiskCmd(e *env) *cobra.Command {
 
 In a dir pool the volume is <vm>-2.qcow2 for the first extra disk,
 <vm>-3.qcow2 if called again, and so on; in a logical pool it is an LV named
-<vm>-2, <vm>-3, …, attached as a block disk. If the VM is running the disk
+<vm>-2, <vm>-3, …, attached as a block disk; in a thin pool it is a thin LV
+of that name (refused when the pool has no room: data or metadata use at or
+above 80 %, or promised sizes over 4x the pool). If the VM is running the disk
 is hot-plugged and persisted. If it is shut off the change is persisted and
 appears on the next start. The guest sees a raw block device; it is not
 partitioned or formatted.

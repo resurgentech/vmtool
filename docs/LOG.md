@@ -1339,3 +1339,22 @@ are appended, never edited in; a hook refuses rewrites.
   three "Where to look" rows.
 - Docs only, no test; `just check` green. Commits: the S15 commit on
   `clone-identity`.
+
+## 2026-11-18 — T6 add-disk and resize-disk on thin pools
+
+- `internal/hosts/thindisk.go` (on `ThinPools`): add-disk into a thin
+  pool = room check, helper `create <vg> <pool> <vm>-N <bytes>
+  vmtool_vol`, attach as block; a failed attach removes only that LV.
+  resize-disk of a thin vda = refuse not-larger, room check on the
+  growth, `extend`, then `BlockResize` when running (not shrunk if that
+  fails). `ResizeVolume` grows thin too. Everything else goes to the
+  inner Manager (thick block keeps `errBlockGrow`; qcow2 unchanged).
+  create's `--extra-disk-size` on a thin pool stays refused.
+- `pkg/vmtool/domaindisks.go`: `DomainDisks`, `AttachBlockDisk`,
+  `BlockResizeBoot`, `ExtraLVName` (pure parsers tested).
+- CLI help of `resize-disk` / `add-disk`: thin grows, thick does not.
+- Known gap: no-room on these two routes is 500 over REST (spec lists no
+  409 there); needs a follow-up step.
+- Tests: 14 in `internal/hosts/thindisk_test.go`, parsers, help. Red:
+  build failures and help assertions; green; `just check` green.
+- Commits: the T6 commit on `clone-identity`.

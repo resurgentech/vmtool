@@ -68,10 +68,10 @@ func TestDiskHelpNamesPoolKinds(t *testing.T) {
 		{"create --pool usage", usage(create, "pool"), []string{"default_pool", "logical"}},
 		{"add-disk --pool usage", usage(addDisk, "pool"), []string{"default_pool", "logical"}},
 		{"create --extra-disk-size usage", usage(create, "extra-disk-size"), []string{"qcow2", "logical"}},
-		{"add-disk Long", addDisk.Long, []string{"qcow2", "logical"}},
+		{"add-disk Long", addDisk.Long, []string{"qcow2", "logical", "thin"}},
 		{"create --disk-cache usage", usage(create, "disk-cache"), []string{"logical"}},
 		{"create Long", create.Long, []string{"logical"}},
-		{"resize-disk Long", find("resize-disk").Long, []string{"logical"}},
+		{"resize-disk Long", find("resize-disk").Long, []string{"logical", "thin", "grows"}},
 		{"migrate-disk Long", find("migrate-disk").Long, []string{"logical"}},
 	} {
 		for _, w := range tc.want {

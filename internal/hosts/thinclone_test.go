@@ -856,17 +856,17 @@ func TestThinResizeVolume(t *testing.T) {
 	if err := m.ResizeVolume("/dev/vg-test/vm1", uint64(10*gib)); err != nil {
 		t.Errorf("smaller size: %v", err)
 	}
-	err := m.ResizeVolume("/dev/vg-test/vm1", uint64(30*gib))
-	var ae *app.Error
-	if err == nil || !app.AsError(err, &ae) || ae.Kind != app.KindInvalid || !strings.Contains(err.Error(), "thin") {
+	if n := len(h.writes(t)); n != 0 {
+		t.Errorf("writes: %q", h.writes(t))
+	}
+	// growing one extends it (T6)
+	if err := m.ResizeVolume("/dev/vg-test/vm1", uint64(30*gib)); err != nil {
 		t.Errorf("growing err = %v", err)
 	}
 	if err := m.ResizeVolume("/dev/vg-test/"+tplLV, uint64(10*gib)); err == nil {
 		t.Error("a template was resized")
 	}
-	if n := len(h.writes(t)); n != 0 {
-		t.Errorf("writes: %q", h.writes(t))
-	}
+	eqStrings(t, "writes", h.writes(t), []string{"extend vg-test vm1 32212254720"})
 	// anything else is the inner Manager's
 	if err := m.ResizeVolume("/var/lib/vmtool/images/a.qcow2", 5); err != nil {
 		t.Fatal(err)

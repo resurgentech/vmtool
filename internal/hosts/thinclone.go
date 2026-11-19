@@ -512,14 +512,15 @@ func (t ThinPools) Delete(name string, noclone bool) error {
 // ---- resize and create volume ----
 
 // ResizeVolume on a thin volume: nothing to do when it is already at least
-// that size (a clone has been extended at clone time); growing one is not
-// supported yet. Any other path is the inner Manager's.
+// that size (a clone has been extended at clone time); growing one is the
+// room check and an extend (no libvirt call: create's disk is not defined
+// yet). Any other path is the inner Manager's.
 func (t ThinPools) ResizeVolume(volPath string, sizeBytes uint64) error {
 	vg, lv, ok := vmtool.ParseThinDevPath(volPath)
 	if !ok || t.Thin == nil {
 		return t.Manager.ResizeVolume(volPath, sizeBytes)
 	}
-	_, vols, err := t.Thin.Report()
+	pools, vols, err := t.Thin.Report()
 	if err != nil {
 		t.log().Warn("thin volumes not read", "err", err)
 		return t.Manager.ResizeVolume(volPath, sizeBytes)
@@ -534,7 +535,14 @@ func (t ThinPools) ResizeVolume(volPath string, sizeBytes uint64) error {
 	if sizeBytes <= uint64(v.SizeBytes) {
 		return nil
 	}
-	return invalidErr("resize", "thin volume %s is %d bytes; growing it past that comes with resize-disk support for thin pools", volPath, v.SizeBytes)
+	if sizeBytes > math.MaxInt64 {
+		return invalidErr("resize", "size %d bytes is too large", sizeBytes)
+	}
+	pool, ok := findPool(pools, v.Pool)
+	if !ok || pool.VG != v.VG {
+		return invalidErr("resize", "thin volume %s is in no thin pool the helper reports", volPath)
+	}
+	return noRoomOp("resize", t.growThin(pool, v, int64(sizeBytes)))
 }
 
 // CreateVolume into a thin pool is not supported yet; into any other pool it
