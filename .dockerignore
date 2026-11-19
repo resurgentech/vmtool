@@ -1,0 +1,15 @@
+.git
+.gitignore
+.claude
+.env
+config.yml
+.machines
+tls
+images
+tmp
+packer_images/output
+ROADMAP.md
+docs/reports
+vmtool
+*.key
+*.pem

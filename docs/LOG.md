@@ -1224,3 +1224,21 @@ are appended, never edited in; a hook refuses rewrites.
   `CLAUDE.md`, `README.md`, `docs/LOG.md`. `./run generate` and `update`
   unchanged (libvirt-pool path). `generate` never run.
 - Commits: the S12 commit on `clone-identity`.
+
+## 2026-11-18 — S13 The store's container image
+
+- `deploy/vmtool-store.Dockerfile`: builder `golang:1.24.0-bookworm`,
+  `CGO_ENABLED=0 go build ./cmd/vmtool-store`; runtime
+  `gcr.io/distroless/static-debian12:nonroot` (CA bundle included),
+  `USER 65532:65532`, data and config dirs owned by it (0700), `EXPOSE
+  8095`, `VOLUME` `/var/lib/vmtool-store` and `/etc/vmtool-store`,
+  entrypoint `-config /etc/vmtool-store/config.yaml`; no ARG or ENV.
+  Its config must set `listen: 0.0.0.0:8095` and `behind_proxy: true`.
+- `.dockerignore` keeps `.git`, `.env`, `config.yml`, `.machines`, `tls`,
+  `images`, `tmp`, the built binary and other local files out of the
+  context. `just store-image <tag>` builds once with both tags and pushes
+  `registry.labtwo/vmtool-store:<tag>` and `:latest`; refuses an empty tag
+  or `latest`; no build args. Never run by the builder.
+- Test `scripts/store_image_test.go` (text only, no docker): red with the
+  files missing, green after. `just check` green.
+- Commits: the S13 commit on `clone-identity`.

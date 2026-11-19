@@ -67,6 +67,16 @@ test *ARGS:
 # Pre-push: stale-generate check + tests
 check: verify test
 
+# Build the store image and push registry.labtwo/vmtool-store:<tag> and :latest (run by a person; refuses an empty tag or `latest`; log in to the registry first)
+store-image tag:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -z "{{ tag }}" || "{{ tag }}" == "latest" ]]; then echo "store-image: give a version tag (not empty, not latest)" >&2; exit 2; fi
+    cd "{{ root }}"
+    docker build -f deploy/vmtool-store.Dockerfile -t registry.labtwo/vmtool-store:{{ tag }} -t registry.labtwo/vmtool-store:latest .
+    docker push registry.labtwo/vmtool-store:{{ tag }}
+    docker push registry.labtwo/vmtool-store:latest
+
 # Remove the built binary
 clean:
     rm -f "{{ root }}/{{ bin }}"
