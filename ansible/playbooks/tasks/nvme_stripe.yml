@@ -20,6 +20,20 @@
 #
 # Variables (defaults in setup_host.yml): vmtool_nvme_drives, vmtool_nvme_vg,
 # vmtool_nvme_md (array name, /dev/md/<name>), vmtool_nvme_pool.
+#
+# Opt-in thin pool (vmtool_nvme_thin, default false): to add an LVM thin pool
+# to an existing array, name the array's drives again and set the switch; the
+# existing volume group is adopted and the drives are not written. By default
+# the pool takes 70 % of the volume group's free space:
+#
+#   just prereqs <host> -e '{"vmtool_nvme_drives":["/dev/disk/by-id/nvme-PLACEHOLDER_1","/dev/disk/by-id/nvme-PLACEHOLDER_2"],"vmtool_nvme_thin":true}'
+#
+# Also: vmtool_nvme_thin_pool (nvme-thin), vmtool_nvme_thin_size (70%FREE, any
+# lvcreate -l or -L value such as 2T), vmtool_nvme_thin_chunk (512k) and
+# vmtool_nvme_thin_metadata (8G). The pool is created tagged vmtool_thinpool
+# with zeroing off and the vmtool-thin profile (autoextend at 80 %, by 10 %); a
+# pool of that name that exists tagged is adopted (zeroing and profile are
+# corrected), one that is not a tagged thin pool makes the play fail.
 
 # ---------------------------------------------------------------- preflight
 
@@ -421,6 +435,136 @@
     - vmtool_nvme_drives | length > 0
     - vmtool_nvme_pool_info.rc != 0 or vmtool_nvme_pool_info.stdout is search('State:\s+inactive')
 
+# ---------------------------------------------------------------- thin pool
+
+# Opt-in (vmtool_nvme_thin): an LVM thin pool in the volume group, tagged
+# vmtool_thinpool, for the daemon's thin clones. libvirt's logical pool neither
+# lists nor creates thin pools, so none of this touches the libvirt pool above.
+# The only writes are `lvcreate --type thin-pool` and, on an adopted pool,
+# `lvchange --zero n` and `lvchange --metadataprofile`; nothing is removed,
+# reduced, forced or wiped.
+- name: "Thin pool: install thin-provisioning-tools"
+  ansible.builtin.apt:
+    name: thin-provisioning-tools
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_thin | bool
+
+- name: "Thin pool: install the LVM profile"
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../files/vmtool-thin.profile"
+    dest: /etc/lvm/profile/vmtool-thin.profile
+    owner: root
+    group: root
+    mode: "0644"
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_thin | bool
+
+- name: "Thin pool: enable lvm2-monitor"
+  ansible.builtin.systemd:
+    name: lvm2-monitor
+    enabled: true
+    state: started
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_thin | bool
+
+# Read-only. A missing pool makes lvs fail (rc != 0), which means "absent".
+- name: "Thin pool: probe the pool LV"
+  ansible.builtin.command:
+    argv:
+      - lvs
+      - --reportformat
+      - json
+      - -o
+      - "lv_name,lv_attr,lv_tags,zero,lv_profile"
+      - "{{ vmtool_nvme_vg }}/{{ vmtool_nvme_thin_pool }}"
+  register: vmtool_nvme_thin_probe
+  changed_when: false
+  check_mode: false
+  failed_when: false
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_thin | bool
+
+# No regular expressions: the JSON is parsed. adoptable is a thin pool (lv_attr
+# starts with t) that carries the vmtool_thinpool tag; zeroing is true while
+# the pool still zeroes new chunks.
+- name: "Thin pool: read the probe"
+  ansible.builtin.set_fact:
+    vmtool_nvme_thin_present: "{{ vmtool_nvme_thin_probe.rc == 0 }}"
+    vmtool_nvme_thin_adoptable: "{{ (_lv.lv_attr | default(''))[:1] == 't' and 'vmtool_thinpool' in ((_lv.lv_tags | default('')).split(',')) }}"
+    vmtool_nvme_thin_zeroing: "{{ (_lv.zero | default('')) | trim != '' }}"
+    vmtool_nvme_thin_profile_now: "{{ (_lv.lv_profile | default('')) | trim }}"
+  vars:
+    _lv: >-
+      {{ ((vmtool_nvme_thin_probe.stdout | from_json).report[0].lv | default([]) | first | default({}))
+         if (vmtool_nvme_thin_probe.rc == 0 and (vmtool_nvme_thin_probe.stdout | trim | length > 0)) else {} }}
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_thin | bool
+
+- name: "Thin pool: refuse a logical volume that is not a vmtool thin pool"
+  ansible.builtin.fail:
+    msg: >-
+      {{ vmtool_nvme_vg }}/{{ vmtool_nvme_thin_pool }} already exists but is not
+      a thin pool tagged vmtool_thinpool, so it is not adopted. Nothing was
+      changed; rename or tag it yourself, or set vmtool_nvme_thin_pool to
+      another name.
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_thin | bool
+    - vmtool_nvme_thin_present | bool
+    - not (vmtool_nvme_thin_adoptable | bool)
+
+# -l for a percentage (70%FREE), -L for a size (2T). Zeroing off, because it
+# halves sequential writes; the profile and monitoring grow the pool.
+- name: "Thin pool: create the pool"
+  ansible.builtin.command:
+    argv: >-
+      {{ ['lvcreate', '--type', 'thin-pool', '-n', vmtool_nvme_thin_pool]
+         + ['-l' if '%' in (vmtool_nvme_thin_size | string) else '-L', vmtool_nvme_thin_size | string]
+         + ['--chunksize', vmtool_nvme_thin_chunk, '--poolmetadatasize', vmtool_nvme_thin_metadata,
+            '--zero', 'n', '--errorwhenfull', 'n', '--monitor', 'y',
+            '--metadataprofile', 'vmtool-thin', '--addtag', 'vmtool_thinpool', vmtool_nvme_vg] }}
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_thin | bool
+    - not (vmtool_nvme_thin_present | bool)
+
+- name: "Thin pool: turn zeroing off on an adopted pool"
+  ansible.builtin.command:
+    argv: [lvchange, --zero, "n", "{{ vmtool_nvme_vg }}/{{ vmtool_nvme_thin_pool }}"]
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_thin | bool
+    - vmtool_nvme_thin_adoptable | bool
+    - vmtool_nvme_thin_zeroing | bool
+
+- name: "Thin pool: attach the profile to an adopted pool"
+  ansible.builtin.command:
+    argv: [lvchange, --metadataprofile, vmtool-thin, "{{ vmtool_nvme_vg }}/{{ vmtool_nvme_thin_pool }}"]
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_thin | bool
+    - vmtool_nvme_thin_adoptable | bool
+    - vmtool_nvme_thin_profile_now != 'vmtool-thin'
+
+- name: "Thin pool: read size and usage"
+  ansible.builtin.command:
+    argv: [lvs, -o, "lv_name,lv_size,data_percent,metadata_percent", "{{ vmtool_nvme_vg }}/{{ vmtool_nvme_thin_pool }}"]
+  register: vmtool_nvme_thin_final
+  changed_when: false
+  check_mode: false
+  failed_when: false
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_thin | bool
+
 # ------------------------------------------------------------------ summary
 
 - name: Read the volume group
@@ -444,5 +588,6 @@
   ansible.builtin.debug:
     msg: >-
       {{ vmtool_nvme_vg_final.stdout_lines | default([]) + vmtool_nvme_pool_final.stdout_lines | default([])
+         + vmtool_nvme_thin_final.stdout_lines | default([])
          + ['Logical volumes in ' ~ vmtool_nvme_vg ~ ' that vmtool did not create (for example test leftovers) are yours to keep or remove; this play never touches them.'] }}
   when: vmtool_nvme_drives | length > 0

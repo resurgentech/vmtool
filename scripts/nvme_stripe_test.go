@@ -127,6 +127,14 @@ func TestNvmeStripeIncludeIsOptIn(t *testing.T) {
 			t.Errorf("%s default = %#v, want %q", k, vars[k], want)
 		}
 	}
+	if vars["vmtool_nvme_thin"] != false {
+		t.Errorf("vmtool_nvme_thin must default to false, got %#v", vars["vmtool_nvme_thin"])
+	}
+	for k, want := range map[string]string{"vmtool_nvme_thin_pool": "nvme-thin", "vmtool_nvme_thin_size": "70%FREE", "vmtool_nvme_thin_chunk": "512k", "vmtool_nvme_thin_metadata": "8G"} {
+		if vars[k] != want {
+			t.Errorf("%s default = %#v, want %q", k, vars[k], want)
+		}
+	}
 	tasks, _ := plays[0]["tasks"].([]any)
 	var found int
 	for _, it := range tasks {
@@ -164,12 +172,25 @@ func TestNvmeStripeOnlyCreatesNeverDestroys(t *testing.T) {
 		}
 	}
 	for _, re := range []string{
-		`lvremove`, `vgremove`, `pvremove`, `lvcreate`, `--zero-superblock`, `--stop\b`,
+		`lvremove`, `vgremove`, `pvremove`, `lvreduce`, `vgreduce`, `lvextend`, `lvconvert`, `lvrename`, `--zero-superblock`, `--stop\b`,
 		`\bdd\b`, `mkfs`, `sgdisk`, `\bparted\b`, `--force`, `pool-build`,
 	} {
 		if regexp.MustCompile(re).MatchString(code) {
 			t.Errorf("file must not contain %s", re)
 		}
+	}
+	// T1: lvcreate only as `lvcreate --type thin-pool`, lvchange only to set
+	// zeroing off or to attach the profile.
+	norc := norm(code)
+	nCreate := strings.Count(norc, "lvcreate")
+	nThin := len(regexp.MustCompile(`'lvcreate', '--type', 'thin-pool'`).FindAllString(norc, -1))
+	if nCreate != nThin || nCreate == 0 {
+		t.Errorf("every lvcreate must be `lvcreate --type thin-pool`: %d lvcreate, %d thin-pool", nCreate, nThin)
+	}
+	nChange := strings.Count(norc, "lvchange")
+	nOK := len(regexp.MustCompile(`lvchange, (--zero, "n"|--metadataprofile, vmtool-thin)`).FindAllString(norc, -1))
+	if nChange != nOK || nChange == 0 {
+		t.Errorf("lvchange only with --zero n or --metadataprofile vmtool-thin: %d lvchange, %d allowed", nChange, nOK)
 	}
 	creates := map[string]bool{}
 	for _, tk := range nvmeTasks(t) {
@@ -437,7 +458,7 @@ func TestNvmeStripeSyntaxCheck(t *testing.T) {
 		t.Fatal(err)
 	}
 	pb := filepath.Join(t.TempDir(), "wrap.yml")
-	body := "---\n- hosts: localhost\n  gather_facts: false\n  vars:\n    vmtool_nvme_drives: []\n    vmtool_nvme_vg: vg-test\n    vmtool_nvme_md: vg-test\n    vmtool_nvme_pool: nvme\n    vmtool_family: debian\n  tasks:\n    - ansible.builtin.import_tasks: " + abs + "\n"
+	body := "---\n- hosts: localhost\n  gather_facts: false\n  vars:\n    vmtool_nvme_drives: []\n    vmtool_nvme_vg: vg-test\n    vmtool_nvme_md: vg-test\n    vmtool_nvme_pool: nvme\n    vmtool_nvme_thin: false\n    vmtool_nvme_thin_pool: nvme-thin\n    vmtool_nvme_thin_size: 70%FREE\n    vmtool_nvme_thin_chunk: 512k\n    vmtool_nvme_thin_metadata: 8G\n    vmtool_family: debian\n  tasks:\n    - ansible.builtin.import_tasks: " + abs + "\n"
 	if err := os.WriteFile(pb, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -661,5 +682,259 @@ func TestNvmeStripeExpressionsEvaluate(t *testing.T) {
 		wantEval(t, c.label, "_type", vars, c.typ)
 		wantEval(t, c.label, "_src", vars, c.src)
 		wantEval(t, c.label, "_refuse", vars, c.refuse)
+	}
+}
+
+// ---------------------------------------------------------------------- T1
+// The thin pool in the array's VG: shape tests. Nothing here runs ansible
+// (the expression test below is opt-in) or any lvm command.
+
+const (
+	thinGuard   = "vmtool_nvme_thin | bool"
+	thinPrefix  = "Thin pool: "
+	thinProfile = "../ansible/files/vmtool-thin.profile"
+)
+
+func thinTasks(t *testing.T) []botTask {
+	t.Helper()
+	var out []botTask
+	for _, tk := range nvmeTasks(t) {
+		if strings.HasPrefix(tk.name, thinPrefix) {
+			out = append(out, tk)
+		}
+	}
+	if len(out) < 8 {
+		t.Fatalf("want the thin-pool tasks (names starting %q), found %d", thinPrefix, len(out))
+	}
+	return out
+}
+
+func thinTask(t *testing.T, sub string) botTask {
+	t.Helper()
+	for _, tk := range thinTasks(t) {
+		if strings.Contains(tk.name, sub) {
+			return tk
+		}
+	}
+	t.Fatalf("no thin-pool task named like %q", sub)
+	return botTask{}
+}
+
+// Every thin task carries the stripe guard and the opt-in switch.
+func TestNvmeThinEveryTaskGuarded(t *testing.T) {
+	// A task that names a thin variable or a thin-pool command is a thin task,
+	// whatever it is called; only the final summary (which reads the thin
+	// result through default([])) is exempt.
+	tasks := nvmeTasks(t)
+	for _, tk := range tasks[:len(tasks)-1] {
+		txt := tk.text()
+		if (strings.Contains(txt, "vmtool_nvme_thin") || strings.Contains(txt, "thin-pool") || strings.Contains(txt, "lvchange")) &&
+			!strings.HasPrefix(tk.name, thinPrefix) {
+			t.Errorf("task %q is a thin-pool task but is not named %q, so the thin guards are not checked on it", tk.name, thinPrefix)
+		}
+	}
+	for _, tk := range thinTasks(t) {
+		if !hasWhen(tk.whens, nvmeGuard) {
+			t.Errorf("task %q lacks when: %s", tk.name, nvmeGuard)
+		}
+		if !hasWhen(tk.whens, thinGuard) {
+			t.Errorf("task %q lacks when: %s", tk.name, thinGuard)
+		}
+	}
+}
+
+// argvText is the command task's argv as one line: a templated string as it is
+// written, a list joined by spaces.
+func argvText(tk botTask) string {
+	cmd, _ := tk.body["ansible.builtin.command"].(map[string]any)
+	switch a := cmd["argv"].(type) {
+	case string:
+		return a
+	case []any:
+		return strings.Join(anyStrings(a), " ")
+	}
+	return ""
+}
+
+func TestNvmeThinPackageProfileAndMonitor(t *testing.T) {
+	apt, _ := thinTask(t, "thin-provisioning-tools").body["ansible.builtin.apt"].(map[string]any)
+	if s := norm(strings.Join(anyStrings(apt["name"]), " ")); s != "thin-provisioning-tools" && apt["name"] != "thin-provisioning-tools" {
+		t.Errorf("thin packages = %v, want thin-provisioning-tools", apt["name"])
+	}
+	cp, _ := thinTask(t, "LVM profile").body["ansible.builtin.copy"].(map[string]any)
+	if cp["dest"] != "/etc/lvm/profile/vmtool-thin.profile" || cp["mode"] != "0644" {
+		t.Errorf("profile copy dest/mode = %v / %v", cp["dest"], cp["mode"])
+	}
+	if src, _ := cp["src"].(string); !strings.Contains(src, "files/vmtool-thin.profile") {
+		t.Errorf("profile copy src = %v", cp["src"])
+	}
+	sd, _ := thinTask(t, "lvm2-monitor").body["ansible.builtin.systemd"].(map[string]any)
+	if sd["name"] != "lvm2-monitor" || sd["enabled"] != true {
+		t.Errorf("lvm2-monitor task = %v", sd)
+	}
+	b, err := os.ReadFile(thinProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body []string
+	for _, l := range strings.Split(string(b), "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(l), "#") {
+			body = append(body, l)
+		}
+	}
+	got := strings.Join(strings.Fields(strings.Join(body, "\n")), " ")
+	want := "activation { thin_pool_autoextend_threshold = 80 thin_pool_autoextend_percent = 10 }"
+	if got != want {
+		t.Errorf("profile = %q, want %q", got, want)
+	}
+}
+
+func TestNvmeThinCreate(t *testing.T) {
+	tasks := nvmeTasks(t)
+	probe := thinTask(t, "probe")
+	txt := norm(probe.text())
+	for _, w := range []string{"lvs", "--reportformat", "json", "lv_name,lv_attr,lv_tags", "vmtool_nvme_vg", "vmtool_nvme_thin_pool"} {
+		if !strings.Contains(txt, w) {
+			t.Errorf("probe lacks %q: %s", w, txt)
+		}
+	}
+	if probe.body["changed_when"] != false || probe.body["check_mode"] != false {
+		t.Errorf("probe must be read-only (changed_when/check_mode false)")
+	}
+	cr := thinTask(t, "create")
+	code := norm(argvText(cr))
+	for _, w := range []string{
+		"'lvcreate', '--type', 'thin-pool'", "'-n', vmtool_nvme_thin_pool",
+		"'--chunksize', vmtool_nvme_thin_chunk", "'--poolmetadatasize', vmtool_nvme_thin_metadata",
+		"'--zero', 'n'", "'--errorwhenfull', 'n'", "'--monitor', 'y'",
+		"'--metadataprofile', 'vmtool-thin'", "'--addtag', 'vmtool_thinpool'", "vmtool_nvme_vg",
+		"'%' in", "'-l'", "'-L'", "vmtool_nvme_thin_size",
+	} {
+		if !strings.Contains(code, w) {
+			t.Errorf("lvcreate task lacks %s: %s", w, code)
+		}
+	}
+	if strings.Contains(code, "--force") || strings.Contains(code, "'-f'") {
+		t.Errorf("lvcreate must not force")
+	}
+	if !hasWhen(cr.whens, "not (vmtool_nvme_thin_present | bool)") {
+		t.Errorf("create must run only when the pool is absent: %v", cr.whens)
+	}
+	prof := firstIndex(tasks, func(b botTask) bool { return strings.Contains(b.name, "LVM profile") })
+	if !(prof < probe.index && probe.index < cr.index) {
+		t.Errorf("want profile (%d) < probe (%d) < create (%d)", prof, probe.index, cr.index)
+	}
+}
+
+func TestNvmeThinAdoptAndRefuse(t *testing.T) {
+	refuse := thinTask(t, "refuse")
+	if refuse.body["ansible.builtin.fail"] == nil {
+		t.Fatalf("refuse task is not a fail")
+	}
+	rt := strings.ToLower(norm(refuse.text()))
+	for _, w := range []string{"vmtool_nvme_thin_pool", "vmtool_nvme_vg", "nothing was changed", "thin pool", "vmtool_thinpool"} {
+		if !strings.Contains(rt, w) {
+			t.Errorf("refusal lacks %q", w)
+		}
+	}
+	if !hasWhen(refuse.whens, "vmtool_nvme_thin_present | bool") || !hasWhen(refuse.whens, "not (vmtool_nvme_thin_adoptable | bool)") {
+		t.Errorf("refusal must fire when present and not adoptable: %v", refuse.whens)
+	}
+	cr := thinTask(t, "create")
+	if !(refuse.index < cr.index) {
+		t.Errorf("refusal (%d) must come before create (%d)", refuse.index, cr.index)
+	}
+	zero := thinTask(t, "zeroing")
+	prof := thinTask(t, "attach the profile")
+	for _, tk := range []botTask{zero, prof} {
+		if !hasWhen(tk.whens, "vmtool_nvme_thin_adoptable | bool") {
+			t.Errorf("%q must run only on an adopted pool: %v", tk.name, tk.whens)
+		}
+		if tk.index < refuse.index {
+			t.Errorf("%q comes before the refusal", tk.name)
+		}
+	}
+	if !hasWhen(zero.whens, "vmtool_nvme_thin_zeroing | bool") || !strings.Contains(argvText(zero), "lvchange --zero n ") {
+		t.Errorf("zeroing task wrong: %v / %s", zero.whens, argvText(zero))
+	}
+	if !hasWhen(prof.whens, "vmtool_nvme_thin_profile_now != 'vmtool-thin'") || !strings.Contains(argvText(prof), "lvchange --metadataprofile vmtool-thin ") {
+		t.Errorf("profile task wrong: %v / %s", prof.whens, argvText(prof))
+	}
+	// The probe reads what the changed-only-when-different decisions need.
+	if tx := norm(thinTask(t, "probe").text()); !strings.Contains(tx, "zero") || !strings.Contains(tx, "lv_profile") {
+		t.Errorf("probe must read zero and lv_profile too: %s", tx)
+	}
+}
+
+func TestNvmeThinSummaryShowsPool(t *testing.T) {
+	tasks := nvmeTasks(t)
+	read := thinTask(t, "usage")
+	tx := norm(read.text())
+	for _, w := range []string{"lvs", "lv_size", "data_percent", "metadata_percent", "vmtool_nvme_thin_pool"} {
+		if !strings.Contains(tx, w) {
+			t.Errorf("summary read lacks %q", w)
+		}
+	}
+	last := tasks[len(tasks)-1]
+	if read.index > last.index || !strings.Contains(last.text(), "vmtool_nvme_thin_final") {
+		t.Errorf("the final summary must show the thin read (%d, last %d)", read.index, last.index)
+	}
+}
+
+// T1: the thin-pool expressions of nvme_stripe.yml, evaluated by the installed
+// Ansible on sample `lvs --reportformat json` output. Opt-in; localhost only.
+func TestNvmeThinExpressionsEvaluate(t *testing.T) {
+	if os.Getenv("VMTOOL_TEST_ANSIBLE_SYNTAX") != "1" {
+		t.Skip("set VMTOOL_TEST_ANSIBLE_SYNTAX=1 to evaluate the expressions with ansible")
+	}
+	if _, err := exec.LookPath("ansible"); err != nil {
+		t.Skip("ansible not on PATH")
+	}
+	rp := thinTask(t, "read the probe")
+	sf, _ := rp.body["ansible.builtin.set_fact"].(map[string]any)
+	lv := taskVar(t, rp, "_lv")
+	report := func(name, attr, tags, zero, profile string) string {
+		return `{"report":[{"lv":[{"lv_name":"` + name + `","lv_attr":"` + attr + `","lv_tags":"` + tags + `","zero":"` + zero + `","lv_profile":"` + profile + `"}]}]}`
+	}
+	for _, c := range []struct {
+		label                  string
+		rc                     int
+		stdout                 string
+		present, adopt, zeroed bool
+		profile                string
+	}{
+		{"absent", 5, "", false, false, false, ""},
+		{"absent with empty report", 5, `{"report":[{"lv":[]}]}`, false, false, false, ""},
+		{"tagged thin pool, zeroing on", 0, report("thin-test", "twi-a-tz--", "vmtool_thinpool", "zero", ""), true, true, true, ""},
+		{"tagged thin pool, adopted fully", 0, report("thin-test", "twi-aotz--", "other,vmtool_thinpool", "", "vmtool-thin"), true, true, false, "vmtool-thin"},
+		{"untagged thin pool", 0, report("thin-test", "twi-a-tz--", "", "", ""), true, false, false, ""},
+		{"tag of another name", 0, report("thin-test", "twi-a-tz--", "vmtool_thinpool_x", "", ""), true, false, false, ""},
+		{"tagged but a plain LV", 0, report("thin-test", "-wi-a-----", "vmtool_thinpool", "", ""), true, false, false, ""},
+	} {
+		vars := map[string]any{"_lv": lv, "vmtool_nvme_thin_probe": map[string]any{"rc": c.rc, "stdout": c.stdout}}
+		for _, k := range []string{"vmtool_nvme_thin_present", "vmtool_nvme_thin_adoptable", "vmtool_nvme_thin_zeroing", "vmtool_nvme_thin_profile_now"} {
+			e, _ := sf[k].(string)
+			if e == "" {
+				t.Fatalf("set_fact lacks %s", k)
+			}
+			vars[k] = e
+		}
+		wantEval(t, c.label, "vmtool_nvme_thin_present", vars, c.present)
+		wantEval(t, c.label, "vmtool_nvme_thin_adoptable", vars, c.adopt)
+		wantEval(t, c.label, "vmtool_nvme_thin_zeroing", vars, c.zeroed)
+		wantEval(t, c.label, "vmtool_nvme_thin_profile_now", vars, c.profile)
+	}
+
+	// -l for a percentage, -L for a size, from the very expression in the argv.
+	code := norm(argvText(thinTask(t, "create")))
+	m := regexp.MustCompile(`\['-l' if [^\]]*\]`).FindString(code)
+	if m == "" {
+		t.Fatalf("no size-flag expression in: %s", code)
+	}
+	for size, want := range map[string]string{"70%FREE": "-l 70%FREE", "100%VG": "-l 100%VG", "2T": "-L 2T", "500G": "-L 500G"} {
+		got, ok := ansibleDebugVar(t, "_size_args", map[string]any{"_size_args": "{{ " + m + " | join(' ') }}", "vmtool_nvme_thin_size": size})
+		if ok && got != want {
+			t.Errorf("size %s: args %#v, want %q", size, got, want)
+		}
 	}
 }

@@ -24,6 +24,10 @@
 #   just prereqs veritech02 -e '{"vmtool_nvme_drives":["/dev/disk/by-id/nvme-A","/dev/disk/by-id/nvme-B"]}'
 # (scripts/prereqs.sh takes the same arguments directly). It builds an md RAID 0 array, a volume group and a libvirt logical pool
 # `nvme` (ansible/playbooks/tasks/nvme_stripe.yml). Without it nothing happens.
+# To add an LVM thin pool to an existing array (70 % of the volume group's free
+# space by default; vmtool_nvme_thin_size changes it), name its drives again and
+# set vmtool_nvme_thin; the existing volume group is adopted, the drives not written:
+#   just prereqs <host> -e '{"vmtool_nvme_drives":["/dev/disk/by-id/nvme-PLACEHOLDER_1","/dev/disk/by-id/nvme-PLACEHOLDER_2"],"vmtool_nvme_thin":true}'
 # VMTOOL_ROOT (default: this checkout) is where config.yml and vmtool live;
 # VMTOOL_BIN overrides the binary. The justfile sets HV_DIR (/opt/vmtool),
 # HV_POOL_DIR (/var/lib/vmtool/images), GO_MIN (1.21) and GO_INSTALL_VERSION

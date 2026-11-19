@@ -1127,3 +1127,30 @@ are appended, never edited in; a hook refuses rewrites.
   code: S10's "cannot relay yet" failure on every relay test; green after.
   `just check` green.
 - Commits: the S11 commit on `clone-identity`.
+
+## 2026-11-18 — T1 Host setup: a thin pool in the array's VG
+
+- `ansible/playbooks/tasks/nvme_stripe.yml`: opt-in thin-pool section
+  (`vmtool_nvme_thin`, default false; defaults in `setup_host.yml`: pool
+  `nvme-thin`, size `70%FREE` (`-l` for a `%` value, else `-L`), chunk
+  `512k`, metadata `8G`). Installs `thin-provisioning-tools`, the LVM
+  profile `ansible/files/vmtool-thin.profile` (autoextend at 80 % by 10 %)
+  to `/etc/lvm/profile/`, enables `lvm2-monitor`. A JSON `lvs` probe
+  (parsed with `from_json`, no regex): absent → `lvcreate --type
+  thin-pool … --zero n --errorwhenfull n --monitor y --metadataprofile
+  vmtool-thin --addtag vmtool_thinpool`; a tagged thin pool is adopted
+  (`lvchange --zero n` / `--metadataprofile` only when they differ);
+  anything else of that name fails the play, nothing changed. The summary
+  shows the pool's size, data % and meta %. Header comments in the task
+  file and `scripts/prereqs.sh` give the `just prereqs <host> -e …
+  "vmtool_nvme_thin":true` line. Never executed on a host.
+- Tests (`scripts/nvme_stripe_test.go`, `scripts/prereqs_test.go`):
+  defaults, every thin task guarded (also by content, not only by name),
+  create flags, adopt/refuse branches, package, profile, monitor,
+  summary; `OnlyCreatesNeverDestroys` allows only `lvcreate --type
+  thin-pool` and the two `lvchange` forms; the opt-in expression test
+  evaluates the probe parsing on seven sample reports and the `-l`/`-L`
+  choice. Red before the YAML (missing defaults, no thin tasks, no doc
+  line), green after; `just check` and `VMTOOL_TEST_ANSIBLE_SYNTAX=1 just
+  test ./scripts/` green.
+- Commits: the T1 commit on `clone-identity`.

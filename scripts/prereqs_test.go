@@ -196,58 +196,70 @@ func TestJustPrereqsPassesArgsVerbatim(t *testing.T) {
 
 // L9: the NVMe command is documented the same, byte for byte, in the README,
 // the header of prereqs.sh and the header of nvme_stripe.yml, and works as
-// written.
+// written. T1: the thin-pool command (the one that sets vmtool_nvme_thin) is
+// documented the same in prereqs.sh and nvme_stripe.yml, checked separately.
 func TestPrereqsDocsAgree(t *testing.T) {
 	re := regexp.MustCompile(`just prereqs (\S+) -e '([^']*)'`)
-	var lines []string
-	var m []string
-	for _, f := range []string{"../README.md", "prereqs.sh", nvmeStripePath} {
-		b, err := os.ReadFile(f)
-		if err != nil {
-			t.Fatal(err)
+	check := func(thin bool, files []string) {
+		var lines []string
+		var m []string
+		for _, f := range files {
+			b, err := os.ReadFile(f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var hits []string
+			for _, l := range strings.Split(string(b), "\n") {
+				l = strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(l), "#"))
+				if mm := re.FindStringSubmatch(l); mm != nil && strings.Contains(mm[2], "vmtool_nvme_thin") == thin {
+					hits = append(hits, l)
+					m = mm
+				}
+			}
+			if len(hits) != 1 {
+				t.Errorf("%s: want exactly one `just prereqs <host> -e '<json>'` line (thin=%v), got %q", f, thin, hits)
+				continue
+			}
+			lines = append(lines, hits[0])
 		}
-		var hits []string
-		for _, l := range strings.Split(string(b), "\n") {
-			l = strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(l), "#"))
-			if mm := re.FindStringSubmatch(l); mm != nil {
-				hits = append(hits, l)
-				m = mm
+		if t.Failed() {
+			return
+		}
+		for _, l := range lines[1:] {
+			if l != lines[0] {
+				t.Fatalf("the documented commands differ:\n%s", strings.Join(lines, "\n"))
 			}
 		}
-		if len(hits) != 1 {
-			t.Errorf("%s: want exactly one `just prereqs <host> -e '<json>'` line, got %q", f, hits)
-			continue
+		var v struct {
+			Drives []string `json:"vmtool_nvme_drives"`
+			Thin   bool     `json:"vmtool_nvme_thin"`
 		}
-		lines = append(lines, hits[0])
-	}
-	if t.Failed() {
-		return
-	}
-	for _, l := range lines[1:] {
-		if l != lines[0] {
-			t.Fatalf("the documented commands differ:\n%s", strings.Join(lines, "\n"))
+		if err := json.Unmarshal([]byte(m[2]), &v); err != nil {
+			t.Fatalf("documented JSON %q: %v", m[2], err)
 		}
-	}
-	var v struct {
-		Drives []string `json:"vmtool_nvme_drives"`
-	}
-	if err := json.Unmarshal([]byte(m[2]), &v); err != nil {
-		t.Fatalf("documented JSON %q: %v", m[2], err)
-	}
-	if len(v.Drives) < 2 {
-		t.Errorf("documented vmtool_nvme_drives has %d drives, want at least 2", len(v.Drives))
-	}
-	for _, d := range v.Drives {
-		if !strings.HasPrefix(d, "/dev/disk/by-id/") {
-			t.Errorf("documented drive %q is not a /dev/disk/by-id/ path", d)
+		if v.Thin != thin {
+			t.Errorf("documented vmtool_nvme_thin = %v, want %v", v.Thin, thin)
+		}
+		if len(v.Drives) < 2 {
+			t.Errorf("documented vmtool_nvme_drives has %d drives, want at least 2", len(v.Drives))
+		}
+		for _, d := range v.Drives {
+			if !strings.HasPrefix(d, "/dev/disk/by-id/") {
+				t.Errorf("documented drive %q is not a /dev/disk/by-id/ path", d)
+			}
+		}
+		if _, err := exec.LookPath("just"); err != nil {
+			return
+		}
+		want := []string{m[1], "-e", m[2]}
+		if got := justPrereqsArgv(t, want...); !sameArgs(got, want) {
+			t.Errorf("the documented command reaches prereqs.sh as %q, want %q", got, want)
 		}
 	}
+	check(false, []string{"../README.md", "prereqs.sh", nvmeStripePath})
+	check(true, []string{"prereqs.sh", nvmeStripePath})
 	if _, err := exec.LookPath("just"); err != nil {
-		t.Skip("just not installed; the command was not run")
-	}
-	want := []string{m[1], "-e", m[2]}
-	if got := justPrereqsArgv(t, want...); !sameArgs(got, want) {
-		t.Errorf("the documented command reaches prereqs.sh as %q, want %q", got, want)
+		t.Skip("just not installed; the commands were not run")
 	}
 }
 

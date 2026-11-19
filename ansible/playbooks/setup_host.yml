@@ -53,6 +53,17 @@
     vmtool_nvme_md: vmtool-nvme    # /dev/md/<name>
     vmtool_nvme_pool: nvme
 
+    # Opt-in: also make an LVM thin pool in that volume group (tagged
+    # vmtool_thinpool) for the daemon's thin clones. Needs vmtool_nvme_drives
+    # (an existing volume group is adopted). The size is any lvcreate -l / -L
+    # value: 70%FREE is 70 % of the volume group's free space when the pool is
+    # created; a size such as 2T works too.
+    vmtool_nvme_thin: false
+    vmtool_nvme_thin_pool: nvme-thin
+    vmtool_nvme_thin_size: 70%FREE
+    vmtool_nvme_thin_chunk: 512k
+    vmtool_nvme_thin_metadata: 8G
+
     # Drop /etc/profile.d/vmtool.sh so bare `virsh` matches vmtool (qemu:///system).
     vmtool_set_default_uri: true
 
