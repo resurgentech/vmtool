@@ -1518,3 +1518,16 @@ are appended, never edited in; a hook refuses rewrites.
   `--disk-size`).
 - Red: help keywords missing, README thin line absent; green; `just check` green.
 - Commits: the T13 commit on `clone-identity`.
+
+## 2026-11-18 — T14 Optional reset playbook for template authors
+
+- `ansible/playbooks/image_reset.yml`: the images' last-provisioner commands
+  in order (cloud-init wait, GRUB cmdline sed, update-grub, removable loader
+  if missing, apt-get clean, root history, 127.0.1.1 line, cloud-init clean
+  --machine-id --logs), then an async (poll 0) poweroff. Run by hand only;
+  never by vmtool, never as create --playbook.
+- `scripts/image_reset_test.go`: order, sed equal to the packer template's,
+  shutdown last and async, no setup_bot, header; opt-in --syntax-check.
+- README: the playbook paragraph in "What a template must be".
+- Red: playbook missing; green; opt-in syntax run ok; `just check` green.
+- Commits: the T14 commit on `clone-identity`.

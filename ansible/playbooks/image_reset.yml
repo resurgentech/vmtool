@@ -1,0 +1,71 @@
+---
+# Optional: make a build VM's disk fit to be saved as a template, then power
+# the VM off. These are the same commands, in the same order, as the last
+# provisioner of the packer_images templates (ubuntu2604_btrfs/template.pkr.hcl),
+# so a template made by hand and an image made by Packer end the same way.
+#
+# Run it by hand, as the LAST thing done on the build VM:
+#
+#   vmtool playbook hv1/build1 ansible/playbooks/image_reset.yml
+#
+# The VM powers itself off a couple of seconds after the playbook returns.
+# Wait until `vmtool info` or `vmtool list` shows it shut off, then
+# `vmtool templates save hv1/build1 <name>`. Do not boot it again before the
+# save: a boot gives the disk an identity back.
+#
+# vmtool never runs this itself. Never give it to `vmtool create --playbook`:
+# create reboots the guest after a create-time playbook.
+#
+# It does not fix items 2 or 9 of README.md's "What a template must be": the
+# login create will use (the packer user with password SSH, which the bot
+# setup playbook removes), and secrets or histories that every clone must not share. Check
+# those yourself first.
+- name: Image reset
+  hosts: all
+  become: true
+  tasks:
+
+    - name: Wait for cloud-init to finish
+      ansible.builtin.shell: |
+        cloud-init status --wait || true
+      changed_when: true
+
+    - name: Strip ds= and autoinstall from the kernel command line
+      ansible.builtin.shell: |
+        sed -i '/^GRUB_CMDLINE_LINUX_DEFAULT=/{s/\bautoinstall\b//g;s/\bds=\\\?"[^"]*"//g;s/\bds=nocloud[^ "]*//g;s/  */ /g;s/=" */="/;s/ *"$/"/}' /etc/default/grub
+      changed_when: true
+
+    - name: Regenerate the GRUB configuration
+      ansible.builtin.command: update-grub
+      changed_when: true
+
+    - name: Install the removable UEFI loader when it is missing
+      ansible.builtin.shell: |
+        if ! test -e /boot/efi/EFI/BOOT/BOOTX64.EFI; then grub-install --target=x86_64-efi --efi-directory=/boot/efi --removable --no-nvram; fi
+      changed_when: true
+
+    - name: Clean the apt cache
+      ansible.builtin.command: apt-get clean
+      changed_when: true
+
+    - name: Remove root's shell history
+      ansible.builtin.command: rm -f /root/.bash_history
+      changed_when: true
+
+    - name: Delete the 127.0.1.1 hostname line
+      ansible.builtin.shell: |
+        sed -i '/^127[.]0[.]1[.]1[[:space:]]/d' /etc/hosts
+      changed_when: true
+
+    - name: Forget the machine identity and cloud-init's state
+      ansible.builtin.command: cloud-init clean --machine-id --logs
+      changed_when: true
+
+    # Last. Async with poll 0 so ansible does not wait for the connection that
+    # the poweroff drops; the sleep lets this task report first.
+    - name: Power off, so the VM cannot be used again before it is saved
+      ansible.builtin.shell: |
+        sleep 2 && systemctl poweroff
+      async: 30
+      poll: 0
+      changed_when: true

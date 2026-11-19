@@ -994,18 +994,31 @@ alone; it breaks when the VM is customised.
 2. Install what the project needs: `vmtool playbook hv1/build1 ...` or
    `vmtool exec hv1/build1 -- ...`.
 3. Reset the guest as the last thing: the optional reset playbook
-   (`ansible/playbooks/image_reset.yml`) runs hermes_setup's reset commands and
-   then powers the VM off, or run the same commands by hand (what the images'
-   last provisioner does: the GRUB and EFI loader steps, `apt-get clean`,
-   delete root's history and the `127.0.1.1` line, `cloud-init clean
-   --machine-id --logs`), then `vmtool stop hv1/build1` and wait for it to be
-   shut off. Do not boot it again.
+   (below) runs the reset commands and powers the VM off, so wait for it to be
+   shut off; or run the same commands by hand (what the images' last
+   provisioner does: the GRUB and EFI loader steps, `apt-get clean`, delete
+   root's history and the `127.0.1.1` line, `cloud-init clean --machine-id
+   --logs`), then `vmtool stop hv1/build1` and wait for it to be shut off. Do
+   not boot it again.
 4. Check items 2 and 9 yourself; no playbook can.
 5. `vmtool templates save hv1/build1 t1-tpl`.
 6. Test a clone the way it will be used: `vmtool create hv1/test1 t1-tpl --pool
    nvme-thin --playbook setup_bot.yml`. It should come up with its own hostname
    and machine-id, and `ssh test1.hv1.vmtool true` should work. Delete the test
    VM afterwards.
+
+**The optional reset playbook.** `ansible/playbooks/image_reset.yml` is the
+author's shortcut for step 3, and vmtool never runs it itself. It runs the
+same commands as the last provisioner of the `packer_images` templates
+(`cloud-init status --wait`, the GRUB command-line cleanup and `update-grub`,
+`grub-install --removable` when the loader is missing, `apt-get clean`, root's
+history, the `127.0.1.1` line, `cloud-init clean --machine-id --logs`) and
+then powers the VM off a moment after it returns. Run it by hand as the last
+thing on the build VM: `vmtool playbook hv1/build1
+ansible/playbooks/image_reset.yml`; wait until `vmtool info hv1/build1` shows
+it shut off, then `vmtool templates save`. Never give it to `create
+--playbook`: create reboots the guest after a create-time playbook, and the
+reboot gives the disk an identity back. It does not fix items 2 or 9.
 
 ### Rolling out thin pools
 
