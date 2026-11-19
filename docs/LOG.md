@@ -1358,3 +1358,26 @@ are appended, never edited in; a hook refuses rewrites.
 - Tests: 14 in `internal/hosts/thindisk_test.go`, parsers, help. Red:
   build failures and help assertions; green; `just check` green.
 - Commits: the T6 commit on `clone-identity`.
+
+## 2026-11-18 — T7 Template management: list, build ahead, delete, prune
+
+- Spec (2.4.0, no bump): `TemplateInfo`, `CreateTemplateRequest`;
+  `GET/POST /v1/hosts/{host}/templates`, `DELETE
+  /v1/hosts/{host}/templates/{name}` (`?pool=`). Regenerated;
+  `spec/README.md` route rows.
+- `internal/hosts/thintemplates.go` (on `ThinPools`): list (clones, stale
+  against the daemon's manifest); prepare through T5's `ensureTemplate`
+  (room check for the template only); delete resolves `{name}` (tag name
+  or `vmtpl-` LV name) among `vmtool_template` volumes only, 409 when
+  ambiguous, takes the build lock, re-reads, removes that one LV. Wrappers
+  forward; no thin pools -> `app.ErrNoThinPools`.
+- `internal/app/templates.go`: `ListTemplates`, `ListAllTemplates`,
+  `PrepareTemplate` (create's `syncImage` first), `DeleteTemplate`,
+  `PruneTemplates` (stale image templates only). Server handlers forward
+  for a listed host; remote client; CLI `templates list|prepare|delete|
+  prune`; TUI templates view (`T`, stale mark, confirm delete).
+- Tests: delete with clones removes only the template; clone, building,
+  untagged and path names refused with no write; prune only stale image
+  templates; statuses (404/409/400); workstation forwarding; CLI, TUI,
+  remote, app. Red: build failures; green; `just check` green.
+- Commits: the T7 commit on `clone-identity`.

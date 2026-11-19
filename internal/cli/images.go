@@ -14,7 +14,9 @@ import (
 // storeImagePaths are the image commands that need the store. Like the
 // top-level storeCommands they decide the mode at their start; `images list`
 // decides it only with --store (it lists a host's pools otherwise).
-var storeImagePaths = map[string]bool{"images push": true, "images pull": true}
+// `templates prepare` syncs the image to the host as create does; the other
+// template commands never use the store.
+var storeImagePaths = map[string]bool{"images push": true, "images pull": true, "templates prepare": true}
 
 // transferProgress renders a push or pull on w as one updating line.
 func transferProgress(w io.Writer, verb string) func(done, total int64) {

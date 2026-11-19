@@ -233,7 +233,7 @@ var storeUsers = map[string]bool{
 	"vmtool metal rm": true, "vmtool metal ssh": true, "vmtool metal exec": true,
 	"vmtool metal playbook": true, "vmtool metal reboot": true,
 	"vmtool creds fetch": true, "vmtool creds forget": true,
-	"vmtool images push": true, "vmtool images pull": true,
+	"vmtool images push": true, "vmtool images pull": true, "vmtool templates prepare": true,
 }
 
 func TestStoreModeDecidedAtCommandStart(t *testing.T) {

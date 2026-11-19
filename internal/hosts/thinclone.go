@@ -266,10 +266,15 @@ func (t ThinPools) cloneThin(pool vmtool.ThinPool, vols []vmtool.ThinVolume, ima
 	return vmtool.ThinDevPath(pool.VG, newName), nil
 }
 
+// noClone is ensureTemplate's size when no clone follows the build.
+const noClone int64 = -1
+
 // ensureTemplate returns the image template of src in pool, building it if no
 // one has. One build per (VG, template LV) at a time; a second caller waits,
 // reads the report again and finds the finished template. The room check for
-// what the build and the clone promise runs before the first write.
+// what the build and the clone promise runs before the first write. A size of
+// noClone is a build ahead (templates prepare): no clone is promised, so the
+// room check is for the template alone.
 func (t ThinPools) ensureTemplate(pool vmtool.ThinPool, src cloneSource, size int64) (vmtool.Template, error) {
 	final, err := vmtool.TemplateLVName(src.sha)
 	if err != nil {
@@ -293,6 +298,9 @@ func (t ThinPools) ensureTemplate(pool vmtool.ThinPool, src cloneSource, size in
 	if tpl, ok := imageTemplate(vols, pool2, src.image, src.sha); ok {
 		// another clone built it while this one waited
 		unlock()
+		if size == noClone {
+			return tpl, nil
+		}
 		if err := vmtool.CheckThinRoom(pool2, max(tpl.SizeBytes, size)); err != nil {
 			return vmtool.Template{}, noRoom(err)
 		}
@@ -305,7 +313,11 @@ func (t ThinPools) ensureTemplate(pool vmtool.ThinPool, src cloneSource, size in
 		return vmtool.Template{}, invalidErr("clone", "%v", err)
 	}
 	// What this call promises: the template, and the clone made from it.
-	if err := vmtool.CheckThinRoom(pool2, virtual+max(virtual, size)); err != nil {
+	promise := virtual + max(virtual, size)
+	if size == noClone {
+		promise = virtual
+	}
+	if err := vmtool.CheckThinRoom(pool2, promise); err != nil {
 		return vmtool.Template{}, noRoom(err)
 	}
 	if err := t.buildTemplate(pool2, building, final, src.cache, virtual, tags); err != nil {

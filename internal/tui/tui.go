@@ -40,6 +40,7 @@ const (
 	modeConfirm
 	modeBridge
 	modeAddMachine
+	modeTemplates
 )
 
 type pane int
@@ -243,6 +244,14 @@ type model struct {
 	machineField  int
 	machineFields []formField
 	machineValues []string
+
+	// templates view (modeTemplates): every host's thin-pool templates.
+	// listTemplates lists them (app.ListAllTemplates over the resolver when nil).
+	listTemplates func(ctx context.Context) []app.HostTemplates
+	tplRows       []tplRow
+	tplCursor     int
+	// confirmBack is the view a cancelled confirm returns to (the VM list unless set).
+	confirmBack viewMode
 }
 
 // vmRow is one VM row: the VM and the host it lives on. A host that did not
@@ -516,6 +525,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case templatesMsg:
+		m.tplRows = msg.rows
+		m.clampTemplateCursor()
+		return m, nil
+
+	case templatesDoneMsg:
+		if msg.logIdx >= 0 && msg.logIdx < len(m.log) {
+			m.log[msg.logIdx].status = msg.status
+			m.log[msg.logIdx].title = msg.title
+		}
+		m.tplRows = msg.rows
+		m.clampTemplateCursor()
+		return m, nil
+
 	case tea.KeyMsg:
 		switch m.mode {
 		case modeConfirm:
@@ -530,6 +553,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updatePlaybook(msg)
 		case modeAddMachine:
 			return m.updateAddMachine(msg)
+		case modeTemplates:
+			return m.updateTemplates(msg)
 		default:
 			return m.updateList(msg)
 		}
@@ -600,6 +625,10 @@ func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "p":
 		if m.focus == paneVMs {
 			return m.enterPlaybookMode()
+		}
+	case "T":
+		if m.focus == paneVMs {
+			return m.enterTemplatesMode()
 		}
 	case "s", "S":
 		if vm, ok := m.selectedVM(); ok && m.focus == paneVMs {
@@ -703,7 +732,7 @@ func (m model) updateConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "y", "Y", "enter":
 		return m.confirmAction()
 	case "n", "N", "esc":
-		m.mode = modeList
+		m.mode, m.confirmBack = m.confirmBack, modeList
 	}
 	return m, nil
 }
@@ -1421,6 +1450,8 @@ func (m model) View() string {
 		return b.String() + m.viewConfirm()
 	case modeAddMachine:
 		return b.String() + m.viewAddMachine()
+	case modeTemplates:
+		return b.String() + m.viewTemplates()
 	}
 
 	// --- VM list pane ---
@@ -1540,7 +1571,7 @@ func (m model) View() string {
 
 	b.WriteString("\n")
 	if m.focus == paneVMs {
-		b.WriteString(helpStyle.Render("c=create  m=add machine  s=start/stop  b=reboot  a=autostart  p=playbook  t=ssh  D=delete/forget  r=refresh  tab=log  q=quit"))
+		b.WriteString(helpStyle.Render("c=create  m=add machine  s=start/stop  b=reboot  a=autostart  p=playbook  T=templates  t=ssh  D=delete/forget  r=refresh  tab=log  q=quit"))
 	} else {
 		b.WriteString(helpStyle.Render("enter=view output  tab=vms  q=quit"))
 	}

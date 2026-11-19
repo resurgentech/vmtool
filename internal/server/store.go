@@ -19,7 +19,7 @@ const warningsHeader = "X-Vmtool-Warnings"
 // records or base images. Each decides the store mode at its start, once, for
 // that request; no other operation pays for the probe. Keyed by operationId.
 var storeOperations = map[string]bool{
-	"createVM": true, "deleteVM": true, "execVM": true, "runPlaybook": true, "resizeDisk": true,
+	"createVM": true, "createTemplate": true, "deleteVM": true, "execVM": true, "runPlaybook": true, "resizeDisk": true,
 	"listMachines": true, "addMachine": true, "getMachine": true, "removeMachine": true,
 	"rebootMachine": true, "execMachine": true, "runMachinePlaybook": true,
 }

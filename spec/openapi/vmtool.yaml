@@ -853,6 +853,97 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+  /v1/hosts/{host}/templates:
+    parameters:
+      - $ref: '#/components/parameters/HostName'
+    get:
+      operationId: listTemplates
+      summary: List the thin-pool templates of a host (API 2.4.0)
+      description: >
+        Every template of every vmtool thin pool the host's daemon keeps
+        (`vmtpl-<12hex>` LVs tagged `vmtool_template`), image templates and
+        saved ones, in the helper's report order. `stale` is true for an image
+        template whose (image name, SHA-256) is not the host's current image
+        manifest entry for that name; a saved template is never stale. A host
+        with no thin pools (one served by local libvirt) answers an empty
+        list.
+      responses:
+        '200':
+          description: templates
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/TemplateInfo' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+    post:
+      operationId: createTemplate
+      summary: Build an image template ahead of the first create (API 2.4.0)
+      description: >
+        Builds the image template of `image` in the thin pool `pool` (omitted:
+        the host's default pool) from the host's cached copy of the image, as
+        the first create into that pool would; a template that is already
+        built is returned unchanged and nothing is written. When the request
+        reaches a workstation for a listed host, the workstation first syncs
+        the image to the host as `createVM` does (store fetch, relay or
+        upload). The host has no image of that name: 404. `pool` is not a thin
+        pool, the image is not in the daemon's manifest, or the request has no
+        `image`: 400. The pool has no room: 409. A host with no thin pools: 400.
+        Only `image` and `pool` are accepted in this release.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateTemplateRequest' }
+      responses:
+        '201':
+          description: the template
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TemplateInfo' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+  /v1/hosts/{host}/templates/{name}:
+    parameters:
+      - $ref: '#/components/parameters/HostName'
+    delete:
+      operationId: deleteTemplate
+      summary: Remove a template; its clones keep working (API 2.4.0)
+      description: >
+        Removes one template LV. `{name}` is the template's name (its
+        `vmtool_name`) or its LV name (`vmtpl-<12hex>`), and must be a plain
+        name. Only a volume the daemon's report lists as a template is ever
+        removed: any other name, a VM's volume and a volume still being built
+        included, is 404. A name that matches more than one template (the
+        current and a stale image template of one image, or two pools) is 409
+        listing the LV names and pools; repeat with the LV name and/or `pool`.
+        Clones are thin snapshots and are not touched.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+        - name: pool
+          in: query
+          required: false
+          description: only the template in this thin pool
+          schema: { type: string }
+      responses:
+        '200':
+          description: the template that was removed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TemplateInfo' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
   /v1/hosts/{host}/images/{name}/path:
     parameters:
       - $ref: '#/components/parameters/HostName'
@@ -1737,6 +1828,30 @@ components:
           type: number
           format: double
           description: thin pools only (API 2.4.0). Percent of the metadata area in use.
+    TemplateInfo:
+      type: object
+      required: [name, origin, pool, lv, size_bytes, used_bytes, clones, stale]
+      description: A thin-pool template (API 2.4.0).
+      properties:
+        name: { type: string, description: "the template's name: the image's name for an image template, the user's for a saved one" }
+        origin: { type: string, enum: [image, saved] }
+        image: { type: string, description: "image templates only: the image name" }
+        sha256: { type: string, description: "image templates only: the image's SHA-256, lowercase hex" }
+        pool: { type: string, description: "the thin pool it is in" }
+        lv: { type: string, description: "the LV name, vmtpl-<12hex>" }
+        size_bytes: { type: integer, format: int64 }
+        used_bytes: { type: integer, format: int64 }
+        clones: { type: integer, minimum: 0, description: "volumes in the same VG that are snapshots of this template" }
+        stale: { type: boolean, description: "an image template whose image is not the host's current manifest entry for that name" }
+        created: { type: string, format: date-time, description: "omitted when the host does not know" }
+    CreateTemplateRequest:
+      type: object
+      description: >
+        What to build a template from. This release takes `image` (and `pool`);
+        later releases add other sources as further optional fields.
+      properties:
+        image: { type: string, description: "the image to build the template of; required in this release" }
+        pool: { type: string, description: "the thin pool; omitted is the host's default pool" }
     ImageManifestEntry:
       type: object
       required: [name, foreign]
