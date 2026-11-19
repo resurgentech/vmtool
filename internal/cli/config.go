@@ -57,7 +57,28 @@ func configCmd(dirFn func() (string, error)) *cobra.Command {
 	f.StringVar(&opts.Listen, "listen", "", "listen address (default 127.0.0.1:9473)")
 	f.StringVar(&opts.TLSCert, "tls-cert", "", "TLS certificate path")
 	f.StringVar(&opts.TLSKey, "tls-key", "", "TLS key path")
+	f.StringVar(&opts.StoreURL, "store-url", "", "https URL of the store a hypervisor daemon fetches images from")
 	f.BoolVar(&tokenStdin, "token-stdin", false, "read the token from one line of stdin")
+
+	serverURL := &cobra.Command{
+		Use:   "server-url",
+		Short: "Print this client's server.url (nothing when it has no store)",
+		Args:  cobra.NoArgs,
+		RunE: func(c *cobra.Command, _ []string) error {
+			dir, err := dirFn()
+			if err != nil {
+				return err
+			}
+			cfg, err := config.Load(dir)
+			if err != nil {
+				return err
+			}
+			if cfg.StoreConfigured() {
+				fmt.Fprintln(c.OutOrStdout(), cfg.Server.URL)
+			}
+			return nil
+		},
+	}
 
 	host := &cobra.Command{
 		Use:   "host <name>",
@@ -117,6 +138,6 @@ func configCmd(dirFn func() (string, error)) *cobra.Command {
 	sf.IntVar(&shPort, "port", 0, "daemon port (default 9473)")
 	sf.StringVar(&sh.DefaultPool, "default-pool", "", "pool for new VM disks on this host")
 
-	cmd.AddCommand(write, host, setHost)
+	cmd.AddCommand(write, host, setHost, serverURL)
 	return cmd
 }

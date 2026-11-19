@@ -1047,3 +1047,36 @@ are appended, never edited in; a hook refuses rewrites.
   mutation (`pushFolder` returning before the PUT; the env strip removed)
   failing 9 tests. `just check` green.
 - Commits: the S8 commit on `clone-identity`.
+
+## 2026-11-18 — S9 The daemon fetches an image from the store (API 2.3.0)
+
+- `spec/openapi/vmtool.yaml`: `POST /v1/hosts/{host}/images/{name}/fetch`
+  (`fetchImage`) `{sha256, size, ticket}`, NDJSON `FetchImageEvent`
+  (`progress`, `done`, `error` with `reason` `store_unreachable`,
+  `store_refused`, `mismatch`, `other`); still 2.3.0.
+- `internal/server/images.go`: upload's receive path factored into
+  `beginReceive` + `receipt.receive(reader, size, sha)`; upload behaviour
+  and messages unchanged. `internal/server/fetch.go`: a hypervisor dials
+  only its `store_url` plus `/v1/images/<name>/blob` (https, no proxy, no
+  redirects, system trust store), `Authorization: Ticket`, checks the
+  store's Content-Length and X-Image-SHA256 before reading, writes through
+  the same receive path; cached with that digest → `done` at once; no
+  `store_url` → 409 "no store configured on <host>; redeploy with a
+  store". A workstation forwards for a listed host and answers 403 for its
+  own unlisted name. The ticket is scrubbed from every message.
+- `config.yml` `store_url` (validated, never echoed); `vmtool config write
+  --store-url`; `vmtool config server-url` prints the client's
+  `server.url`; `scripts/deploy.sh` adds `--store-url` only when that is
+  set (and refuses anything but a plain https URL).
+- `internal/remote/fetch.go`: `Manager.FetchImage` reads NDJSON;
+  `FetchError` kinds tell the three "cannot fetch" cases (409 no store,
+  404 old daemon, store unreachable) from mismatch and refusal.
+- Tests over in-process TLS stores: route, forward, 403, dial-only-store_url
+  with decoys, redirect not followed, untrusted store, foreign 409 with no
+  download, one-at-a-time, digest and size mismatch leave nothing,
+  cached, header mismatch, a debug-log capture across eight scenarios
+  free of the ticket; deploy stub tests both ways. Red: build failure,
+  then four mutations (ticket unscrubbed, redirects followed, header
+  checks off, cached shortcut off) and the deploy arg removed, each
+  failing its test. `just check` green.
+- Commits: the S9 commit on `clone-identity`.

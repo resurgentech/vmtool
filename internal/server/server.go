@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"log/slog"
 	"net"
@@ -32,6 +33,9 @@ type Server struct {
 	// for each request (tests inject their CA). Production leaves it empty:
 	// the system trust store.
 	StoreOptions []storeclient.Option
+	// FetchRootCAs, when set, replaces the system trust store for fetchImage's
+	// download from store_url (tests inject their CA). Production leaves it nil.
+	FetchRootCAs *x509.CertPool
 
 	// h is the handlers Handler last built (ListenAndServe warms its pool
 	// directory).
@@ -61,7 +65,13 @@ func (s *Server) Handler() http.Handler {
 	}
 	if s.Config != nil {
 		h.role = s.Config.Role
-		// A hypervisor daemon holds no store token and never uses the store.
+		// A hypervisor daemon holds no store token and never uses the store
+		// as a client; its one use is fetchImage's download from store_url,
+		// with a ticket the request brings.
+		if s.Config.Role == config.RoleHypervisor {
+			h.fetchURL = s.Config.StoreURL
+			h.fetchRoots = s.FetchRootCAs
+		}
 		if s.Config.StoreConfigured() && s.Config.Role != config.RoleHypervisor {
 			dir := s.Config.Dir
 			h.storeURL = s.Config.Server.URL

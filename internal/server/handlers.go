@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"net"
@@ -54,6 +55,12 @@ type handlers struct {
 	storeURL   string
 	storeToken func() (string, error)
 	storeOpts  []storeclient.Option
+	// fetchURL is a hypervisor daemon's `store_url` (config.yml): the one
+	// address fetchImage dials; empty means no store (fetch.go). fetchRoots
+	// is nil in production (the system trust store); tests set it. Neither
+	// ever comes from a request.
+	fetchURL   string
+	fetchRoots *x509.CertPool
 }
 
 // guestSvc is h.svc with a Tunnel for this request: the running vmtool as

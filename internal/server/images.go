@@ -1,6 +1,7 @@
 package server
 
-// The hypervisor's image cache: getImageManifest and uploadImage.
+// The hypervisor's image cache: getImageManifest, uploadImage and the receive
+// path fetchImage (fetch.go) shares.
 //
 // Hypervisors are shared: other people's VMs, and their base images, may sit
 // in the same libvirt pools. The daemon therefore owns a volume only if its
@@ -307,6 +308,9 @@ func (t tunnelMux) UploadImage(w http.ResponseWriter, r *http.Request, host api.
 type uploadErr struct {
 	code int
 	msg  string
+	// mismatch: the bytes (or their size) were not the ones named; a fetch
+	// reports it as reason `mismatch`.
+	mismatch bool
 }
 
 func (h *handlers) uploadImage(w http.ResponseWriter, r *http.Request, host, name, wantSHA string) {
@@ -359,44 +363,112 @@ func (h *handlers) storeImage(w http.ResponseWriter, r *http.Request, host, name
 	}
 	size := r.ContentLength
 
-	m, done, err := h.hosts.WithToken(requestToken(r.Context())).Resolve(host)
+	rc, uerr := h.beginReceive(r.Context(), host, name, "upload")
+	if uerr != nil {
+		return zero, uerr
+	}
+	defer rc.release()
+	// The body is read with an idle deadline pushed forward on every read.
+	ctl := http.NewResponseController(w)
+	defer func() { _ = ctl.SetReadDeadline(time.Time{}) }()
+	return rc.receive(&idleReader{r: r.Body, rc: ctl}, size, wantSHA)
+}
+
+// receipt is a name this daemon has agreed to receive: the host's Manager,
+// the cache directory and the manifest, with the name entered in the
+// one-at-a-time registry. uploadImage and fetchImage both make one
+// (beginReceive) before any byte is read or downloaded, and both put the bytes
+// through receive. release gives the Manager and the name back.
+type receipt struct {
+	h          *handlers
+	host, name string
+	verb       string // "upload" or "fetch", for messages
+	m          app.Manager
+	done       func()
+	dir        string
+	final      string
+	part       string
+	man        *vmtool.ImageManifest
+}
+
+func (rc *receipt) release() {
+	uploads.leave(rc.part)
+	rc.done()
+}
+
+func rerr(code int, format string, a ...any) *uploadErr {
+	return &uploadErr{code: code, msg: fmt.Sprintf(format, a...)}
+}
+
+// beginReceive resolves host, finds the cache directory, refuses a foreign
+// name (409) and a name already being received (409), and enters the name in
+// the registry. Nothing is read or written yet.
+func (h *handlers) beginReceive(ctx context.Context, host, name, verb string) (*receipt, *uploadErr) {
+	m, done, err := h.hosts.WithToken(requestToken(ctx)).Resolve(host)
 	if err != nil {
 		if kindOf(err) == app.KindNotFound {
-			return fail(http.StatusNotFound, "%v", err)
+			return nil, rerr(http.StatusNotFound, "%v", err)
 		}
-		return fail(http.StatusInternalServerError, "%v", err)
+		return nil, rerr(http.StatusInternalServerError, "%v", err)
 	}
-	defer done()
+	ok := false
+	defer func() {
+		if !ok {
+			done()
+		}
+	}()
 	dir, err := h.poolDirOf(host, func() (string, error) { return cachePoolDir(m, host) })
 	if err != nil {
-		return fail(http.StatusInternalServerError, "%v", err)
+		return nil, rerr(http.StatusInternalServerError, "%v", err)
 	}
 	man := h.manifest()
 
 	// Ownership, before a byte of the body is read.
 	_, listed, err := man.Get(name)
 	if err != nil {
-		return fail(http.StatusInternalServerError, "%v", err)
+		return nil, rerr(http.StatusInternalServerError, "%v", err)
 	}
 	if !listed {
 		p, exists, err := existingVolume(m, name, dir)
 		if err != nil {
-			return fail(http.StatusInternalServerError, "%v", err)
+			return nil, rerr(http.StatusInternalServerError, "%v", err)
 		}
 		if exists {
-			return fail(http.StatusConflict, "%s", foreignMsg(name, host, p))
+			return nil, rerr(http.StatusConflict, "%s", foreignMsg(name, host, p))
 		}
 	}
 
-	final := filepath.Join(dir, name)
 	part := partPath(dir, name)
-	// One upload of a name at a time in this process. Entering the registry
-	// comes before anything touches the temporary file, so a running
-	// upload's .part is never removed by a second request.
+	// One upload or fetch of a name at a time in this process. Entering the
+	// registry comes before anything touches the temporary file, so a running
+	// one's .part is never removed by a second request.
 	if !uploads.enter(part) {
-		return fail(http.StatusConflict, "an upload of %q to %s is already running; try again when it has finished", name, host)
+		what := "an upload"
+		if verb == "fetch" {
+			what = "a fetch"
+		}
+		return nil, rerr(http.StatusConflict, "%s of %q to %s is already running; try again when it has finished", what, name, host)
 	}
-	defer uploads.leave(part)
+	ok = true
+	return &receipt{h: h, host: host, name: name, verb: verb, m: m, done: done, dir: dir,
+		final: filepath.Join(dir, name), part: part, man: man}, nil
+}
+
+// receive writes size bytes of src to the name's temporary file while hashing
+// them, checks the SHA-256 and the size, and only on a match puts the file in
+// place and records it. Any failure removes the temporary file and nothing
+// else. It is the one receive path of uploadImage and fetchImage.
+func (rc *receipt) receive(src io.Reader, size int64, wantSHA string) (api.ImageManifestEntry, *uploadErr) {
+	var zero api.ImageManifestEntry
+	fail := func(code int, format string, a ...any) (api.ImageManifestEntry, *uploadErr) {
+		return zero, rerr(code, format, a...)
+	}
+	mismatch := func(format string, a ...any) (api.ImageManifestEntry, *uploadErr) {
+		e := rerr(http.StatusBadRequest, format, a...)
+		e.mismatch = true
+		return zero, e
+	}
+	name, host, m, man, dir, final, part := rc.name, rc.host, rc.m, rc.man, rc.dir, rc.final, rc.part
 	// No upload of name is running here: a .part is left from an interrupted
 	// one. Only a file or a symlink (the link itself) is removed.
 	if err := removeStalePart(part); err != nil {
@@ -430,17 +502,31 @@ func (h *handlers) storeImage(w http.ResponseWriter, r *http.Request, host, name
 	}()
 
 	sum := sha256.New()
-	n, err := copyBody(w, r.Body, io.MultiWriter(f, sum), size)
-	if err != nil {
-		return fail(http.StatusBadRequest, "upload of %q ended after %d of %d bytes: %v", name, n, size, err)
+	// At most size+1 bytes: one more than promised exposes an over-long body.
+	n, err := io.Copy(io.MultiWriter(f, sum), io.LimitReader(src, size+1))
+	if rc.verb == "fetch" {
+		if err != nil {
+			return fail(http.StatusBadRequest, "fetch of %q ended after %d of %d bytes: %v", name, n, size, err)
+		}
+		if n != size {
+			return mismatch("the store sent %s bytes, %d were expected", sizeText(n, size), size)
+		}
+		got := hex.EncodeToString(sum.Sum(nil))
+		if got != wantSHA {
+			return mismatch("SHA-256 of the download is %s, %s was expected; nothing was stored", got, wantSHA)
+		}
+	} else {
+		if err != nil {
+			return fail(http.StatusBadRequest, "upload of %q ended after %d of %d bytes: %v", name, n, size, err)
+		}
+		if n != size {
+			return fail(http.StatusBadRequest, "body is %d bytes, Content-Length said %d", n, size)
+		}
+		if got := hex.EncodeToString(sum.Sum(nil)); got != wantSHA {
+			return fail(http.StatusBadRequest, "SHA-256 of the body is %s, X-Image-SHA256 said %s; nothing was stored", got, wantSHA)
+		}
 	}
-	if n != size {
-		return fail(http.StatusBadRequest, "body is %d bytes, Content-Length said %d", n, size)
-	}
-	got := hex.EncodeToString(sum.Sum(nil))
-	if got != wantSHA {
-		return fail(http.StatusBadRequest, "SHA-256 of the body is %s, X-Image-SHA256 said %s; nothing was stored", got, wantSHA)
-	}
+	got := wantSHA
 	if err := f.Sync(); err != nil {
 		return fail(http.StatusInternalServerError, "write %s: %v", part, err)
 	}
@@ -449,8 +535,8 @@ func (h *handlers) storeImage(w http.ResponseWriter, r *http.Request, host, name
 	if err != nil {
 		return fail(http.StatusInternalServerError, "write %s: %v", part, err)
 	}
-	if h.beforeCommit != nil {
-		h.beforeCommit(name)
+	if rc.h.beforeCommit != nil {
+		rc.h.beforeCommit(name)
 	}
 
 	// Commit, under the manifest's lock so the ownership decision, the
@@ -644,16 +730,17 @@ func startCleanup(role string, r *hosts.Resolver) {
 	}
 }
 
-// copyBody copies at most size+1 bytes of body to dst (one more than
-// promised exposes an over-long body), pushing the connection's read
-// deadline forward before every read so only a stalled client times out.
-func copyBody(w http.ResponseWriter, body io.Reader, dst io.Writer, size int64) (int64, error) {
-	rc := http.NewResponseController(w)
-	defer func() { _ = rc.SetReadDeadline(time.Time{}) }()
-	src := &idleReader{r: io.LimitReader(body, size+1), rc: rc}
-	return io.Copy(dst, src)
+// sizeText is how many bytes a body that was cut off at size+1 had: "more
+// than size" when n went past it.
+func sizeText(n, size int64) string {
+	if n > size {
+		return fmt.Sprintf("more than %d", size)
+	}
+	return fmt.Sprint(n)
 }
 
+// idleReader pushes the connection's read deadline forward before every read,
+// so only a stalled peer times out.
 type idleReader struct {
 	r  io.Reader
 	rc *http.ResponseController

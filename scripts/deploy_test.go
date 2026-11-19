@@ -1023,3 +1023,82 @@ func TestDeployAcceptsOldUnitListener(t *testing.T) {
 		t.Error("a foreign vmtool.service's daemon was treated as ours")
 	}
 }
+
+// storeURLStub is the local vmtool stub for the store-url tests: `config
+// host` answers a host entry, `config server-url` prints what the test put in
+// the file serverurl (nothing when absent, like a client without a store).
+const storeURLStub = `if [[ "$1 $2" == "config host" ]]; then echo "10.0.0.5 jared 9473"; fi
+if [[ "$1 $2" == "config server-url" && -f $d/serverurl ]]; then cat "$d/serverurl"; fi`
+
+func configWriteCall(t *testing.T, e *certEnv) sshCall {
+	t.Helper()
+	calls := sshCalls(t, e.stub)
+	return calls[findCall(t, calls, "config write --token-stdin")]
+}
+
+// A client with server.url has its daemon told: --store-url on the config
+// write call, with that URL. The token still rides stdin alone.
+func TestDeployPassesStoreURL(t *testing.T) {
+	e := newDeployEnv(t, "go1.22.2\n")
+	addStub(t, e.stub, "vmtool", storeURLStub)
+	writeStub(t, e, "serverurl", "https://PLACEHOLDER-HOST:8095\n")
+	if r := e.deploy(t, nil, "veritech01"); r.code != 0 {
+		t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
+	}
+	cfg := configWriteCall(t, e)
+	if !strings.Contains(cfg.argv, "--tls-key tls/veritech01.labtwo.key --store-url https://PLACEHOLDER-HOST:8095") {
+		t.Errorf("config write call: %q", cfg.argv)
+	}
+	if cfg.stdin != deployTok+"\n" || strings.Contains(cfg.argv, deployTok) {
+		t.Errorf("token placement: argv %q stdin %q", cfg.argv, cfg.stdin)
+	}
+}
+
+// A client without server.url: no --store-url anywhere, the call is exactly
+// the one it was before.
+func TestDeployNoStoreURLWhenClientHasNone(t *testing.T) {
+	e := newDeployEnv(t, "go1.22.2\n")
+	addStub(t, e.stub, "vmtool", storeURLStub)
+	if r := e.deploy(t, nil, "veritech01"); r.code != 0 {
+		t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
+	}
+	for i, c := range sshCalls(t, e.stub) {
+		if strings.Contains(c.argv, "store-url") {
+			t.Errorf("ssh call %d mentions store-url: %q", i+1, c.argv)
+		}
+	}
+	if !strings.HasSuffix(configWriteCall(t, e).argv, "--tls-key tls/veritech01.labtwo.key") {
+		t.Errorf("config write call changed: %q", configWriteCall(t, e).argv)
+	}
+}
+
+// The URL lands in a remote shell command: anything but a plain https URL is
+// refused before any ssh call.
+func TestDeployRefusesUnsafeStoreURL(t *testing.T) {
+	for _, u := range []string{"https://x;touch /tmp/PLACEHOLDER", "https://x'y", "http://PLACEHOLDER-HOST", "https://x y", "https://$(id)"} {
+		e := newDeployEnv(t, "go1.22.2\n")
+		addStub(t, e.stub, "vmtool", storeURLStub)
+		writeStub(t, e, "serverurl", u+"\n")
+		r := e.deploy(t, nil, "veritech01")
+		if r.code == 0 || !strings.Contains(r.stderr, "server.url") {
+			t.Errorf("%q: exit %d: %s%s", u, r.code, r.stdout, r.stderr)
+		}
+		if _, err := os.Stat(filepath.Join(e.stub, "ssh.argv")); err == nil {
+			t.Errorf("%q: ssh ran", u)
+		}
+	}
+}
+
+// On this machine the same flag goes to the local config write.
+func TestDeployLocalPassesStoreURL(t *testing.T) {
+	e, _, _ := newLocalEnv(t, "10.0.0.9 ops 9475")
+	addStub(t, e.stub, "vmtool", `echo "vmtool $*" >> "$d/order"
+if [[ "$1 $2" == "config host" ]]; then cat "$d/listed"; fi
+if [[ "$1 $2" == "config server-url" ]]; then echo https://PLACEHOLDER-HOST:8095; fi`)
+	if r := e.deploy(t, nil, "PLACEHOLDER-HOST"); r.code != 0 {
+		t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
+	}
+	if argv := readOr(t, filepath.Join(e.stub, "remote-vmtool.argv")); !strings.Contains(argv, "--store-url https://PLACEHOLDER-HOST:8095") {
+		t.Errorf("config write argv %q", argv)
+	}
+}

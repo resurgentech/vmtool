@@ -735,6 +735,62 @@ paths:
         '409': { $ref: '#/components/responses/Error' }
         '411': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+  /v1/hosts/{host}/images/{name}/fetch:
+    parameters:
+      - $ref: '#/components/parameters/HostName'
+      - $ref: '#/components/parameters/ImageName'
+    post:
+      operationId: fetchImage
+      summary: Have a hypervisor's daemon download a base image from the store (API 2.3.0)
+      description: >
+        Served by hypervisor daemons (a workstation forwards it to the listed
+        {host}; for its own unlisted name it answers 403). The daemon
+        downloads `GET /v1/images/{name}/blob` from the `store_url` in its own
+        `config.yml` (a hypervisor key, https only; written by `just deploy`
+        from the client's `server.url`), sending the request's one-use
+        `ticket` as `Authorization: Ticket <ticket>`. No request field changes
+        the address: it uses the system trust store, never follows a redirect
+        and uses no proxy. The ticket is never logged, never in an error, an
+        NDJSON line or a response. Without `store_url` the answer is 409
+        `no store configured on <host>; redeploy with a store`. Before the
+        download starts the same refusals as `uploadImage` apply: a foreign
+        {name} is 409, a second fetch or upload of {name} running in this
+        daemon is 409, a bad name, digest, size or ticket shape is 400.
+        Otherwise the answer is 200 `application/x-ndjson`, one
+        FetchImageEvent per line: `progress` lines, then exactly one `done`
+        (with the manifest entry) or one `error`. An image already cached with
+        this digest and size is a single `done` line and no download. The
+        bytes go through the receive path of `uploadImage` (`.<name>.part`,
+        SHA-256 and size checked, hard link, manifest entry only on a match):
+        a mismatch leaves no file, no temporary file and no manifest entry,
+        and the `error` line has reason `mismatch`. The store's
+        `Content-Length` and `X-Image-SHA256` are checked against the
+        request's `size` and `sha256` before the body is read; a disagreement
+        is a `mismatch` error line. A store that cannot be reached from the
+        host (connection, TLS or timeout) is an
+        `error` line with reason `store_unreachable` and a message that begins
+        `store unreachable from <host>:`; a store that answers another status
+        (an expired or spent ticket is 401), including a redirect, is reason
+        `store_refused`; any
+        other failure is `other`. A daemon that predates this operation
+        answers 404 with a plain-text body (no JSON error).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FetchImageRequest' }
+      responses:
+        '200':
+          description: NDJSON progress, ending in one `done` or one `error` line
+          content:
+            application/x-ndjson:
+              schema: { $ref: '#/components/schemas/FetchImageEvent' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
   /v1/hosts/{host}/images/{name}/manifest:
     parameters:
       - $ref: '#/components/parameters/HostName'
@@ -1665,6 +1721,32 @@ components:
             true when a volume of this name exists that the daemon's manifest
             does not list: the daemon will not replace it.
         path: { type: string, description: "the cached file, or the foreign volume's path" }
+    FetchImageRequest:
+      type: object
+      required: [sha256, size, ticket]
+      properties:
+        sha256: { type: string, pattern: '^[0-9a-fA-F]{64}$', description: "SHA-256 the image must have, 64 hex digits" }
+        size: { type: integer, format: int64, minimum: 1, description: "bytes the image must have" }
+        ticket:
+          type: string
+          minLength: 16
+          maxLength: 128
+          pattern: '^[A-Za-z0-9_-]+$'
+          description: "the store's one-use download ticket for this image and digest; sent only to the daemon's store_url as `Authorization: Ticket`, never logged or echoed"
+    FetchImageEvent:
+      type: object
+      description: One line of fetchImage's NDJSON stream.
+      required: [event]
+      properties:
+        event: { type: string, enum: [progress, done, error] }
+        received: { type: integer, format: int64, description: "progress: bytes received so far" }
+        total: { type: integer, format: int64, description: "progress: bytes expected" }
+        image: { $ref: '#/components/schemas/ImageManifestEntry' }
+        error: { type: string, description: "error: what failed; never contains the ticket" }
+        reason:
+          type: string
+          enum: [store_unreachable, store_refused, mismatch, other]
+          description: "error: why. store_unreachable is the case a client may answer by relaying the image itself."
     PathResult:
       type: object
       required: [path]

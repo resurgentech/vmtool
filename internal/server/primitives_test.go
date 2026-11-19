@@ -476,7 +476,7 @@ func TestWorkstationOnlySet(t *testing.T) {
 		}
 		// The image cache is the inverse: served by hypervisors, refused
 		// (403) by a workstation in its handler (images.go).
-		hypervisorOnly := o.id == "uploadImage" || o.id == "getImageManifest"
+		hypervisorOnly := o.id == "uploadImage" || o.id == "getImageManifest" || o.id == "fetchImage"
 		if !marked[o.id] && !hypervisorOnly && o.op.Responses.Value("403") != nil {
 			t.Errorf("%s documents 403 but is not marked", o.id)
 		}

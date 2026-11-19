@@ -91,6 +91,11 @@ type Config struct {
 	// Server names the optional central store (tranche 10). Absent: images
 	// and guest credentials stay on this machine.
 	Server StoreServer `yaml:"server"`
+	// StoreURL is the store a hypervisor daemon fetches base images from
+	// (fetchImage): the one address it dials, https only. `just deploy`
+	// writes it from the client's server.url. Optional; unused by a
+	// workstation, and never used for anything but that download.
+	StoreURL string `yaml:"store_url"`
 	// Dir is the directory config.yml was loaded from.
 	Dir string `yaml:"-"`
 }
@@ -108,12 +113,15 @@ func (c *Config) StoreConfigured() bool { return c != nil && c.Server.URL != "" 
 
 // checkServerURL validates server.url. The message never echoes the value:
 // a URL can carry credentials.
-func checkServerURL(raw string) error {
-	const bad = "server.url must be an https URL with a host, like https://vmtool-store.labtwo (no credentials, query or fragment)"
+func checkServerURL(raw string) error { return checkStoreAddress("server.url", raw) }
+
+// checkStoreAddress is the check both store keys share: server.url on a
+// client, store_url on a hypervisor. key is only named in the message.
+func checkStoreAddress(key, raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil ||
 		u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.Opaque != "" {
-		return errors.New(bad)
+		return errors.New(key + " must be an https URL with a host, like https://vmtool-store.labtwo (no credentials, query or fragment)")
 	}
 	return nil
 }
@@ -249,6 +257,11 @@ func (c *Config) finish() error {
 	}
 	if c.Server.URL != "" {
 		if err := checkServerURL(c.Server.URL); err != nil {
+			return err
+		}
+	}
+	if c.StoreURL != "" {
+		if err := checkStoreAddress("store_url", c.StoreURL); err != nil {
 			return err
 		}
 	}
@@ -401,6 +414,8 @@ func parseDotEnv(b []byte) map[string]string {
 // WriteOptions are the fields `config write` may set; empty means leave as is.
 type WriteOptions struct {
 	Name, Role, Listen, TLSCert, TLSKey string
+	// StoreURL is a hypervisor's store_url (https only; validated).
+	StoreURL string
 }
 
 // Write creates or updates dir/config.yml: it applies opts, sets
@@ -414,7 +429,7 @@ func Write(dir, token string, opts WriteOptions) error {
 	return edit(dir, func(root *yaml.Node) error {
 		for _, kv := range []struct{ k, v string }{
 			{"name", opts.Name}, {"role", opts.Role}, {"listen", opts.Listen},
-			{"tls_cert", opts.TLSCert}, {"tls_key", opts.TLSKey},
+			{"tls_cert", opts.TLSCert}, {"tls_key", opts.TLSKey}, {"store_url", opts.StoreURL},
 			{"token_sha256", Hash(token)},
 		} {
 			if kv.v != "" {

@@ -31,7 +31,10 @@
 #                  pair is copied into stage/tls, the checkout's copy stays)
 #   6. config      `vmtool config write --token-stdin` run in stage/; the token
 #                  rides stdin of an ssh call with no tty and no sudo, so it
-#                  never meets a sudo prompt; config.yml holds only its hash
+#                  never meets a sudo prompt; config.yml holds only its hash.
+#                  When this machine's config.yml has server.url (`vmtool
+#                  config server-url` prints it), `--store-url <url>` is added:
+#                  the daemon's store_url, the one address fetchImage dials
 #   7. install     the rendered unit goes to stage/ on stdin; then one `ssh -t`
 #                  call runs one `sudo sh -c`, which in this order: refuses
 #                  if the port is listened on by anything but our daemon
@@ -131,6 +134,18 @@ fi
 [[ $port =~ ^[0-9]{1,5}$ ]] && ((10#$port >= 1 && 10#$port <= 65535)) || die "port '$port' for $host is not a port number."
 port=$((10#$port))
 
+# The client's store, if it has one: `vmtool config server-url` prints
+# server.url (nothing when absent). It becomes the daemon's store_url, the one
+# address its fetchImage dials. It lands in a remote shell command, so only a
+# plain https URL passes.
+store_url=$(cd "$root" && "$vmtool_bin" config server-url) || die "'vmtool config server-url' failed; fix config.yml."
+store_arg=""
+if [[ -n $store_url ]]; then
+  [[ $store_url =~ ^https://[A-Za-z0-9][A-Za-z0-9.:-]*(/[A-Za-z0-9._~/-]*)?$ ]] \
+    || die "server.url in config.yml is not a plain https URL (like https://vmtool-store.labtwo); it becomes the daemon's store_url."
+  store_arg=" --store-url $store_url"
+fi
+
 # run <command>: on the host over ssh, or here in bash when it is this machine.
 # runt is the install call: `ssh -t` so a sudo prompt works.
 if [[ $is_local == yes ]]; then
@@ -202,7 +217,7 @@ fi
 # 6. config.yml in stage/, from scratch; the token rides stdin of this call
 #    alone (no -t, no sudo). The cert paths are relative to the working
 #    directory, so they hold in stage/ and in HV_DIR alike.
-printf '%s\n' "$tok" | run "cd \"$base/stage\" && umask 077 && rm -f config.yml && ./vmtool config write --token-stdin --role hypervisor --name $host --listen 0.0.0.0:$port --tls-cert tls/$fqdn.crt --tls-key tls/$fqdn.key"
+printf '%s\n' "$tok" | run "cd \"$base/stage\" && umask 077 && rm -f config.yml && ./vmtool config write --token-stdin --role hypervisor --name $host --listen 0.0.0.0:$port --tls-cert tls/$fqdn.crt --tls-key tls/$fqdn.key$store_arg"
 
 # 7. Unit (rendered here) to stage/, then one sudo for the whole install.
 content="$(<"$template")"
