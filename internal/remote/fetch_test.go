@@ -152,3 +152,21 @@ func TestFetchImageTruncatedStream(t *testing.T) {
 		t.Errorf("err %v", err)
 	}
 }
+
+// Each relayable kind says why in a few words (the relay's one line); the
+// others say nothing.
+func TestFetchErrorRelayReason(t *testing.T) {
+	for k, want := range map[FetchFailure]string{
+		FetchNoStore:          "no store configured on the host",
+		FetchDaemonTooOld:     "the host's daemon predates fetchImage",
+		FetchStoreUnreachable: "the store is unreachable from the host",
+		FetchMismatch:         "",
+		FetchStoreRefused:     "",
+		FetchOther:            "",
+	} {
+		var r app.RelayReasoner = &FetchError{Kind: k}
+		if got := r.RelayReason(); got != want {
+			t.Errorf("%v: %q, want %q", k, got, want)
+		}
+	}
+}

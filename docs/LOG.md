@@ -1109,3 +1109,21 @@ are appended, never edited in; a hook refuses rewrites.
   remote progress mapping off: `TestCreateFetchTicketOnlyInRequestBody`
   fails). `just check` green.
 - Commits: the S10 commit on `clone-identity`.
+
+## 2026-11-18 — S11 Relay when a host cannot fetch
+
+- `internal/app/fetch.go`: on a relayable fetch failure (409 no
+  `store_url`, 404 pre-2.3.0 daemon, `store_unreachable`) the client
+  prints one line "relaying <image> to <host> through this machine:
+  <reason>" and streams the store's blob (its own token) into the daemon's
+  `UploadImage` with the store's digest and size; no local file, no local
+  lookup. A blob whose headers disagree with the store's metadata is not
+  uploaded. Mismatch and refusals do not relay: create fails. A relay that
+  fails falls back to this machine's copy with a line, or fails create
+  when there is none. `remote.FetchError.RelayReason()` gives the reason.
+- Tests, one per branch, over doubles: the three relay triggers and a
+  default reason, no relay for mismatch or refusal, relay failure with and
+  without a local copy, blob disagreeing (digest, size). Red before the
+  code: S10's "cannot relay yet" failure on every relay test; green after.
+  `just check` green.
+- Commits: the S11 commit on `clone-identity`.

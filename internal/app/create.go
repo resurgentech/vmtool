@@ -78,7 +78,7 @@ func (s *Service) syncImage(ctx context.Context, st ImageStore, in CreateVMInput
 	// local mode.
 	lacks := false
 	if f, ok := st.(ImageFetcher); ok && s.Store.Mode(ctx) == ModeStore {
-		handled, l, err := s.fetchViaStore(ctx, f, rem, in)
+		handled, l, err := s.fetchViaStore(ctx, st, f, rem, in)
 		if handled || err != nil {
 			return err
 		}

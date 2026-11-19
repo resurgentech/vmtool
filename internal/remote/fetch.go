@@ -194,6 +194,20 @@ var _ app.ImageFetcher = (*Manager)(nil)
 // Relayable makes *FetchError an app.RelayableFetch.
 func (e *FetchError) Relayable() bool { return e.Kind.Relayable() }
 
+// RelayReason is app.RelayReasoner: why the host cannot fetch, for the
+// relay's one line.
+func (e *FetchError) RelayReason() string {
+	switch e.Kind {
+	case FetchNoStore:
+		return "no store configured on the host"
+	case FetchDaemonTooOld:
+		return "the host's daemon predates fetchImage"
+	case FetchStoreUnreachable:
+		return "the store is unreachable from the host"
+	}
+	return ""
+}
+
 // FetchFromStore is app.ImageFetcher: FetchImage with app's types. The
 // ticket goes into the request body and nowhere else.
 func (m *Manager) FetchFromStore(ctx context.Context, name, ticket, sha256 string, size int64, progress func(received, total int64)) error {

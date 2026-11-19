@@ -34,6 +34,23 @@ type RelayableFetch interface {
 	Relayable() bool
 }
 
+// RelayReasoner is implemented by a relayable fetch error that can say, in a
+// few words, why the host cannot fetch ("no store configured on the host").
+// It is the reason in the one line the relay prints.
+type RelayReasoner interface{ RelayReason() string }
+
+const defaultRelayReason = "the host cannot fetch it from the store"
+
+func relayReason(err error) string {
+	var r RelayReasoner
+	if errors.As(err, &r) {
+		if s := r.RelayReason(); s != "" {
+			return s
+		}
+	}
+	return defaultRelayReason
+}
+
 // IsRelayableFetch reports whether err is a fetch failure a relay can answer.
 func IsRelayableFetch(err error) bool {
 	var r RelayableFetch
@@ -58,7 +75,7 @@ func scrub(msg, ticket string) string {
 // handled is false the store cannot serve the image (it lacks it, or failed
 // before a fetch could start) and the caller goes on to this machine's own
 // copy; lacks says the store has no such image.
-func (s *Service) fetchViaStore(ctx context.Context, f ImageFetcher, rem RemoteImage, in CreateVMInput) (handled, lacks bool, err error) {
+func (s *Service) fetchViaStore(ctx context.Context, st ImageStore, f ImageFetcher, rem RemoteImage, in CreateVMInput) (handled, lacks bool, err error) {
 	cat := s.Store.CatalogFor(ctx)
 	img, gerr := cat.Get(ctx, in.Image)
 	if gerr != nil {
@@ -95,12 +112,11 @@ func (s *Service) fetchViaStore(ctx context.Context, f ImageFetcher, rem RemoteI
 		}
 	}
 	if ferr := f.FetchFromStore(ctx, in.Image, ticket, t.SHA256, t.Size, progress); ferr != nil {
-		// S11: a relayable failure (IsRelayableFetch) is where the client
-		// will stream the image itself. Until then it fails the create.
-		msg := scrub(ferr.Error(), ticket)
 		if IsRelayableFetch(ferr) {
-			msg += "; the client cannot relay the image to this host yet"
+			// The host cannot fetch: this machine relays the store's bytes.
+			return s.relayToHost(ctx, st, cat, t, in, relayReason(ferr), ticket)
 		}
+		msg := scrub(ferr.Error(), ticket)
 		emit(in, "upload", "error", msg, "")
 		kind := KindBadGateway
 		var ae *Error
@@ -111,6 +127,63 @@ func (s *Service) fetchViaStore(ctx context.Context, f ImageFetcher, rem RemoteI
 	}
 	emit(in, "upload", "done", fmt.Sprintf("%s fetched %s from the store", in.Host, in.Image), "")
 	return true, false, nil
+}
+
+// relayToHost streams the store's copy of in.Image (this machine's own store
+// token) into the host's uploadImage with the store's digest and size: no
+// temp file, no local file. t is the store's metadata for the image. If the
+// relay cannot be done and this machine has a copy, handled is false and the
+// caller uploads that copy as in local mode, after a line saying so; with no
+// copy the create fails.
+func (s *Service) relayToHost(ctx context.Context, st ImageStore, cat ImageCatalog, t *ImageTicket, in CreateVMInput, reason, ticket string) (handled, lacks bool, err error) {
+	s.noteUpload(in, fmt.Sprintf("relaying %s to %s through this machine: %s", in.Image, in.Host, reason))
+	rerr := s.relay(ctx, st, cat, t, in)
+	if rerr == nil {
+		return true, false, nil
+	}
+	msg := scrub(rerr.Error(), ticket)
+	if s.Images != nil {
+		if _, ferr := s.Images.FindImage(in.Image); ferr == nil {
+			s.noteUpload(in, fmt.Sprintf("relaying %s to %s failed (%s); using this machine's copy", in.Image, in.Host, msg))
+			return false, false, nil
+		}
+	}
+	msg = fmt.Sprintf("relaying %s to %s failed (%s) and this machine has no copy of it", in.Image, in.Host, msg)
+	emit(in, "upload", "error", msg, "")
+	kind := KindBadGateway
+	var ae *Error
+	if errors.As(rerr, &ae) {
+		kind = ae.Kind
+	}
+	return true, false, &Error{Kind: kind, Op: "create", Err: errors.New(msg)}
+}
+
+func (s *Service) relay(ctx context.Context, st ImageStore, cat ImageCatalog, t *ImageTicket, in CreateVMInput) error {
+	body, got, err := cat.Open(ctx, in.Image)
+	if err != nil {
+		return fmt.Errorf("opening the store's copy: %w", err)
+	}
+	defer body.Close()
+	// The digest and size the upload is checked against are the store's
+	// metadata; the blob must say the same or nothing is uploaded.
+	if got.SHA256 != t.SHA256 || (got.Size > 0 && got.Size != t.Size) {
+		return fmt.Errorf("the store's copy does not match its own metadata (sha256 %q size %d, expected %q size %d)", got.SHA256, got.Size, t.SHA256, t.Size)
+	}
+	total := t.Size
+	emit(in, "upload", "start", fmt.Sprintf("relaying %s to %s (%d bytes)", in.Image, in.Host, total), "")
+	step, next := uploadStep(total), int64(0)
+	progress := func(sent int64) {
+		if sent >= next || sent == total {
+			next = sent + step
+			in.OnProgress.emitEvent(ProgressEvent{Stage: "upload", Status: "progress",
+				Detail: fmt.Sprintf("%d/%d bytes", sent, total), Sent: sent, Total: total})
+		}
+	}
+	if err := st.UploadImage(ctx, in.Image, body, total, t.SHA256, progress); err != nil {
+		return err
+	}
+	emit(in, "upload", "done", fmt.Sprintf("relayed %s to %s", in.Image, in.Host), "")
+	return nil
 }
 
 // noteUpload sends one line to the command's user (once) and, when it went

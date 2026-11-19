@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -35,6 +36,9 @@ type imgStore struct {
 	gets    atomic.Int32
 	tickets atomic.Int32
 	blobs   atomic.Int32
+	// blob, if set, is what GET .../blob serves, with X-Image-SHA256 blobSHA.
+	blob    []byte
+	blobSHA string
 }
 
 func newImgStore(t *testing.T) *imgStore {
@@ -66,6 +70,12 @@ func newImgStore(t *testing.T) *imgStore {
 			out(201, storeapi.Ticket{Ticket: imgTicket, ExpiresAt: time.Now().Add(15 * time.Minute), Image: img.Name, Sha256: img.Sha256, Size: img.Size})
 		case ok && strings.HasSuffix(rest, "/blob"):
 			f.blobs.Add(1)
+			if f.blob != nil {
+				w.Header().Set("X-Image-SHA256", f.blobSHA)
+				w.Header().Set("Content-Length", fmt.Sprint(len(f.blob)))
+				_, _ = w.Write(f.blob)
+				return
+			}
 			out(200, map[string]string{})
 		case ok:
 			f.gets.Add(1)
@@ -110,6 +120,32 @@ type fetchVMs struct {
 	fetchErr error
 	// progress is the (received, total) pairs the fake daemon reports.
 	progress [][2]int64
+	// uploadCalls records every UploadImage; uploadErrs[i] is returned by the
+	// i-th call (after the body was read) when set.
+	uploadCalls []uploadCall
+	uploadErrs  []error
+	// noLocal: this machine has no copy of the image.
+	noLocal bool
+}
+
+type uploadCall struct {
+	name, sha string
+	size      int64
+	body      string
+}
+
+func (f *fetchVMs) UploadImage(ctx context.Context, name string, r io.Reader, size int64, sha string, progress func(int64)) error {
+	i := len(f.uploadCalls)
+	b, _ := io.ReadAll(r)
+	f.uploadCalls = append(f.uploadCalls, uploadCall{name, sha, size, string(b)})
+	if progress != nil {
+		progress(int64(len(b)))
+	}
+	f.uploads++
+	if i < len(f.uploadErrs) && f.uploadErrs[i] != nil {
+		return f.uploadErrs[i]
+	}
+	return nil
 }
 
 type fetchCall struct {
@@ -161,7 +197,9 @@ func syncStore(t *testing.T, setup func(*imgStore, *fetchVMs)) *storeRun {
 	if err := os.WriteFile(local, []byte("image"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	r.src.path = local
+	if !vms.noLocal {
+		r.src.path = local
+	}
 	r.svc = &Service{
 		Images:         r.src,
 		ImageCachePath: filepath.Join(t.TempDir(), vmtool.ImageManifestFile),
@@ -309,7 +347,7 @@ func (e *relayErr) Relayable() bool { return true }
 
 // A failing fetch: the error and every event are free of the ticket, even
 // when the host's own message carries it; the failure is one stage error and
-// one *Error, and the relayable type survives for S11.
+// one *Error.
 func TestSyncStoreFetchErrorNeverHasTicket(t *testing.T) {
 	for name, ferr := range map[string]error{
 		"plain":     errors.New("hv1: disk full, ticket " + imgTicket),
@@ -319,6 +357,9 @@ func TestSyncStoreFetchErrorNeverHasTicket(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			r := syncStore(t, func(st *imgStore, v *fetchVMs) {
 				st.put("u.qcow2", imgSHA, 10)
+				// A relayable failure is relayed (S11); with no blob in the
+				// store and no local copy the relay fails and so does create.
+				v.noLocal = name != "plain"
 				v.fetchErr = ferr
 				v.progress = [][2]int64{{5, 10}}
 			})
@@ -345,8 +386,186 @@ func TestSyncStoreFetchErrorNeverHasTicket(t *testing.T) {
 			if r.vms.uploads != 0 {
 				t.Error("failed fetch fell through to an upload")
 			}
-			if name != "plain" && !IsRelayableFetch(r.err) {
-				t.Errorf("relayable type lost: %v", r.err)
+			if name == "plain" && IsRelayableFetch(r.err) {
+				t.Errorf("a plain failure became relayable: %v", r.err)
+			}
+		})
+	}
+}
+
+// relayKindErr is a relayable fetch failure with the reason the line gives.
+type relayKindErr struct{ msg, reason string }
+
+func (e *relayKindErr) Error() string       { return e.msg }
+func (e *relayKindErr) Relayable() bool     { return true }
+func (e *relayKindErr) RelayReason() string { return e.reason }
+
+type plainFetchErr struct{ msg string }
+
+func (e *plainFetchErr) Error() string { return e.msg }
+
+const relayBytes = "PLACEHOLDER-image-bytes"
+
+// relayStore puts the image in the store with bytes the relay can stream.
+func relayStore(st *imgStore) {
+	st.put("u.qcow2", imgSHA, int64(len(relayBytes)))
+	st.blob = []byte(relayBytes)
+	st.blobSHA = imgSHA
+}
+
+func relayLines(r *storeRun) []string {
+	var out []string
+	for _, n := range r.notes {
+		if strings.HasPrefix(n, "relaying ") {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+func assertRelayed(t *testing.T, r *storeRun, reason string) {
+	t.Helper()
+	if r.err != nil {
+		t.Fatal(r.err)
+	}
+	if len(r.vms.uploadCalls) != 1 || r.vms.uploadCalls[0] != (uploadCall{"u.qcow2", imgSHA, int64(len(relayBytes)), relayBytes}) {
+		t.Fatalf("uploads %+v", r.vms.uploadCalls)
+	}
+	want := "relaying u.qcow2 to hv1 through this machine: " + reason
+	if got := relayLines(r); len(got) != 1 || got[0] != want {
+		t.Fatalf("relay lines %q, want %q", got, want)
+	}
+	if r.src.n.Load() != 0 {
+		t.Errorf("this machine's copy was looked for: %d", r.src.n.Load())
+	}
+	if ents, _ := os.ReadDir("."); len(ents) != 0 {
+		t.Errorf("relay left files in the working directory: %v", ents)
+	}
+	if !strings.Contains(r.statuses(), "upload:notice") || !strings.HasSuffix(r.statuses(), "upload:progress,upload:done") {
+		t.Errorf("events %s", r.statuses())
+	}
+	for _, e := range r.events {
+		if s := fmt.Sprintf("%+v", e); strings.Contains(s, imgTicket) || strings.Contains(s, stTok) {
+			t.Errorf("event has a credential: %s", s)
+		}
+	}
+}
+
+// One test per relayable kind: the line names the reason, the store's blob
+// is streamed into UploadImage with the store's digest and size, and nothing
+// is read from or written to this machine.
+func TestSyncStoreRelaysWhenHostCannotFetch(t *testing.T) {
+	for name, c := range map[string]struct {
+		err    error
+		reason string
+	}{
+		"409 no store_url":      {&relayKindErr{"hv1: no store configured on hv1", "no store configured on the host"}, "no store configured on the host"},
+		"404 pre-2.3.0 daemon":  {&relayKindErr{"hv1: fetchImage not found", "the host's daemon predates fetchImage"}, "the host's daemon predates fetchImage"},
+		"store_unreachable":     {&relayKindErr{"hv1: store unreachable from hv1: dial tcp " + imgTicket, "the store is unreachable from the host"}, "the store is unreachable from the host"},
+		"relayable without why": {&relayErr{"hv1: x"}, "the host cannot fetch it from the store"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := syncStore(t, func(st *imgStore, v *fetchVMs) {
+				relayStore(st)
+				v.fetchErr = c.err
+			})
+			assertRelayed(t, r, c.reason)
+			if r.store.blobs.Load() != 1 {
+				t.Errorf("blob GETs %d", r.store.blobs.Load())
+			}
+		})
+	}
+}
+
+// A mismatch, a refusal and any other failure are not relayed: create fails
+// and no byte is streamed.
+func TestSyncStoreNoRelayWhenNotRelayable(t *testing.T) {
+	for name, ferr := range map[string]error{
+		"digest or size mismatch": &plainFetchErr{"hv1: digest mismatch"},
+		"store_refused":           &plainFetchErr{"hv1: store refused the ticket"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := syncStore(t, func(st *imgStore, v *fetchVMs) { relayStore(st); v.fetchErr = ferr })
+			if r.err == nil || !strings.Contains(r.err.Error(), ferr.Error()) {
+				t.Fatalf("err %v", r.err)
+			}
+			if r.store.blobs.Load() != 0 || r.vms.uploads != 0 || r.src.n.Load() != 0 || len(relayLines(r)) != 0 {
+				t.Fatalf("blobs %d uploads %d lookups %d lines %q", r.store.blobs.Load(), r.vms.uploads, r.src.n.Load(), r.notes)
+			}
+		})
+	}
+}
+
+// The relay fails (the daemon refuses the upload) and a local copy exists:
+// local-mode upload with its own line.
+func TestSyncStoreRelayFailsFallsBackToLocal(t *testing.T) {
+	r := syncStore(t, func(st *imgStore, v *fetchVMs) {
+		relayStore(st)
+		v.fetchErr = &relayKindErr{"hv1: no store configured on hv1", "no store configured on the host"}
+		v.uploadErrs = []error{errors.New("hv1: upload broke")}
+	})
+	if r.err != nil {
+		t.Fatal(r.err)
+	}
+	if len(r.vms.uploadCalls) != 2 || r.vms.uploadCalls[1].body != "image" || r.vms.uploadCalls[1].sha == imgSHA {
+		t.Fatalf("uploads %+v", r.vms.uploadCalls)
+	}
+	var fb []string
+	for _, n := range r.notes {
+		if strings.Contains(n, "relay") && strings.Contains(n, "using this machine's copy") {
+			fb = append(fb, n)
+		}
+	}
+	if len(fb) != 1 || len(r.notes) != 2 {
+		t.Fatalf("notes %q", r.notes)
+	}
+}
+
+// The relay fails and this machine has no copy: create fails, saying so.
+func TestSyncStoreRelayFailsNoLocalCopyFails(t *testing.T) {
+	r := syncStore(t, func(st *imgStore, v *fetchVMs) {
+		relayStore(st)
+		v.noLocal = true
+		v.fetchErr = &relayKindErr{"hv1: no store configured on hv1", "no store configured on the host"}
+		v.uploadErrs = []error{errors.New("hv1: upload broke")}
+	})
+	if r.err == nil {
+		t.Fatal("create succeeded")
+	}
+	for _, w := range []string{"u.qcow2", "hv1", "relay", "upload broke", "no copy"} {
+		if !strings.Contains(r.err.Error(), w) {
+			t.Errorf("error lacks %q: %v", w, r.err)
+		}
+	}
+	if len(r.vms.uploadCalls) != 1 {
+		t.Errorf("uploads %+v", r.vms.uploadCalls)
+	}
+	if strings.Contains(r.err.Error(), imgTicket) || strings.Contains(r.err.Error(), stTok) {
+		t.Errorf("credential in error: %v", r.err)
+	}
+	if last := r.events[len(r.events)-1]; last.Status != "error" {
+		t.Errorf("last event %+v", last)
+	}
+}
+
+// The store's blob disagrees with its own metadata: nothing is uploaded from
+// it; with a local copy that is used, with a line.
+func TestSyncStoreRelayBlobDisagreesDoesNotUpload(t *testing.T) {
+	for name, mut := range map[string]func(*imgStore){
+		"digest": func(st *imgStore) { st.blobSHA = imgOther },
+		"size":   func(st *imgStore) { st.blob = []byte("short") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := syncStore(t, func(st *imgStore, v *fetchVMs) {
+				relayStore(st)
+				mut(st)
+				v.fetchErr = &relayKindErr{"hv1: no store configured on hv1", "no store configured on the host"}
+			})
+			if r.err != nil {
+				t.Fatal(r.err)
+			}
+			if len(r.vms.uploadCalls) != 1 || r.vms.uploadCalls[0].body != "image" {
+				t.Fatalf("the store's blob was uploaded: %+v", r.vms.uploadCalls)
 			}
 		})
 	}
