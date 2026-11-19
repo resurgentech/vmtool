@@ -1498,3 +1498,23 @@ are appended, never edited in; a hook refuses rewrites.
   on `simplify` (not pushed).
 - Red: build failures (no List, run, BackupDeps); green; `just check` green.
 - Commits: the S16 commit on `clone-identity`; ansible_labtwo `ab0db41`.
+
+## 2026-11-18 — T13 Docs for tranche 11
+
+- README.md: thin pool host setup (`vmtool_nvme_thin`), "Thin pools: clones
+  from templates" (thick pool untouched, `pool list` columns, overcommit 80 %
+  / 4x as 409, full pool, the root helper and its sudoers line, per host,
+  timings as the CLI line only), "Templates: save, export, pull", "What a
+  template must be" (items 1-10, vmtool checks none of 1-9; author flow),
+  "Rolling out thin pools"; "Not supported" loses thin snapshots and thin
+  growth.
+- spec/README.md: "Thin pools and templates (API 2.4.0)"; route table fixed
+  (SaveTemplate, PrepareTemplate, add/resize-disk 409).
+- CLI help: create (--pool, thin), pool list, migrate-disk, templates,
+  templates save/export, images pull; pinned by `TestThinHelpNamesTheThinPath`.
+- `TestPrereqsDocsAgree` now covers README's thin prereqs line.
+- Roadmap citations corrected from the code (packer defaults in
+  `defaultedAuth`, `forgetCreds`, `identityXML`, grow only with
+  `--disk-size`).
+- Red: help keywords missing, README thin line absent; green; `just check` green.
+- Commits: the T13 commit on `clone-identity`.

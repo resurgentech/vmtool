@@ -21,7 +21,25 @@ image the first time a VM is created into the pool; a clone is a thin snapshot
 of it. Templates are removed only here. A stale template is an image template
 whose image is no longer the host's current copy under that name. A saved
 template is a project template: a snapshot of a shut-off VM's boot disk (see
-"save"). Removing a template never touches its clones.`,
+"save"). Removing a template never touches its clones.
+
+A template is per host: it lives in one host's thin pool, and nothing copies it
+to another host. To use one elsewhere, "export" writes it into its host's image
+cache as a qcow2 image, "vmtool images pull <host>/<name>" brings that to this
+machine's image_dir (or "export --push" sends it to the store), and a create on
+any host then builds its own template from it, as from a base image.
+
+A template is the disk as it was saved, and vmtool does not check that it is fit
+to clone: the author makes it so. The requirements, and what a clone shows when
+one is not met, are in the README, "What a template must be". The thick pools
+and their VMs are not touched by any of these commands.
+
+Typical flow:
+  vmtool create hv1/build1 img1 --pool nvme-thin   # no setup_bot.yml: keep the packer login
+  ...install what the project needs, reset the guest (README), shut it down...
+  vmtool stop hv1/build1
+  vmtool templates save hv1/build1 t1-tpl
+  vmtool create hv1/job1 t1-tpl --pool nvme-thin`,
 	}
 	cmd.AddCommand(templatesListCmd(e), templatesPrepareCmd(e), templatesDeleteCmd(e), templatesPruneCmd(e), templatesSaveCmd(e), templatesExportCmd(e))
 	return cmd
@@ -255,13 +273,21 @@ func templatesSaveCmd(e *env) *cobra.Command {
 same host: a thin snapshot in the VM's own pool, made by the host in one step.
 vmtool does not boot, mount, inspect or change the disk, and the VM and its
 disk are untouched, so it still starts. Clone the template into new VMs with
-create, giving <name> as the image.
+create, giving <name> as the image. The template belongs to <host> only.
 
-The VM must be shut off (vmtool stop <host>/<vm>) and its boot disk must be a
-thin volume vmtool made, so the VM must be on a thin pool. Extra disks are not
-part of the template. <name> must not be the name of a template or a cached
-image on the host; --replace replaces a saved template of that name (after the
-new one exists), never an image template or a cached image.`,
+The VM must be shut off (vmtool stop <host>/<vm>; stop asks the guest to shut
+down, so wait until it is off, and poweroff is a forced stop that leaves a
+dirty filesystem) and its boot disk must be a thin volume vmtool made, so the
+VM must be on a thin pool. Extra disks are not part of the template. <name>
+must not be the name of a template or a cached image on the host; --replace
+replaces a saved template of that name (after the new one exists), never an
+image template or a cached image.
+
+That is all vmtool checks. It does not check that the disk is fit to clone:
+that the guest was shut down cleanly and not booted since its reset, that it has
+no machine-id, keys, tokens or logins that every clone must not share, that
+create can still log in and grow it. The author does that: see the README,
+"What a template must be".`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ref, err := app.ParseVMRef(args[0], e.resolver().Local())
@@ -300,9 +326,10 @@ func templatesExportCmd(e *env) *cobra.Command {
 vmtpl-<12 hex>) into its image cache as a qcow2 image of the template's name,
 hashed, as an image the daemon created. The template's tags then carry the
 image's SHA-256, so a later create of that image name on <host> uses the
-template: no upload, no rebuild. Take the image to another host with
-"vmtool images pull <host>/<name>" and create from it there as from any base
-image (the first create on a host builds its template in a few seconds).
+template: no upload, no rebuild. A template is per host, and this is how one
+leaves it: take the image to another host with "vmtool images pull
+<host>/<name>" and create from it there as from any base image (the first
+create on a host builds that host's own template from it).
 
 A name already in the host's image cache is refused unless it is this same
 template exported again (then nothing is rewritten); remove the cached image

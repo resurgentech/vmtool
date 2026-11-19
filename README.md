@@ -87,6 +87,38 @@ The other variables are `vmtool_nvme_vg` (`vmtool-nvme`), `vmtool_nvme_md`
 Logical volumes that vmtool did not create are yours; the play never removes
 anything.
 
+**Thin pool (opt-in, `vmtool_nvme_thin`).** The same play can also add an LVM
+thin pool to that volume group, for [thin clones](#thin-pools-clones-from-templates).
+It is off unless `vmtool_nvme_thin` is true, and it needs `vmtool_nvme_drives`
+too: name the array's drives again, and the existing volume group is adopted
+and the drives are not written. The thick pool `nvme` and every volume on it
+are not touched.
+
+```bash
+just prereqs <host> -e '{"vmtool_nvme_drives":["/dev/disk/by-id/nvme-PLACEHOLDER_1","/dev/disk/by-id/nvme-PLACEHOLDER_2"],"vmtool_nvme_thin":true}'
+```
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `vmtool_nvme_thin` | `false` | make the thin pool |
+| `vmtool_nvme_thin_pool` | `nvme-thin` | the thin-pool LV's name, and the name vmtool lists it by (`--pool nvme-thin`) |
+| `vmtool_nvme_thin_size` | `70%FREE` | any `lvcreate -l` or `-L` value: 70 % of the volume group's free space when the pool is made, or a size such as `2T` |
+| `vmtool_nvme_thin_chunk` | `512k` | chunk size |
+| `vmtool_nvme_thin_metadata` | `8G` | metadata size |
+
+Check `vgs vmtool-nvme` for free space first: the pool takes its share of what
+is free at that moment. The play installs `thin-provisioning-tools` and an LVM
+profile (`/etc/lvm/profile/vmtool-thin.profile`), enables `lvm2-monitor`, and
+makes the pool tagged `vmtool_thinpool`, with zeroing off (zeroing halves
+sequential writes), `--errorwhenfull n`, monitoring on, and autoextend at 80 %
+by 10 % of the pool, which can take only what the volume group still has free.
+A pool of that name that already exists with the tag is adopted (zeroing and
+profile corrected if they differ). **One that exists without the tag, or that
+is not a thin pool, makes the play fail, naming it, and changes nothing**: a
+trial pool made by hand has to be removed by hand, or the pool named
+differently with `vmtool_nvme_thin_pool`. The play never removes, reduces or
+wipes anything.
+
 Then put the daemon on it, from the workstation:
 
 ```bash
@@ -114,7 +146,15 @@ see [One daemon per host](#one-daemon-per-host)):
   tls/<host>.labtwo.key      0600
   image-manifest.yml         written by the daemon
 /etc/systemd/system/vmtool-daemon.service   User=vmtool, ExecStart=/opt/vmtool/vmtool server
+/usr/local/libexec/vmtool-thin              root:root 0755  the one root helper, for thin pools
+/etc/sudoers.d/vmtool-thin                  root:root 0440  lets user vmtool run that one path as root
 ```
+
+The helper and its sudoers rule are new with API 2.4.0 and install on every
+deployed host, whether or not it has a thin pool (without one the helper
+refuses everything). The rule is checked with `visudo -cf` under a temporary
+name before it is moved into place; if the check fails nothing of the daemon is
+updated. See [Thin pools](#thin-pools-clones-from-templates).
 
 The staged `config.yml` and key are removed after the install. `just cert
 <host>` on its own renews the certificate the same way (into
@@ -480,6 +520,10 @@ just install        # build, cert, config.yml, systemd unit (vmtool server over 
 ./vmtool create jetfire/web ubuntu.qcow2 --extra-disk-size 50   # second empty disk as vdb
 ./vmtool create jetfire/web ubuntu.qcow2 --no-wait      # return right after start; no address or SSH wait
 ./vmtool add-disk jetfire/web 50                        # attach a new empty disk (vdb, vdc, …)
+./vmtool create hv1/web img1 --pool nvme-thin           # thin clone of a template (see Thin pools)
+./vmtool templates save hv1/build1 t1-tpl               # keep a shut-off thin VM's disk as a template
+./vmtool templates list                                 # templates on every host
+./vmtool pool list --host hv1                           # pools, with thin usage
 ./vmtool reboot jetfire/web                             # ACPI reboot, stays defined
 ./vmtool exec jetfire/web uname -a                      # exact argv, no shell (was `cmd`; API 2.0.0)
 ./vmtool exec jetfire/web -- sh -c 'echo hi | wc -c'    # shell features: run a shell; prints 3
@@ -594,7 +638,7 @@ installed on <host>`: install it (`just prereqs <host>`) or create with
 ### Disk cache (`unsafe` by default)
 
 A clone that vmtool creates in a dir pool gets `cache='unsafe'` on its disk
-driver, so guest writes are fast (a clone in a `logical` pool gets `none`; see
+driver, so guest writes are fast (a clone in a `logical` or thin pool gets `none`; see
 [Fast block disks](#fast-block-disks-lvm-on-nvme)). `unsafe` keeps guest writes that the guest believes are
 flushed in host memory; a host crash or power loss can corrupt the VM's disk.
 Pick `none` for a VM whose data matters:
@@ -659,11 +703,333 @@ vmtool delete veritech02/build1                           # removes both LVs
   must run 2.2.0 (`just deploy <host>`) before a logical pool works through
   it.
 
-Not supported: growing an LV-backed disk, `migrate-disk` to or from a logical
-pool or of a block disk (refused before the VM is stopped), thin snapshots
-or instant clones, moving or converting existing VMs, creating a logical pool
-from the CLI or REST (`pool create` makes dir pools only), and RAID levels
-other than 0.
+Not supported: growing a disk on a thick logical pool (a disk on a
+[thin pool](#thin-pools-clones-from-templates) grows), `migrate-disk` to or
+from a logical or thin pool or of a block disk (refused before the VM is
+stopped), moving or converting existing VMs (thick or qcow2 to thin), creating
+a logical or thin pool from the CLI or REST (host setup makes them; `pool
+create` makes dir pools only; vmtool never removes a thin pool), and RAID
+levels other than 0.
+
+### Thin pools: clones from templates
+
+The same volume group can also hold an LVM **thin pool** (host setup:
+[Thin pool](#fast-block-disks-opt-in-nvme-stripe)). A VM created into it is
+not a copy of its image: its boot disk is a thin snapshot of a **template**,
+which costs a fraction of a second whatever the image's size, and the VM then
+boots as usual. In a measurement on a test host before vmtool used it,
+`lvcreate -s` plus activation took 0.24 s, and a fresh clone took about 10 s
+from start until SSH answered (the cause of those 10 s is not yet found; the
+`timings:` line that `create` prints shows where its own time goes). A thin
+LV wrote 4k random at about 84k IOPS against about 135k for a thick LV, with
+the same sequential speed, when pool zeroing is off, which host setup makes
+sure of.
+
+**The thick pool and its VMs are untouched.** libvirt's `logical` pool does not
+see thin pools or thin volumes, so the thin pool sits beside the thick volumes
+in the volume group and nothing about pool `nvme` or any VM on it changes. The
+daemon touches only volumes it tagged itself (below). Existing VMs are not
+converted: a VM gets a thin disk only when it is created into a thin pool.
+
+```bash
+vmtool pool list --host hv1                                # nvme-thin, TYPE thin, with usage
+vmtool create hv1/vm1 img1 --pool nvme-thin --disk-size 40 # a snapshot of img1's template
+vmtool add-disk hv1/vm1 100 --pool nvme-thin               # thin LV vm1-2, a block disk
+vmtool resize-disk hv1/vm1 60                              # grows at once, guest included
+vmtool delete hv1/vm1                                      # removes vm1 and vm1-2; templates stay
+```
+
+- **A thin pool is a vmtool pool, not a libvirt one.** The daemon finds the
+  pools by the tag `vmtool_thinpool` and lists each as a pool named after its
+  thin-pool LV (`nvme-thin` by default), `type: thin`, path `/dev/<vg>`. A name
+  that clashes with a libvirt pool is left out, with one log line.
+  `--pool nvme-thin`, `default_pool` and `hosts.<h>.default_pool` work as for
+  any pool. Thin pools exist only behind a hypervisor daemon at API 2.4.0 or
+  newer (`just deploy <host>`): a host served by local libvirt lists none, and
+  an older daemon lists none and does not know the pool name.
+- **Volumes.** A VM's boot disk is the thin LV `<vm>`, extra disks are `<vm>-N`
+  (as on the thick pool), tagged `vmtool_vol`. Every thin disk is a block disk
+  with cache `none`, `io='native'`, one IO thread and `queues` = min(vCPUs, 4),
+  as in the thick case. Snapshots are made with the activation-skip flag off,
+  so the clones activate at host boot like any LV. `--disk-size` grows the
+  clone (a smaller size leaves the template's size); resize grows it at once
+  (`lvextend`, then the running VM is told, then the guest grows) and never
+  shrinks. `create --noclone` is refused on a thin pool, and so is
+  `--extra-disk-size` (attach a thin disk with `add-disk`). A VM name may not
+  start with `vmtpl-`. `migrate-disk` does not work with thin pools.
+  `vmtool delete` removes only `<vm>` and `<vm>-N` when they are tagged
+  `vmtool_vol`, never a template or a volume it did not make.
+- **Image templates.** The first `create` of an image into a thin pool builds
+  the image's template there once, from the host's cached qcow2 (converted to
+  raw, under a `vmtool_building` tag and renamed into place, so a half-made one
+  is never used; a leftover one is removed when the daemon starts). Every later
+  create of that image is a snapshot. A template is keyed by (image name,
+  SHA-256), so a rebuilt image gets a new template and the old one becomes
+  *stale* ([Templates](#templates-save-export-pull)). `vmtool templates
+  prepare hv1 img1` builds it ahead of the first create.
+- **`pool list` columns.** `NAME TYPE SIZE USED VIRTUAL DATA% META% ACTIVE
+  PATH`. `VIRTUAL` is the sum of the sizes of every thin volume in the pool:
+  what it has promised. `DATA%` and `META%` are the pool's data and metadata
+  use. SIZE and USED are filled for an active libvirt pool too; the others are
+  thin only. A blank cell is unknown (an older daemon). A thin pool at or above
+  80 % data or metadata has a `!` after its name.
+- **Overcommit and what a full pool does.** A thin pool lets the volumes
+  promise more than it holds, and guests that fill their disks would then run
+  it out. So every operation that adds or grows a thin volume (a clone, a
+  template build, `templates save`, `add-disk`, `resize-disk`) is refused by
+  the daemon, before any LVM call, when the pool's data or metadata use is at
+  or above 80 %, or when the sum of all thin volumes' sizes plus the new one
+  would exceed 4 times the pool's size. The answer is 409 with the numbers
+  (the CLI prints them, exit 1); nothing is written. Running VMs are not
+  touched. Autoextend at 80 % by 10 % grows the pool while the volume group has
+  free space. If the pool does fill (the volume group is out of space and
+  guests keep writing), LVM holds guest writes for a short time, then fails
+  them (`--errorwhenfull n`), and a guest sees I/O errors. Guests give space
+  back through `discard='unmap'` (Ubuntu's weekly `fstrim` timer); free the
+  rest with `vmtool delete` and `templates delete`.
+- **The root helper.** LVM needs root and the daemon (user `vmtool`) has none,
+  so it runs one script as root, `/usr/local/libexec/vmtool-thin`
+  (`deploy/vmtool-thin`), installed root:root 0755 by `just deploy`, with this
+  line in `/etc/sudoers.d/vmtool-thin`, the only sudo `vmtool` has:
+
+  ```
+  vmtool ALL=(root) NOPASSWD: /usr/local/libexec/vmtool-thin
+  ```
+
+  The daemon runs `sudo -n /usr/local/libexec/vmtool-thin <verb> <args>`. The
+  verbs are fixed (`report`, `create`, `snapshot`, `extend`, `remove`,
+  `rename`, `tag`, `import`, `export`), every name and number is validated,
+  and the helper never runs LVM with options from its caller. It acts only in
+  a volume group that holds a `vmtool_thinpool` pool and, except for `report`,
+  only on thin volumes tagged `vmtool_vol`, `vmtool_template` or
+  `vmtool_building`: it never removes a pool, never touches an untagged or a
+  thick volume, and never anything of another tenant. `report` lists the
+  names, sizes and tags of every LV in such a volume group, read-only. Its file
+  paths are limited to the daemon's image cache directory, regular files only,
+  no symlinks, and the image converter (`qemu-img`) runs as the `vmtool` user
+  on that one volume's device node, never as root. `sudo -l -U vmtool` on a
+  host shows exactly the helper line.
+- **A template is per host.** It lives in one host's thin pool; vmtool never
+  copies one to another host by itself. [Templates](#templates-save-export-pull)
+  says how to take one to another host.
+- **Timings.** `create` ends with one stdout line such as `timings: clone
+  0.3s, start 1.1s, wait_ip 2.0s, wait_ssh 7.0s, grow_disk 0.6s, total 11.0s`
+  (the stages that ran; also after a failure). REST callers of `createVM` get
+  none: that route is a plain JSON call with no progress stream.
+
+### Templates: save, export, pull
+
+Two kinds of template live in a thin pool, and `vmtool templates list` shows
+both (`NAME ORIGIN IMAGE SHA256 POOL SIZE USED CLONES STALE CREATED`, names as
+`host/name`; one `ERROR` row for a host that does not answer):
+
+- **image** templates, one per (image name, SHA-256) and pool, built by the
+  first create or by `templates prepare`. An image template is **stale** when
+  that image is no longer the host's current copy under that name (the image
+  was rebuilt or deleted). `templates prune <host>` removes every stale one.
+- **saved** templates, made by you from a VM (below). They are never stale and
+  are removed only by name.
+
+```bash
+vmtool templates delete hv1/t1-tpl      # one template; its clones keep working
+vmtool templates prune hv1              # every stale image template
+```
+
+Removing a template never affects its clones: a thin snapshot does not depend
+on its origin. A name that matches more than one template (a current and a
+stale image template, or the same name in two pools) is refused with 409 and
+the candidates listed; repeat with the LV name (`vmtpl-<12 hex>`, the SHA256
+column) and `--pool`. `templates prune` is client-side: it lists, then deletes
+each stale template by its LV name. A VM's volume is never removed by these
+commands. In the TUI, `T` lists templates (`D` deletes after a confirmation) and
+`W` on a VM row saves it.
+
+**Save.** `vmtool templates save hv1/build1 t1-tpl` keeps the boot disk of a
+shut-off VM on a thin pool as it is: the daemon takes a thin snapshot of it in
+one step, and the VM keeps working and can be started again. vmtool does not
+boot, mount or read the disk. It checks only what it can see without that: the
+VM is shut off (not running, paused or crashed: stop it first and wait),
+its boot disk is a thin volume vmtool made, the pool has room, and the name is
+not used by a template or a cached image on the host. `--replace` replaces a
+saved template of that name (the new one is made first), never an image
+template or a cached image. A VM with extra disks (`vdb`...) is saved, with a
+warning: they are not part of the template. A template is created in the VM's
+own pool and belongs to that host.
+
+Clone it with `vmtool create hv1/job1 t1-tpl --pool nvme-thin`: the template's
+name is given as the image, and the host needs no copy of an image of that
+name. Whether the clone is fit to use is what
+[What a template must be](#what-a-template-must-be) is about.
+
+**To another host.** A template is per host, so it moves as an image:
+
+```bash
+vmtool templates export hv1/t1-tpl       # the daemon writes it as a qcow2 into its image cache
+vmtool images pull hv1/t1-tpl            # that qcow2 into this machine's image_dir (or --to <dir>)
+vmtool create hv2/job1 t1-tpl --pool nvme-thin   # hv2 builds its own template from it, then clones
+```
+
+`templates export` makes the daemon convert the template to qcow2 (through the
+root helper) into its image cache under the template's name, hash it and record
+it as an image the daemon created; the template's tags then carry the image's
+SHA-256, so a later create of `t1-tpl` on that same host clones the template
+with no upload and no rebuild. A name already in the host's image cache is
+refused unless it is this same template exported again (then nothing is
+rewritten); an image template exports only as its own cached image, so only a
+saved template makes a new image. `images pull host/<name>` (an argument with a
+`/`; a bare `images pull <name>` pulls from the store) downloads an image that
+daemon created, never a file it did not create, to a `.part` file, checks its
+size and SHA-256 and links it into place; an identical file already there is
+left as it is, a different one is refused, and there is no `--force`. The first
+create on the other host builds that host's own template in a few seconds.
+With the store, `images push` sends the pulled file there, and `vmtool
+templates export hv1/t1-tpl --push` streams from the daemon into the store with
+no file on this machine (the store must be configured and answering; without
+one the command refuses before it asks the daemon). A daemon at API 2.4.0 or
+newer serves both routes.
+
+### What a template must be
+
+A saved template is the disk exactly as it was, and **vmtool does not check
+items 1 to 9 below**: the author makes the template fit, and vmtool says here
+what fit means. Item 10 is the one thing `templates save` checks. Each item
+says why vmtool needs it and what a clone shows when it is not met. Most of it
+comes for free from a VM made from one of the `packer_images` images and left
+alone; it breaks when the VM is customised.
+
+1. **Shut down cleanly, and not booted again before `templates save`.** The
+   template is the disk as it is. `vmtool stop` asks the guest to shut down
+   (`Manager.Stop` calls libvirt's `Shutdown`, in `pkg/vmtool/libvirt.go`); a
+   guest that ignores it stays running and `save` refuses until it is off.
+   `vmtool poweroff` is a forced stop and leaves the filesystem as a crash
+   would. A boot after the reset gives the disk an identity again (items 3 and
+   4). *If not met:* clones replay a dirty filesystem journal, or all share the
+   identity of that last boot. Booting the build VM *after* `save` is fine: the
+   template is a snapshot and does not change.
+2. **A login create can use: the user and password create is told, with
+   password SSH allowed, and passwordless sudo.** A new VM has no credentials
+   folder (create forgets any left by an earlier VM of the name, `forgetCreds`
+   in `internal/app/create.go`), so create logs in with `--ssh-user` and
+   `--ssh-pass`, which default to `packer` and `packer` (`defaultedAuth` in
+   `pkg/vmtool/ssh.go`, reached through `ResolveVMAuth`), by password
+   (ansible's `ansible_ssh_pass`, so `sshpass` on the machine running create),
+   and runs the grow step and any playbook with become
+   (`ansible_become: true`, `pkg/vmtool/inventory.go`). So: **do not run
+   `setup_bot.yml` on a template's VM** (it deletes `packer` and installs
+   `/etc/ssh/sshd_config.d/01-vmtool-no-password.conf`, which turns password
+   login off), and keep `ssh_pwauth: true` from
+   `/etc/cloud/cloud.cfg.d/99-vmtool.cfg`. A template with another login needs
+   `--ssh-user` and `--ssh-pass` on every create. *If not met:* create fails at
+   the SSH wait with `<host>/<vm> did not accept SSH within ...` (`wait_ssh`);
+   the VM is left defined and running.
+3. **No machine identity: an empty `/etc/machine-id`**, and
+   `/var/lib/dbus/machine-id` a link to it or absent. vmtool does not
+   regenerate it: systemd makes a new one at first boot only when the file is
+   empty, which `cloud-init clean --machine-id` does (the last step of the
+   `packer_images` builds, `provisioner "shell"` at the end of
+   `packer_images/qemu_images/ubuntu2404/template.pkr.hcl`). *If not met:*
+   every clone has the same machine-id, so the same systemd and journal
+   identity and, on a network config without `dhcp-identifier: mac`, the same
+   DHCP lease: two VMs at one address (see [Two VMs show the same
+   IP](#two-vms-show-the-same-ip)).
+4. **cloud-init enabled, cleaned, and still reading vmtool's datasource.**
+   vmtool gives each VM its identity only through the SMBIOS serial
+   `ds=nocloud;h=<name>;i=<uuid>` (`identityXML`, `pkg/vmtool/libvirt.go`); a
+   cloud-init that is cleaned sees a new instance and sets the hostname,
+   regenerates the SSH host keys (cloud-init's default; this repository does
+   not set it), grows the root partition and applies the network config. Keep
+   `99-vmtool.cfg` (`datasource_list: [NoCloud, None]`, `preserve_hostname:
+   false`), do not disable cloud-init, do not set `ssh_deletekeys: false`, and
+   run `cloud-init clean --logs` last (with `--machine-id`, as item 3 needs).
+   *If not met:* clones keep the template's hostname and share its SSH host
+   keys, and the root filesystem is not grown at boot.
+5. **No leftover hostname line:** no `127.0.1.1 <old name>` line in
+   `/etc/hosts` (the images delete it as the step before the clean; cloud-init's
+   `manage_etc_hosts: localhost` does not remove one). *If not met:* each clone
+   resolves its own name to the template VM's old name.
+6. **Network by DHCP on any `en*` interface, not tied to a MAC or a fixed
+   address.** Each clone gets a new MAC and vmtool finds its address from
+   libvirt by that MAC (`WaitForIP`, `pkg/vmtool/libvirt.go`). Keep the images'
+   `/etc/netplan/99-wildcard.yaml` (`match: name: "en*"`, `dhcp4: true`,
+   `dhcp-identifier: mac`) and the `network: {config: disabled}` that keeps
+   cloud-init from rewriting it. *If not met:* the clone gets no address and
+   create fails at the address wait (`got no address within ...`; the VM is
+   left running).
+7. **A root filesystem create can grow, and Python.** Root is a partition (not
+   an LVM volume inside the guest, not a whole-disk filesystem) that can
+   extend to the end of the disk, ext4 or btrfs (xfs is not handled), with
+   `growpart`, `findmnt`, `lsblk` and `resize2fs` (or `btrfs`) present
+   (`growDiskCommand`, `pkg/vmtool/ansible.go`), and `python3`, which Ansible
+   needs for every step create runs after the address wait, the SSH wait
+   included. `--disk-size` grows the volume and then the guest; create's own
+   grow step runs only when `--disk-size` is given and not with `--no-wait`,
+   and cloud-init's `growpart` does the same at first boot. *If not met:*
+   create fails at `grow_disk` (`vmtool grow: cannot find root partition ...`
+   for LVM or a whole-disk filesystem), or the filesystem stays at the
+   template's size. A smaller `--disk-size` leaves the template's size: **the
+   template's virtual size is every clone's minimum.**
+8. **Boots with a fresh NVRAM.** Every clone gets new, empty UEFI variables, so
+   only the removable loader boots: `/boot/efi/EFI/BOOT/BOOTX64.EFI` (the
+   images install it with `grub-install --removable` when it is missing), and
+   no `ds=` or `autoinstall` on the kernel command line (the images strip
+   both). Firmware is not detected: a BIOS template needs `create --firmware
+   bios` every time. *If not met:* the clone stops in firmware and create fails
+   at the address wait with the UEFI hint (`the VM uses UEFI firmware; an image
+   installed for BIOS does not boot under UEFI ...`); the VM is left running.
+9. **Nothing every clone must not share.** No private keys, tokens, `.env`
+   files, cloud or registry credentials, `authorized_keys` entries for one
+   machine's key (such as the `bot` key from `setup_bot.yml`), shell histories
+   or agent state. vmtool cannot see these, and **every clone, and everyone who
+   can reach any clone, gets them.** (hermes_setup's image build checks its
+   template home for `.ssh` and for `KEY=` lines before its reset: `docs/IMAGE.md`,
+   step 5.)
+10. **On a thin pool, shut off.** The one item `templates save` checks, with
+    the VM's boot disk being a thin volume vmtool made and the name being free.
+
+**The author's flow.**
+
+1. Create a build VM from a base image on the thin pool, **without**
+   `--playbook setup_bot.yml`, so it keeps the `packer` login:
+   `vmtool create hv1/build1 img1 --pool nvme-thin --disk-size 40`.
+2. Install what the project needs: `vmtool playbook hv1/build1 ...` or
+   `vmtool exec hv1/build1 -- ...`.
+3. Reset the guest as the last thing: the optional reset playbook
+   (`ansible/playbooks/image_reset.yml`) runs hermes_setup's reset commands and
+   then powers the VM off, or run the same commands by hand (what the images'
+   last provisioner does: the GRUB and EFI loader steps, `apt-get clean`,
+   delete root's history and the `127.0.1.1` line, `cloud-init clean
+   --machine-id --logs`), then `vmtool stop hv1/build1` and wait for it to be
+   shut off. Do not boot it again.
+4. Check items 2 and 9 yourself; no playbook can.
+5. `vmtool templates save hv1/build1 t1-tpl`.
+6. Test a clone the way it will be used: `vmtool create hv1/test1 t1-tpl --pool
+   nvme-thin --playbook setup_bot.yml`. It should come up with its own hostname
+   and machine-id, and `ssh test1.hv1.vmtool true` should work. Delete the test
+   VM afterwards.
+
+### Rolling out thin pools
+
+In this order, one host at a time. Each step is safe to stop after.
+
+1. **Deploy** the helper, its sudoers line and API 2.4.0: `just deploy <host>`
+   (and rebuild the workstation's `vmtool` for the new `pool list` columns and
+   commands). Nothing visible changes: `vmtool pool list --host <host>` still
+   shows no thin pool. `sudo -l -U vmtool` on the host shows exactly the
+   helper line.
+2. **Make the pool** with `vmtool_nvme_thin`, after checking `vgs vmtool-nvme`
+   for free space, then run the `just prereqs` line of
+   [Thin pool](#fast-block-disks-opt-in-nvme-stripe) with the array's own drive
+   ids and `"vmtool_nvme_thin":true`. The pool then shows in `pool list`.
+3. **Create thin** with `--pool nvme-thin`: the first create of an image builds
+   its template (cold), the next ones are snapshots (warm). `templates list`
+   shows the template. After a host reboot the clones start again.
+4. **Make it the default** where wanted: `default_pool: nvme-thin` under
+   `hosts.<host>` in the workstation's `config.yml`
+   ([`default_pool`](#a-hosts-default-pool-for-new-vm-disks-default_pool)).
+   Existing VMs stay where they are; move one by `vmtool delete` and `create
+   --pool nvme-thin`. With a thin default pool, `create --noclone` and
+   `--extra-disk-size` are not for those creates and may be refused by the
+   daemon: name another pool for them.
 
 ## Guest SSH and `ssh-config`
 

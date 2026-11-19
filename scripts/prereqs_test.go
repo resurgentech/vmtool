@@ -257,7 +257,7 @@ func TestPrereqsDocsAgree(t *testing.T) {
 		}
 	}
 	check(false, []string{"../README.md", "prereqs.sh", nvmeStripePath})
-	check(true, []string{"prereqs.sh", nvmeStripePath})
+	check(true, []string{"../README.md", "prereqs.sh", nvmeStripePath})
 	if _, err := exec.LookPath("just"); err != nil {
 		t.Skip("just not installed; the commands were not run")
 	}

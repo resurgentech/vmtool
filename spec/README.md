@@ -408,8 +408,8 @@ the body and keeps the error.
 | `List` | `listVMs` | |
 | `Delete(name, noclone)` | `deleteVMDefinition` | Raw. `deleteVM` is the workstation workflow: it also forgets `.machines/<host>/<vm>/` credentials. |
 | `MigrateDisk` | `migrateDisk` | Method, then `Info`. |
-| `AddDisk` | `addDisk` | Method, then `Info`; result carries `path` and `target` (`DiskDevice`). |
-| `ResizeDisk` | `resizeVMVolume` | New. libvirt only. `resizeDisk` is the workstation workflow that also grows the guest. |
+| `AddDisk` | `addDisk` | Method, then `Info`; result carries `path` and `target` (`DiskDevice`). On a thin pool the volume is the thin LV `<vm>-N`; a pool with no room is 409 with the numbers (see [Thin pools and templates](#thin-pools-and-templates-api-240)). |
+| `ResizeDisk` | `resizeVMVolume` | New. libvirt, and a thin boot volume (extend, then `BlockResize` when running); a thick `logical` disk is refused. A thin pool with no room is 409 with the numbers. `resizeDisk` is the workstation workflow that also grows the guest. |
 | `WaitForIP` | `waitVMIP` | New. `timeout_seconds` 1..3600, default 120. |
 | `Define` | `defineVM` | New. `PUT vms/{name}/definition`; no `ssh_user`/`ssh_pass`. |
 | `CreateVolume` | `createVolume` | New. Returns `{path}`. |
@@ -421,10 +421,10 @@ the body and keeps the error.
 | `DeleteImage` | `deleteImage` | `pool` query, default `default`. |
 | `ListPools` | `listPools` | `PoolInfo{name,path,active,type?,size_bytes?,used_bytes?,virtual_bytes?,data_percent?,metadata_percent?}`; `type` (2.2.0) is libvirt's pool type (`dir`, `logical`, …), or `thin` (2.4.0) for an LVM thin pool a hypervisor daemon lists itself. The usage fields (2.4.0) are omitted when unknown; libvirt pools fill size and used, thin pools all five. `GET` VM adds `disk_backing` (`file`/`block`) the same release, and `uuid` (the domain UUID) in 2.3.0. |
 | `CreatePool` | `createPool` | |
-| `ListTemplates` (`app.TemplateManager`) | `listTemplates` | New (2.4.0). Optional interface: a hypervisor daemon with thin pools, and the remote client for one. `TemplateInfo{name,origin,image?,sha256?,pool,lv,size_bytes,used_bytes,clones,stale,created?}`; `stale` is an image template whose (image, SHA-256) is not the daemon's current manifest entry. A host with no thin pools answers `[]`. |
-| `PrepareTemplate` | `createTemplate` | New (2.4.0). `POST templates` `{image, pool?}` builds the image template ahead through the same path the first create into the pool uses (room check, building LV, import, tag, rename, per-(VG, template LV) lock); an existing one is returned, nothing written. Only `image` and `pool` are accepted in 2.4.0; other sources are added as optional fields later. 404 no such image on the host, 400 not a thin pool / not in the manifest / no thin pools, 409 no room. A workstation syncs the image to a listed host first, as `createVM` does. |
+| `ListTemplates` (`app.TemplateManager`) | `listTemplates` | New (2.4.0). Optional interface: a hypervisor daemon with thin pools, and the remote client for one. `TemplateInfo{name,origin,image?,sha256?,pool,lv,size_bytes,used_bytes,clones,stale,created?}`; `stale` is an image template whose (image, SHA-256) is not the daemon's current manifest entry. A host with no thin pools answers `[]`. `extra_disks` is set only by a save. |
+| `PrepareTemplate` | `createTemplate` | New (2.4.0). `POST templates` `{image, pool?}` builds the image template ahead through the same path the first create into the pool uses (room check, building LV, import, tag, rename, per-(VG, template LV) lock); an existing one is returned, nothing written. `from_vm`, `name` and `replace` select the save form (next row). 404 no such image on the host, 400 not a thin pool / not in the manifest / no thin pools, 409 no room. A workstation syncs the image to a listed host first, as `createVM` does. |
 | `DeleteTemplate` | `deleteTemplate` | New (2.4.0). `DELETE templates/{name}?pool=`; `{name}` is the template's name or its LV name (`vmtpl-<12hex>`). Removes only a volume the daemon's report lists as a template; anything else is 404. A name matching several templates is 409 listing them. Clones are never touched. Returns the removed `TemplateInfo`. `templates prune` is the workstation workflow: it lists, then deletes each stale template by LV name and pool. |
-
+| `SaveTemplate` (`app.TemplateSaver`) | `createTemplate` | New (2.4.0), the same route as `PrepareTemplate` with `{from_vm, name, replace?}` instead of `{image, pool}`: exactly one of `image` and `from_vm` (both or neither 400; with `from_vm`, `name` is required and `pool` refused; with `image`, `name` and `replace` refused). The host snapshots the shut-off VM's boot LV (a `vmtool_vol` thin LV) into a new saved template in the VM's own pool, in one helper write, tagged `vmtool_template`, `vmtool_origin=saved`, `vmtool_name=<name>`; nothing is booted, mounted or read. VM not shut off 409; disk not on a thin pool or bad name 400; VM unknown 404; name used by a template or a cached image 409 (`replace` replaces only a saved template, new one made first); no room 409. The 201 `TemplateInfo` carries `extra_disks` (the VM's targets other than `vda`, not part of the template). No image is synced. |
 | `LookupTemplate` / `ExportTemplateVolume` / `RecordTemplateSHA` (`app.TemplateVolumeExporter`); client `app.TemplateExporter` | `exportTemplate` | New (2.4.0). `POST templates/{name}/export?pool=`, `application/x-ndjson`, one `ExportTemplateEvent` per line: `progress` (stage `export` while the helper writes `.<name>.part`, stage `hash`), then one `done` (the manifest entry) or one `error`. `{name}` is a template's name or LV name (404 none, 409 several); the image takes the template's name. Same receive-path refusals as `uploadImage` (foreign 409, one at a time 409); a name the manifest lists is 409 unless it is the same template re-exported (recorded `sha256` equals the entry's and the file is in place: one `done`, no rewrite). The digest is written to the template's tags, so a later create of that image on the host clones the template: no upload, no rebuild. Served by `tunnelMux` (raw handler, `internal/server/export.go`). A workstation forwards to a listed host. |
 | `OpenImageBlob` (`app.ImageBlobSource`) | `getImageBlob` | New (2.4.0). `GET images/{name}/blob`, `application/octet-stream` with `Content-Length` and `X-Image-SHA256`. Only a file the daemon's manifest lists: not listed 404 (409 if a foreign volume has the name), symlink / non-regular / size differs from the manifest 409, name must be a valid image name (400). Served by `tunnelMux` (`internal/server/export.go`). `vmtool images pull <host>/<name>` writes it to `image_dir` / `--to` (`.part`, size and digest checked, linked in, never overwrites). |
 | `ImageManifest` (`app.ImageStore`) | `getImageManifest` | New. Optional interface, remote only. `{name, sha256?, size?, foreign, path?}`. |
@@ -438,7 +438,14 @@ absolute and, after `filepath.Clean` and symlink resolution of the existing
 prefix, strictly inside the path of a libvirt storage pool; otherwise `400`.
 A pool of type `logical` is the exception: its volumes are `/dev/<vg>/<lv>`,
 symlinks to `/dev/dm-N`, so there the cleaned path is accepted unresolved
-when it is exactly `<pool path>/<one name>` and exists.
+when it is exactly `<pool path>/<one name>` and exists. A thin volume is the
+other exception: exactly `/dev/<vg>/<lv>` (no `..`, no `/dev/mapper`, no
+symlink resolution) for a thin LV the daemon's helper report lists as a
+`vmtool_vol` of a vmtool thin pool; a template is accepted only as
+`cloneVolume`'s `base_path`. (In a volume group that also holds a `logical`
+pool, as on the hosts host setup builds, the logical rule above accepts any LV
+path of it too; there the daemon's own `defineVM` and `resizeVolume` refuse
+template and building LVs, and a clone's base must be a template.)
 The cleaned path is what reaches libvirt. Names in bodies (`new_name`, volume
 `name`, the VM name in `.../vms/{name}/definition`) must be plain names. The
 check is point-in-time; it is defence in depth for a loopback, token-guarded
@@ -519,6 +526,89 @@ the workstation's resolver then fills that pool in for new VM disks only
 (clone target, `createVolume`, `addDisk`, `defineVM`'s pool) before any
 request, so a daemon receives it as an explicit pool. Images keep the cache
 pool.
+
+## Thin pools and templates (API 2.4.0)
+
+One additive bump, 2.3.0 to 2.4.0, carries everything below; no existing
+route, field or status changed meaning. User-facing description, setup and the
+rollout order are in the root `README.md` ("Thin pools"); this section is the
+contract. A thick `logical` pool and the VMs on it are not affected by any of
+it, and a template belongs to one host's daemon.
+
+**A thin pool in the API.** A hypervisor daemon lists each LVM thin pool it
+manages (an LV tagged `vmtool_thinpool`) as a `PoolInfo` named after the
+thin-pool LV (default `nvme-thin`), `type: thin`, `path: /dev/<vg>`, beside
+libvirt's pools; a name that clashes with a libvirt pool is left out. `PoolInfo`
+gains optional `size_bytes`, `used_bytes`, `virtual_bytes` (the sum of the sizes
+of every thin volume: what the pool has promised), `data_percent` and
+`metadata_percent`; an absent field is unknown, not 0. libvirt pools fill size
+and used when active. A pool name is used anywhere a pool is (`pool` in
+`createVM`, `addDisk`, `cloneVolume`...), including through `default_pool`. A
+daemon older than 2.4.0 lists no thin pool and answers 404 for the new routes.
+LVM is reached by the daemon only through one root helper, not libvirt (root
+README, "The root helper"); the helper's tags are `vmtool_vol` (a VM's disk),
+`vmtool_template`, `vmtool_building`, `vmtool_name`, `vmtool_sha256` and
+`vmtool_origin`, and nothing without them is touched.
+
+**Routes** (all in `openapi/vmtool.yaml`, rows in the table above):
+
+| Route | Operation | Use |
+|---|---|---|
+| `GET /v1/hosts/{host}/templates` | `listTemplates` | every template of every thin pool; `[]` without thin pools |
+| `POST /v1/hosts/{host}/templates` | `createTemplate` | `{image, pool?}` builds an image template ahead; `{from_vm, name, replace?}` saves a shut-off VM as a saved template; 201 `TemplateInfo` |
+| `DELETE /v1/hosts/{host}/templates/{name}?pool=` | `deleteTemplate` | removes one template; 404 for anything that is not a template, 409 listing the candidates when the name is ambiguous |
+| `POST /v1/hosts/{host}/templates/{name}/export?pool=` | `exportTemplate` | NDJSON, below |
+| `GET /v1/hosts/{host}/images/{name}/blob` | `getImageBlob` | the bytes of an image the daemon created, below |
+| `POST /v1/hosts/{host}/volumes/clone` | `cloneVolume` | gains `template` (the image name as asked, informational) and, for a thin target pool, `size_bytes` |
+
+`{name}` of a template is its name (`vmtool_name`) or its LV name
+(`vmtpl-<12 hex>`). An image template is named after its image and keyed by
+(image, SHA-256); a saved template carries a random id in its LV name. Pruning
+stale templates, `images pull host/<name>` and the `templates export --push`
+stream to the store have no route of their own: the client composes them from
+the routes above and the store's (`PullHostImage`, `PruneTemplates` and
+`ExportTemplateToStore` in `internal/app`).
+
+**No room is 409.** Every operation that adds or grows a thin volume is refused
+before any LVM call, with the numbers in the message, when the pool's data or
+metadata use is at or above 80 %, or when the sum of every thin volume's size
+plus the new one would exceed 4 times the pool's size (exactly 4x passes). The
+routes that declare it: `cloneVolume` and `createVM` (a clone, a template
+build), `createTemplate` (both forms), `addDisk`, `resizeVMVolume` and
+`resizeDisk`. A client maps a 409 from `addDisk` and `resizeVMVolume` to
+`vmtool.ErrThinNoRoom`. On a resize the room check counts the growth, not the
+new size.
+
+**`exportTemplate` NDJSON.** `200 application/x-ndjson`, one
+`ExportTemplateEvent` per line, no trailing text. The refusals that come before
+any line (400, 403, 404, 409) are ordinary JSON errors. A run is `progress`
+lines, then exactly one `done` or `error`:
+
+```
+{"event":"progress","stage":"export","received":0,"total":10737418240}
+{"event":"progress","stage":"export","received":1073741824,"total":10737418240}
+{"event":"progress","stage":"hash","received":2147483648,"total":2147483648}
+{"event":"done","image":{"name":"t1-tpl","sha256":"<64 hex>","size":2147483648,"foreign":false}}
+```
+
+`export` counts the qcow2 file as the root helper writes it (`.t1-tpl.part`),
+with `total` the volume's size, an upper bound; `hash` counts the bytes hashed.
+`done` carries the manifest entry. An `error` line says what failed.
+
+**`getImageBlob`.** Streams a cached image for `vmtool images pull host/<name>`,
+`application/octet-stream` with `Content-Length` and `X-Image-SHA256`. It serves
+only a file the daemon's manifest lists (400 bad name, 404 not listed or the
+file is missing, 409 a foreign volume has the name, or the file is a symlink or
+not a regular file of the listed size), opened without following a symlink,
+and the body is never logged. A workstation daemon forwards both this route and
+`exportTemplate` to a listed host and answers 403 for its own unlisted name.
+
+**What the API does not carry.** `createVM` is one synchronous JSON call and
+streams no progress; its timings are the CLI's closing line (`timings: clone
+0.3s, ...`), stamped from the clock of the process that runs the workflow.
+The `ProgressEvent` schema (with `elapsed_ms`) documents the event shape for a
+client that relays or records them; no route references it, so no REST caller
+receives timings.
 
 ## GET / pattern
 

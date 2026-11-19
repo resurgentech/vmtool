@@ -82,7 +82,11 @@ func imagesPullCmd(e *env) *cobra.Command {
 			"                 the current directory: a .part file, checked against the size and SHA-256 the\n" +
 			"                 daemon sent, then linked into place. A file of that name that is already there with\n" +
 			"                 the same SHA-256 is left as it is; with a different one the pull is refused, and\n" +
-			"                 there is no --force. Needs no store.",
+			"                 there is no --force. Needs no store.\n\n" +
+			"A template is per host. 'vmtool templates export <host>/<name>' writes a saved template into <host>'s\n" +
+			"image cache as a qcow2 image; 'images pull <host>/<name>' then brings it to this machine's image_dir, from\n" +
+			"where a create on any host uses it as a base image, and 'vmtool images push' (or 'templates export --push',\n" +
+			"which skips the local file) puts it in the store. Only an image the daemon created can be pulled this way.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if isHostImageRef(args[0]) {

@@ -501,7 +501,25 @@ A clone in a dir pool is the file <name>.qcow2; in a logical pool it is an LV
 named <name>, attached as a block disk. A disk in a logical pool is sized at
 create (--disk-size) and cannot be grown later.
 
-A clone gets disk cache mode 'unsafe' (in a logical pool: 'none') unless
+On a thin pool (--pool names one; 'vmtool pool list' shows TYPE thin) the clone
+is a thin snapshot of a template, which takes a fraction of a second, not a
+copy: the template of an image is built once per host and pool, from the host's
+cached copy, by the first create (that one is slower), and is reused by every
+later one. <image> may
+also be the name of a template made with 'vmtool templates save'; a template is
+per host, so a host without it needs it exported and pulled
+('vmtool templates export', 'vmtool images pull'). The clone is a thin LV named
+<name>, a block disk with cache 'none', and --disk-size grows it (it never
+shrinks: a smaller size leaves the template's). A full pool is refused with
+409 before anything is made (data or metadata use at or above 80 %, or promised
+sizes over 4x the pool). --noclone and --extra-disk-size are refused on a thin
+pool (a thin extra disk comes from add-disk), and a VM name may not start with
+'vmtpl-'. A thick pool and its VMs are not affected. A template carries
+whatever its disk holds, so its author must have made it fit to clone: see the
+README, "What a template must be"; vmtool does not check it, and a clone that
+fails to come up shows it at the wait for an address or SSH.
+
+A clone gets disk cache mode 'unsafe' (in a logical or thin pool: 'none') unless
 --disk-cache names another (none, writeback, writethrough, unsafe). unsafe
 keeps guest writes that the guest believes are flushed in host memory; a
 host crash or power loss can corrupt the VM's disk. Pick --disk-cache none
@@ -519,7 +537,12 @@ be combined with --playbook; with --disk-size the volume is still resized
 before boot, but the filesystem grow, which needs SSH, is skipped (cloud-init
 grows it at first boot on images built with it).
 
-  vmtool create jetfire/web ubuntu-24.04.qcow2`,
+When create ends, success or failure, it prints one line of stage timings on
+stdout, such as 'timings: clone 0.3s, start 1.1s, wait_ip 2.0s, wait_ssh 7.0s,
+total 11.0s' (only the stages that ran). REST callers of createVM get none.
+
+  vmtool create jetfire/web ubuntu-24.04.qcow2
+  vmtool create hv1/web img1 --pool nvme-thin --disk-size 40`,
 		Args: cobra.ExactArgs(2),
 		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
 			extra, err := parseExtraVars(extraVars)
@@ -597,12 +620,12 @@ grows it at first boot on images built with it).
 	cmd.Flags().StringVar(&sshPass, "ssh-pass", "", "SSH password (default packer)")
 	cmd.Flags().StringVar(&inventory, "inventory", "ansible/inventory.yml", "path to write Ansible inventory file")
 	cmd.Flags().StringVar(&playbook, "playbook", "", "playbook name under ansible/playbooks, or a path")
-	cmd.Flags().StringVar(&pool, "pool", "", "storage pool for the VM's disk (default: the host's default_pool in the workstation's config.yml, else \"default\" on a workstation, \"vmtool\" on a hypervisor). A dir pool holds <name>.qcow2; a logical pool an LV named <name>")
+	cmd.Flags().StringVar(&pool, "pool", "", "storage pool for the VM's disk (default: the host's default_pool in the workstation's config.yml, else \"default\" on a workstation, \"vmtool\" on a hypervisor). A dir pool holds <name>.qcow2; a logical pool an LV named <name>; a thin pool a thin snapshot of the image's template (or of a saved template named as <image>), an LV named <name>")
 	cmd.Flags().BoolVar(&noclone, "noclone", false, "boot directly from the image without cloning (changes persist to source; uses up the image's cloud-init first boot, run 'sudo cloud-init clean --machine-id' in the guest before shutdown)")
 	cmd.Flags().BoolVar(&noWait, "no-wait", false, "return right after the VM starts: no wait for an address, none for SSH, and --disk-size does not grow the filesystem. For a guest whose address vmtool cannot see (static address, foreign DHCP without a guest agent) or a very slow boot. Cannot be combined with --playbook")
 	cmd.Flags().StringVar(&firmware, "firmware", "", "guest firmware: efi (UEFI, default) or bios. An image installed for BIOS needs --firmware bios")
-	cmd.Flags().StringVar(&diskCache, "disk-cache", "", "disk cache mode: none, writeback, writethrough or unsafe (default for a clone: none in a logical pool, unsafe in any other pool; the hypervisor's default with --noclone). unsafe keeps guest writes the guest believes are flushed in host memory; a host crash or power loss can corrupt the VM's disk. Pick none for a VM whose data matters")
-	cmd.Flags().UintVar(&extraDiskSizeGB, "extra-disk-size", 0, "create a second empty virtio disk (vdb): <name>-2.qcow2 in a dir pool, LV <name>-2 in a logical pool")
+	cmd.Flags().StringVar(&diskCache, "disk-cache", "", "disk cache mode: none, writeback, writethrough or unsafe (default for a clone: none in a logical or thin pool, unsafe in any other pool; the hypervisor's default with --noclone). unsafe keeps guest writes the guest believes are flushed in host memory; a host crash or power loss can corrupt the VM's disk. Pick none for a VM whose data matters")
+	cmd.Flags().UintVar(&extraDiskSizeGB, "extra-disk-size", 0, "create a second empty virtio disk (vdb): <name>-2.qcow2 in a dir pool, LV <name>-2 in a logical pool. Refused on a thin pool: attach a thin extra disk with add-disk")
 	cmd.Flags().StringVar(&extraDiskPool, "extra-disk-pool", "", "storage pool for the extra disk (default: same as --pool)")
 	cmd.Flags().StringArrayVar(&extraVars, "extra-var", nil, "ansible extra-var key=value for --playbook (repeatable; name: letters, digits, _). Values go to ansible in its environment, not argv. deviceid defaults to the VM name")
 
@@ -1087,6 +1110,17 @@ func poolListCmd(e *env) *cobra.Command {
 		Use:     "list",
 		Short:   "List storage pools",
 		Aliases: []string{"ls"},
+		Long: `List the storage pools of a host: its libvirt pools and, on a hypervisor daemon
+that has them, its LVM thin pools (TYPE thin).
+
+Columns: NAME, TYPE, SIZE, USED, VIRTUAL, DATA%, META%, ACTIVE, PATH. SIZE and
+USED are filled for an active libvirt pool and for a thin pool. VIRTUAL is the
+sum of the sizes of every thin volume in the pool (what it has promised); DATA%
+and META% are the thin pool's data and metadata use. They are blank for a
+libvirt pool, and any cell is blank when the host does not report it (a daemon
+older than API 2.4.0). A thin pool gets a '!' after its name when DATA% or META%
+is at or above 80: from there new thin volumes, add-disk and resize-disk are
+refused with 409, as are promised sizes over 4x the pool's SIZE.`,
 	}
 	host := hostFlag(cmd)
 	cmd.RunE = withHost(e, host, func(m app.Manager, cmd *cobra.Command, args []string) error {
@@ -1187,8 +1221,9 @@ func migrateDiskCmd(e *env) *cobra.Command {
 		Long: `Stop the VM (if running), copy its disk volume to the target pool,
 redefine the domain with the new path, then restart (if it was running).
 
-A block disk (an LV in a logical pool), or a logical pool as the target, is
-refused before the VM is stopped.`,
+A block disk (an LV in a logical pool, or a thin LV), or a logical pool as the
+target, is refused before the VM is stopped. A thin pool is not a libvirt pool,
+so it cannot be a target either.`,
 		Args: cobra.ExactArgs(2),
 		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
 			vmName := args[0]
