@@ -911,7 +911,12 @@ paths:
         into target_pool as {new_name}.qcow2 and returns the new path; an
         omitted target_pool is the host's default pool (`default` on a
         workstation, `vmtool` on a hypervisor). base_path must resolve inside a libvirt storage pool
-        (symlinks and `..` are resolved first); anything else is 400.
+        (symlinks and `..` are resolved first); anything else is 400. When
+        target_pool is a thin pool (type `thin`) the clone is a thin snapshot
+        of the image's template, built first if missing (found by the cached
+        image's file name and manifest SHA-256); base_path may then also be the `/dev/<vg>/<lv>` path of a
+        saved template. 409 when a thin pool has no room (the message gives
+        the numbers).
       requestBody:
         required: true
         content:
@@ -926,6 +931,7 @@ paths:
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
   /v1/hosts/{host}/volumes/resize:
     parameters:
@@ -1789,7 +1795,8 @@ components:
         base_path: { type: string, description: "volume to clone; must resolve inside a storage pool" }
         new_name: { type: string, description: "plain name; in a dir pool the clone is {new_name}.qcow2, in a logical pool it is a volume named {new_name}" }
         target_pool: { type: string, description: "omitted is the host's default pool (`default` on a workstation, `vmtool` on a hypervisor)" }
-        size_bytes: { type: integer, format: int64, minimum: 1, description: "the new volume's size when larger than the image's; used by logical pools, ignored by dir pools" }
+        size_bytes: { type: integer, format: int64, minimum: 1, description: "the new volume's size when larger than the image's; used by logical and thin pools, ignored by dir pools" }
+        template: { type: string, description: "the image name (or saved template name) the clone comes from, as the client asked for it; informational. A thin pool finds the template from base_path: a cached image's file name and manifest SHA-256, or a saved template's /dev/<vg>/<lv>" }
     ResizeVolumeRequest:
       type: object
       required: [path, size_bytes]

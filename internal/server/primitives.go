@@ -53,10 +53,22 @@ const (
 // symlinks to /dev/dm-N, which resolving would turn into a path outside the
 // pool. There p is accepted unresolved when it is exactly <pool path>/<one
 // plain name> and exists (see logicalVolume).
-func inPool(m app.Manager, p string) error {
+//
+// So is a thin volume: a Manager that keeps thin pools (app.ThinHost) accepts
+// exactly /dev/<vg>/<lv> when the helper's report shows it as a vmtool_vol
+// volume of a vmtool thin pool (see thinVolume). A template is accepted by
+// inPoolBase only, as a clone's base.
+func inPool(m app.Manager, p string) error { return inPoolKinds(m, p, false) }
+
+// inPoolBase is inPool for a clone's base_path: a thin pool's template is
+// also accepted.
+func inPoolBase(m app.Manager, p string) error { return inPoolKinds(m, p, true) }
+
+func inPoolKinds(m app.Manager, p string, template bool) error {
 	if p == "" || !filepath.IsAbs(p) {
 		return fmt.Errorf("%w: %q must be an absolute path", errOutsidePool, p)
 	}
+	raw := p
 	p = filepath.Clean(p)
 	pools, err := m.ListPools()
 	if err != nil {
@@ -67,12 +79,15 @@ func inPool(m app.Manager, p string) error {
 			return nil
 		}
 	}
+	if thinVolume(m, raw, p, template) {
+		return nil
+	}
 	rp, err := resolveExisting(p)
 	if err != nil {
 		return fmt.Errorf("%w: %q: %v", errOutsidePool, p, err)
 	}
 	for _, pool := range pools {
-		if pool.Path == "" || pool.Type == "logical" {
+		if pool.Path == "" || pool.Type == "logical" || pool.Type == "thin" {
 			continue
 		}
 		pp, err := resolveExisting(filepath.Clean(pool.Path))
@@ -86,6 +101,24 @@ func inPool(m app.Manager, p string) error {
 		return nil
 	}
 	return fmt.Errorf("%w: %q", errOutsidePool, p)
+}
+
+// thinVolume reports whether the cleaned path p is exactly /dev/<vg>/<lv> of a
+// volume the Manager's thin pools hold, of kind vol (or template too, for a
+// clone's base). A raw path with a ".." component is never one; nothing is
+// resolved through /dev/mapper or dm-N. A helper that fails is "no": the path
+// is then refused as outside every pool.
+func thinVolume(m app.Manager, raw, p string, template bool) bool {
+	th, ok := m.(app.ThinHost)
+	if !ok || !strings.HasPrefix(p, "/dev/") || strings.Contains(raw, "..") {
+		return false
+	}
+	kind, found, err := th.ThinVolume(p)
+	if err != nil {
+		slog.Warn("thin volumes not looked up", "err", err)
+		return false
+	}
+	return found && (kind == vmtool.ThinKindVol || (template && kind == vmtool.ThinKindTemplate))
 }
 
 // logicalVolume reports whether the cleaned absolute path p is a volume of the
@@ -106,6 +139,14 @@ func logicalVolume(pool vmtool.PoolInfo, p string) bool {
 // what must be handed to libvirt so the checked and the used path agree.
 func poolPath(m app.Manager, p string) (string, error) {
 	if err := inPool(m, p); err != nil {
+		return "", err
+	}
+	return filepath.Clean(p), nil
+}
+
+// basePath is poolPath for a clone's base_path (inPoolBase).
+func basePath(m app.Manager, p string) (string, error) {
+	if err := inPoolBase(m, p); err != nil {
 		return "", err
 	}
 	return filepath.Clean(p), nil
@@ -140,6 +181,10 @@ func primKind(err error) app.Kind {
 	if errors.Is(err, errOutsidePool) {
 		return app.KindInvalid
 	}
+	// A thin pool without room is a conflict (409), whoever wrapped it.
+	if errors.Is(err, vmtool.ErrThinNoRoom) {
+		return app.KindConflict
+	}
 	return kindOf(err)
 }
 
@@ -150,7 +195,20 @@ func badName(what, s string) error {
 func xmlSafe(s string) bool { return !strings.ContainsAny(s, "<>&'\"\x00\n\r") }
 
 func (h *handlers) GetImagePath(ctx context.Context, req api.GetImagePathRequestObject) (api.GetImagePathResponseObject, error) {
-	v, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) { return m.ImagePath(req.Name) })
+	v, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
+		p, err := m.ImagePath(req.Name)
+		if err != nil && vmtool.IsNotFound(err) {
+			// A name no pool has may be a saved template of a thin pool: the
+			// clone's base. (Not through ImagePath itself: the image cache
+			// reads that to see whether a name is taken.)
+			if th, ok := m.(app.ThinHost); ok {
+				if tp, terr := th.SavedTemplatePath(req.Name); terr == nil {
+					return tp, nil
+				}
+			}
+		}
+		return p, err
+	})
 	if err != nil {
 		if primKind(err) == app.KindNotFound {
 			return api.GetImagePath404JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
@@ -204,18 +262,25 @@ func (h *handlers) CloneVolume(ctx context.Context, req api.CloneVolumeRequestOb
 		bad = errors.New("target_pool contains invalid characters")
 	case b.SizeBytes != nil && *b.SizeBytes < 1:
 		bad = errors.New("size_bytes must be at least 1")
+	case b.Template != nil && *b.Template != "" && !plainName.MatchString(*b.Template):
+		bad = badName("template", *b.Template)
 	}
 	if bad != nil {
 		return api.CloneVolume400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: bad.Error()}}, nil
 	}
 	v, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
-		base, err := poolPath(m, b.BasePath)
+		base, err := basePath(m, b.BasePath)
 		if err != nil {
 			return nil, err
 		}
 		var size uint64
 		if b.SizeBytes != nil {
 			size = uint64(*b.SizeBytes)
+		}
+		if image := derefStr(b.Template); image != "" {
+			if tc, ok := m.(app.TemplateCloner); ok {
+				return tc.CloneImageFrom(image, base, b.NewName, derefStr(b.TargetPool), size)
+			}
 		}
 		return m.CloneImage(base, b.NewName, derefStr(b.TargetPool), size)
 	})
@@ -225,6 +290,8 @@ func (h *handlers) CloneVolume(ctx context.Context, req api.CloneVolumeRequestOb
 			return api.CloneVolume400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
 		case app.KindNotFound:
 			return api.CloneVolume404JSONResponse(apiErr(err)), nil
+		case app.KindConflict:
+			return api.CloneVolume409JSONResponse(apiErr(err)), nil
 		default:
 			return api.CloneVolume500JSONResponse(apiErr(err)), nil
 		}

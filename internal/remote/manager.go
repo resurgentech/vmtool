@@ -450,6 +450,12 @@ func (m *Manager) ImagePath(name string) (string, error) {
 	return v.Path, nil
 }
 
+// TemplatePath asks the host for the /dev/<vg>/<lv> of a saved template of a
+// thin pool called name: getImagePath, which a hypervisor answers that way
+// when no pool has an image of that name. It implements app.TemplateFinder
+// (it is ImagePath, kept apart so create asks it only where it means to).
+func (m *Manager) TemplatePath(name string) (string, error) { return m.ImagePath(name) }
+
 func (m *Manager) ListNetworks() ([]string, error) {
 	var v []string
 	err := m.call("listNetworks", m.timeout, &v, func(ctx context.Context) (*http.Response, error) {
@@ -506,6 +512,14 @@ func (m *Manager) CreatePool(name, path string) error {
 }
 
 func (m *Manager) CloneImage(basePath, newName, targetPool string, sizeBytes uint64) (string, error) {
+	return m.CloneImageFrom("", basePath, newName, targetPool, sizeBytes)
+}
+
+// CloneImageFrom is CloneImage that also names the image the clone comes
+// from (the request's `template`), which a daemon uses when the target pool is
+// a thin pool. An empty image sends none, the request an older daemon knows.
+// It implements app.TemplateCloner.
+func (m *Manager) CloneImageFrom(image, basePath, newName, targetPool string, sizeBytes uint64) (string, error) {
 	var v api.PathResult
 	var size *int64
 	if sizeBytes > 0 {
@@ -516,7 +530,7 @@ func (m *Manager) CloneImage(basePath, newName, targetPool string, sizeBytes uin
 		size = &s
 	}
 	if err := m.call("cloneVolume", m.long, &v, func(ctx context.Context) (*http.Response, error) {
-		return m.client.CloneVolume(ctx, m.name, api.CloneVolumeRequest{BasePath: basePath, NewName: newName, TargetPool: nonEmpty(targetPool), SizeBytes: size})
+		return m.client.CloneVolume(ctx, m.name, api.CloneVolumeRequest{BasePath: basePath, NewName: newName, TargetPool: nonEmpty(targetPool), SizeBytes: size, Template: nonEmpty(image)})
 	}); err != nil {
 		return "", err
 	}

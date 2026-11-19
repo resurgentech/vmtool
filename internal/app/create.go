@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/jaredeh/vmtool/pkg/vmtool"
 )
@@ -99,6 +100,18 @@ func (s *Service) syncImage(ctx context.Context, st ImageStore, in CreateVMInput
 			emit(in, "upload", "done", fmt.Sprintf("%s: no local copy; using %s's cached copy", in.Image, in.Host), "")
 			return nil
 		}
+		// No local copy and no manifest entry: the host may still have a saved
+		// template of that name in a thin pool, which answers with its
+		// /dev/<vg>/<lv> (and nothing else does, in this branch). Only a
+		// Manager that can ask (TemplateFinder) is asked.
+		if tf, ok := st.(TemplateFinder); ok {
+			if p, err := tf.TemplatePath(in.Image); err == nil {
+				if _, _, isLV := vmtool.ParseThinDevPath(p); isLV {
+					emit(in, "upload", "done", fmt.Sprintf("%s: no local copy; using %s's template (%s)", in.Image, in.Host, filepath.Base(p)), "")
+					return nil
+				}
+			}
+		}
 		where := "this machine's pools or image_dir"
 		if sr, ok := s.Images.(imageSearcher); ok {
 			where = sr.Searched()
@@ -177,6 +190,28 @@ func (s *Service) CreateVM(ctx context.Context, m Manager, in CreateVMInput) (*v
 		return nil, conflict("create", fmt.Errorf("%q is registered as a metal/alien machine", in.Name))
 	}
 
+	// A thin pool takes neither --noclone (a thin disk is always a clone of a
+	// template) nor a VM named like a template. Whether a named pool is thin
+	// is only known from the pool list, which is asked here, before anything
+	// changes, only when one of those could apply (a create that cannot is
+	// not given an extra call). The daemon's Define and clone refuse the same
+	// when the pool is the host's default, which is not known here.
+	var pools []vmtool.PoolInfo
+	listed := false
+	if strings.HasPrefix(in.Name, "vmtpl-") || (in.Noclone && in.Pool != "") {
+		var err error
+		if pools, err = m.ListPools(); err != nil {
+			return nil, wrap("create", fmt.Errorf("list storage pools: %w", err))
+		}
+		listed = true
+		if in.Noclone && in.Pool != "" && poolIsThin(pools, in.Pool) {
+			return nil, invalid("create", fmt.Errorf("--noclone cannot be used with thin pool %q: a thin disk is always a clone of a template", in.Pool))
+		}
+		if strings.HasPrefix(in.Name, "vmtpl-") && in.Pool != "" && poolIsThin(pools, in.Pool) {
+			return nil, invalid("create", fmt.Errorf("a VM on thin pool %q cannot be named %q: the vmtpl- prefix is for templates", in.Pool, in.Name))
+		}
+	}
+
 	// A host that caches images (a remote daemon) gets this machine's copy
 	// first; a local libvirt host already has its own pools.
 	if st, ok := m.(ImageStore); ok {
@@ -223,15 +258,28 @@ func (s *Service) CreateVM(ctx context.Context, m Manager, in CreateVMInput) (*v
 	// A clone's default depends on the pool it lands in (cloneCacheDefault);
 	// the pools are listed before cloning so a failure leaves no orphan volume.
 	cfg.DiskCache = in.DiskCache
-	var pools []vmtool.PoolInfo
-	if cfg.DiskCache == "" && !in.Noclone {
+	if cfg.DiskCache == "" && !in.Noclone && !listed {
 		var err error
 		if pools, err = m.ListPools(); err != nil {
 			return nil, wrap("create", fmt.Errorf("list storage pools: %w", err))
 		}
+		listed = true
 	}
 	cfg.ExtraDiskSizeGB = in.ExtraDiskSizeGB
 	cfg.ExtraDiskPool = in.ExtraDiskPool
+	// An extra disk on a thin pool is not supported yet: refuse it before the
+	// clone makes a volume that would be left behind. (Known only when the
+	// pools were listed anyway and the pool is named.)
+	if listed && cfg.ExtraDiskSizeGB > 0 {
+		for _, p := range []string{cfg.ExtraDiskPool, cfg.Pool} {
+			if p != "" && poolIsThin(pools, p) {
+				return nil, invalid("create", fmt.Errorf("an extra disk cannot be created on thin pool %q yet: extra disks on a thin pool come with add-disk support", p))
+			}
+			if p == cfg.ExtraDiskPool && p != "" {
+				break // an explicit extra pool decides; Pool is only its default
+			}
+		}
+	}
 
 	if !in.Noclone {
 		// A fresh clone only has image-default users; drop creds left by a
@@ -241,7 +289,15 @@ func (s *Service) CreateVM(ctx context.Context, m Manager, in CreateVMInput) (*v
 			return nil, wrap("create", err)
 		}
 		emit(in, "clone", "start", "cloning image", "")
-		cloned, err := m.CloneImage(cfg.DiskPath, cfg.Name, cfg.Pool, uint64(cfg.DiskSizeGB)*1024*1024*1024)
+		var cloned string
+		var err error
+		size := uint64(cfg.DiskSizeGB) * 1024 * 1024 * 1024
+		if tc, ok := m.(TemplateCloner); ok {
+			// the image name too: a thin pool finds the image's template by it
+			cloned, err = tc.CloneImageFrom(in.Image, cfg.DiskPath, cfg.Name, cfg.Pool, size)
+		} else {
+			cloned, err = m.CloneImage(cfg.DiskPath, cfg.Name, cfg.Pool, size)
+		}
 		if err != nil {
 			emit(in, "clone", "error", err.Error(), "")
 			return nil, wrap("create", err)
@@ -413,14 +469,25 @@ func (s *Service) CreateVM(ctx context.Context, m Manager, in CreateVMInput) (*v
 	return info, nil
 }
 
+// poolIsThin reports whether the pool named name in pools is a thin pool.
+func poolIsThin(pools []vmtool.PoolInfo, name string) bool {
+	for _, p := range pools {
+		if p.Name == name {
+			return p.Type == vmtool.PoolTypeThin
+		}
+	}
+	return false
+}
+
 // cloneCacheDefault is the cache mode for a new clone when none was asked
-// for: none for an LV in a logical pool (the host's O_DIRECT path, no double
-// caching), unsafe (C10) for anything else. The clone's pool is the one whose
-// path is the directory of clonedPath.
+// for: none for an LV in a logical or thin pool (the host's O_DIRECT path, no
+// double caching), unsafe (C10) for anything else. The clone's pool is the one
+// whose path is the directory of clonedPath (a thin pool's path /dev/<vg> may
+// equal a logical pool's; both give none).
 func cloneCacheDefault(pools []vmtool.PoolInfo, clonedPath string) string {
 	dir := filepath.Dir(filepath.Clean(clonedPath))
 	for _, p := range pools {
-		if p.Type == "logical" && p.Path != "" && filepath.Clean(p.Path) == dir {
+		if (p.Type == "logical" || p.Type == vmtool.PoolTypeThin) && p.Path != "" && filepath.Clean(p.Path) == dir {
 			return vmtool.DiskCacheNone
 		}
 	}

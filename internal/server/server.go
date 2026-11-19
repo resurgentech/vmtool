@@ -220,7 +220,9 @@ func (s *Server) ListenAndServe() error {
 	}
 	// After binding: holding the port means no other daemon on it is
 	// mid-upload, so its temporary files are stale.
-	startCleanup(s.Config.Role, hosts.New(s.Config))
+	r := hosts.New(s.Config)
+	startCleanup(s.Config.Role, r)
+	startThinCleanup(s.Config.Role, r)
 	if s.Config.Role == config.RoleHypervisor {
 		if s.h != nil {
 			s.h.warmPoolDir()
@@ -228,6 +230,17 @@ func (s *Server) ListenAndServe() error {
 	}
 	slog.Info("vmtool API listening", "url", "https://"+srv.Addr+"/")
 	return serve(srv, ln)
+}
+
+// startThinCleanup is the hypervisor's other start hook: it removes the
+// half-built template volumes a stopped daemon left in its thin pools (every
+// vmtool_building volume, one log line each). A workstation has no thin pools
+// and a helper that cannot run is one log line; neither stops the server.
+func startThinCleanup(role string, r *hosts.Resolver) {
+	if role != config.RoleHypervisor {
+		return
+	}
+	r.CleanThinBuilding(slog.Default())
 }
 
 // withMaxBytes caps every request body at 1 MiB, except uploadImage's: an

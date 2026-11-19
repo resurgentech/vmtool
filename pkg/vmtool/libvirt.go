@@ -1690,3 +1690,31 @@ func (m *Manager) MigrateDisk(vmName, targetPool string) error {
 
 	return nil
 }
+
+// blockDiskPaths is the source device of every block-backed disk in a domain
+// XML descriptor, in order.
+func blockDiskPaths(xml string) []string {
+	var out []string
+	for _, d := range parseDisks(xml) {
+		if d.Kind == DiskBackingBlock {
+			out = append(out, d.Path)
+		}
+	}
+	return out
+}
+
+// BlockDiskPaths is the device path of every block-backed disk of the domain
+// (read before an undefine, so the caller can remove what libvirt does not
+// know: thin volumes).
+func (m *Manager) BlockDiskPaths(name string) ([]string, error) {
+	dom, err := m.conn.LookupDomainByName(name)
+	if err != nil {
+		return nil, fmt.Errorf("looking up domain %q: %w", name, err)
+	}
+	defer dom.Free()
+	xmlDesc, err := dom.GetXMLDesc(0)
+	if err != nil {
+		return nil, fmt.Errorf("reading domain %q: %w", name, err)
+	}
+	return blockDiskPaths(xmlDesc), nil
+}

@@ -9,9 +9,10 @@ import (
 
 // ThinPools is a hypervisor daemon's local Manager with LVM thin pools added:
 // ListPools lists, after the inner Manager's libvirt pools, every thin pool
-// the root helper reports (see vmtool.Thin). Every other method passes through
-// to the inner Manager unchanged; later steps override more of them here
-// (clone into a thin pool, define a block disk, delete a thin volume).
+// the root helper reports (see vmtool.Thin). CloneImage and CloneImageFrom,
+// Define, Delete, ResizeVolume and CreateVolume handle a thin pool's own
+// volumes (thinclone.go) and pass everything else to the inner Manager
+// unchanged; every other method passes through.
 //
 // A helper that cannot run (no sudo rule, no helper installed, no LVM) is one
 // log line per listing, not an error: the host just lists no thin pools.
@@ -23,6 +24,12 @@ type ThinPools struct {
 	app.Manager
 	Thin *vmtool.Thin // the helper client; tests point its Helper at a stub sudo
 	Log  *slog.Logger // nil means slog.Default()
+	// Builds serializes template builds across requests: the resolver makes
+	// one and every ThinPools it builds shares it (nil is the package's own).
+	Builds *ThinBuilds
+	// ManifestPath is the daemon's image-manifest.yml; empty means
+	// vmtool.ImageManifestFile in the working directory, as the server reads it.
+	ManifestPath string
 }
 
 func (t ThinPools) log() *slog.Logger {

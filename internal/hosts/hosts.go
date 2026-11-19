@@ -15,6 +15,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"sort"
@@ -69,6 +70,10 @@ type Resolver struct {
 	hostPools   map[string]string
 	// thin is the helper client of a hypervisor's thin pools; nil lists none.
 	thin *vmtool.Thin
+	// builds is the one build-lock table every ThinPools of this resolver (and
+	// of its copies) shares; manifestPath is the daemon's image manifest.
+	builds       *ThinBuilds
+	manifestPath string
 }
 
 // New builds the resolver for cfg: the local libvirt and, for every hosts:
@@ -155,7 +160,29 @@ func (r *Resolver) WithRemote(rc RemoteConnector) *Resolver {
 func (r *Resolver) WithThin(t *vmtool.Thin) *Resolver {
 	c := *r
 	c.thin = t
+	if c.builds == nil {
+		c.builds = &ThinBuilds{}
+	}
 	return &c
+}
+
+// WithImageManifest returns a copy of r whose thin-pool clones read the
+// daemon's image manifest at path (empty: vmtool.ImageManifestFile in the
+// working directory, which is what the server reads too).
+func (r *Resolver) WithImageManifest(path string) *Resolver {
+	c := *r
+	c.manifestPath = path
+	return &c
+}
+
+// CleanThinBuilding removes the half-built template volumes a stopped daemon
+// left (see CleanThinBuilding); a resolver without a helper, or not of the
+// hypervisor role, does nothing.
+func (r *Resolver) CleanThinBuilding(log *slog.Logger) int {
+	if r.thin == nil || r.role != config.RoleHypervisor {
+		return 0
+	}
+	return CleanThinBuilding(r.thin, log)
 }
 
 // WithToken returns a copy of r whose remote Managers authenticate with
@@ -261,7 +288,7 @@ func (r *Resolver) Resolve(host string) (app.Manager, func(), error) {
 		}
 		if err == nil && m != nil && r.role == config.RoleHypervisor {
 			if r.thin != nil {
-				m = ThinPools{Manager: m, Thin: r.thin}
+				m = ThinPools{Manager: m, Thin: r.thin, Builds: r.builds, ManifestPath: r.manifestPath}
 			}
 			m = hypervisorPools{m}
 		}
@@ -416,6 +443,40 @@ func (h hypervisorPools) CloneImage(basePath, newName, targetPool string, sizeBy
 	return h.Manager.CloneImage(basePath, newName, hvPool(targetPool), sizeBytes)
 }
 
+// CloneImageFrom keeps app.TemplateCloner visible through the wrapper (a
+// thin-pool Manager inside needs the image name); over a Manager without it,
+// it is CloneImage.
+func (h hypervisorPools) CloneImageFrom(image, basePath, newName, targetPool string, sizeBytes uint64) (string, error) {
+	if tc, ok := h.Manager.(app.TemplateCloner); ok {
+		return tc.CloneImageFrom(image, basePath, newName, hvPool(targetPool), sizeBytes)
+	}
+	return h.Manager.CloneImage(basePath, newName, hvPool(targetPool), sizeBytes)
+}
+
+// ThinVolume and SavedTemplatePath keep app.ThinHost visible; over a Manager
+// without thin pools nothing is a thin volume.
+func (h hypervisorPools) ThinVolume(path string) (string, bool, error) {
+	return thinVolumeOf(h.Manager, path)
+}
+
+func (h hypervisorPools) SavedTemplatePath(name string) (string, error) {
+	return savedTemplatePathOf(h.Manager, name)
+}
+
+func thinVolumeOf(m app.Manager, path string) (string, bool, error) {
+	if th, ok := m.(app.ThinHost); ok {
+		return th.ThinVolume(path)
+	}
+	return "", false, nil
+}
+
+func savedTemplatePathOf(m app.Manager, name string) (string, error) {
+	if th, ok := m.(app.ThinHost); ok {
+		return th.SavedTemplatePath(name)
+	}
+	return "", fmt.Errorf("template %q not found: %w", name, vmtool.ErrNotFound)
+}
+
 // Define fills Pool only; an empty ExtraDiskPool means "same as Pool".
 func (h hypervisorPools) Define(cfg vmtool.VMConfig) error {
 	cfg.Pool = hvPool(cfg.Pool)
@@ -459,6 +520,33 @@ func (d defaultPools) AddDisk(name string, sizeGB uint, pool string) (*vmtool.Di
 
 func (d defaultPools) CloneImage(basePath, newName, targetPool string, sizeBytes uint64) (string, error) {
 	return d.Manager.CloneImage(basePath, newName, d.or(targetPool), sizeBytes)
+}
+
+// CloneImageFrom is CloneImage with the image name (see hypervisorPools).
+func (d defaultPools) CloneImageFrom(image, basePath, newName, targetPool string, sizeBytes uint64) (string, error) {
+	if tc, ok := d.Manager.(app.TemplateCloner); ok {
+		return tc.CloneImageFrom(image, basePath, newName, d.or(targetPool), sizeBytes)
+	}
+	return d.Manager.CloneImage(basePath, newName, d.or(targetPool), sizeBytes)
+}
+
+// ThinVolume and SavedTemplatePath keep app.ThinHost visible.
+func (d defaultPools) ThinVolume(path string) (string, bool, error) {
+	return thinVolumeOf(d.Manager, path)
+}
+
+func (d defaultPools) SavedTemplatePath(name string) (string, error) {
+	return savedTemplatePathOf(d.Manager, name)
+}
+
+// TemplatePath keeps app.TemplateFinder visible, so create on a listed host
+// with a default_pool can still use that host's saved template; a Manager that
+// cannot ask has none.
+func (d defaultPools) TemplatePath(name string) (string, error) {
+	if tf, ok := d.Manager.(app.TemplateFinder); ok {
+		return tf.TemplatePath(name)
+	}
+	return "", fmt.Errorf("template %q not found: %w", name, vmtool.ErrNotFound)
 }
 
 func (d defaultPools) Define(cfg vmtool.VMConfig) error {

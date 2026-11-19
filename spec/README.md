@@ -276,9 +276,9 @@ the body and keeps the error.
 | `WaitForIP` | `waitVMIP` | New. `timeout_seconds` 1..3600, default 120. |
 | `Define` | `defineVM` | New. `PUT vms/{name}/definition`; no `ssh_user`/`ssh_pass`. |
 | `CreateVolume` | `createVolume` | New. Returns `{path}`. |
-| `CloneImage` | `cloneVolume` | New. `base_path` must be inside a pool. Optional `size_bytes` (2.2.0): a `logical` target gets an LV of max(image, size), converted to raw; dir pools ignore it. Returns `{path}`. |
+| `CloneImage` | `cloneVolume` | New. `base_path` must be inside a pool. Optional `size_bytes` (2.2.0): a `logical` target gets an LV of max(image, size), converted to raw; dir pools ignore it. Optional `template` (2.4.0): the image name as asked, informational. When `target_pool` is a thin pool the clone is a thin snapshot of the template of the cached image (by file name and manifest SHA-256; built first if missing; 409 when the pool has no room); there `base_path` may also be a saved template's `/dev/<vg>/<lv>`. Returns `{path}`. |
 | `ResizeVolume` | `resizeVolume` | New. `path` must be inside a pool. |
-| `ImagePath` | `getImagePath` | New. 404 if no pool has it. |
+| `ImagePath` | `getImagePath` | New. 404 if no pool has it. On a hypervisor with thin pools, a name no pool has but a saved template has answers that template's `/dev/<vg>/<lv>` (2.4.0 behaviour, no new field). |
 | `ListNetworks` / `ListBridges` | `listNetworks` / `listBridges` | |
 | `ListImagesByPool` | `listImages` | `{pool: [image]}`. |
 | `DeleteImage` | `deleteImage` | `pool` query, default `default`. |

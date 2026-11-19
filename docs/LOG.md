@@ -1267,3 +1267,34 @@ are appended, never edited in; a hook refuses rewrites.
   blanks and mark, TUI label, `TestVersion` 2.4.0. Red: build failures
   (tests before code); green; `just check` green.
 - Commits: the T4 commit on `clone-identity`.
+
+## 2026-11-18 — T5 Create and delete on a thin pool; image templates
+
+- Spec (2.4.0): `CloneVolumeRequest.template` (the image name as asked;
+  informational), `cloneVolume` 409 when a thin pool has no room;
+  `getImagePath` falls back to a saved template's `/dev/<vg>/<lv>`.
+- `internal/hosts/thinclone.go` (on `ThinPools`): clone into a thin pool =
+  template of the cached image's (file name, manifest SHA-256), else
+  built under one per-(VG, template) lock shared by the resolver (create
+  `vmtbld-<12hex>` tagged `vmtool_building`, import, one tag change,
+  rename to `vmtpl-<12hex>`), then snapshot (`vmtool_vol`) and extend to
+  max(template, size). Room check before any helper write (409). A
+  failure after create removes only the LV that call made. Define marks
+  thin `vmtool_vol` disks block (tranche 7's `blockDiskXML`, cache none)
+  and refuses template/building LVs. Delete removes, after the inner
+  delete, only `vmtool_vol` LVs named `<vm>` or `<vm>-N`. Resize: no-op
+  when already big enough (growing is T6); extra disks on a thin pool
+  refused (T6). A hypervisor removes `vmtool_building` LVs at start.
+- `internal/server/primitives.go`: the path gate accepts `/dev/<vg>/<lv>`
+  of a thin `vmtool_vol` LV, and a template only as a clone's base.
+- `internal/app`: optional `TemplateCloner`, `ThinHost`, `TemplateFinder`
+  (forwarded by every hosts wrapper); create sends the image name;
+  `cloneCacheDefault` none for thin; `--noclone` or a `vmtpl-` name on a
+  named thin pool refused; syncImage accepts a host's saved template.
+- Tests: stub `sudo` + fake inner Manager: exact argv of warm and cold
+  creates, no-room (no write, 409 end to end), concurrent build once,
+  build/extend/snapshot failure removals, delete kinds and names, define
+  XML, path gate, wrappers, start-up cleanup, remote `template`. No
+  existing test changed. Red: build failures and app behaviour, plus
+  mutations; green; `just check` green.
+- Commits: the T5 commit on `clone-identity`.

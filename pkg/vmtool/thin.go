@@ -2,10 +2,14 @@ package vmtool
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -629,3 +633,62 @@ func firstErr(errs ...error) error {
 	}
 	return nil
 }
+
+// ---- thin clones: qcow2 size and device paths ----
+
+// Qcow2VirtualSize is the virtual size, in bytes, in the header of the qcow2
+// file at path: the magic QFI\xfb and a big-endian uint64 at offset 24. A file
+// without the magic, a header cut short, a size of 0 or one that does not fit
+// an int64 is an error: a thin template is never sized by guessing.
+func Qcow2VirtualSize(path string) (int64, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, fmt.Errorf("read qcow2 header: %w", err)
+	}
+	defer f.Close()
+	var h [32]byte
+	if _, err := io.ReadFull(f, h[:]); err != nil {
+		return 0, fmt.Errorf("read qcow2 header of %s: %w", filepath.Base(path), err)
+	}
+	if h[0] != 'Q' || h[1] != 'F' || h[2] != 'I' || h[3] != 0xfb {
+		return 0, fmt.Errorf("%s is not a qcow2 image (no QFI magic); a thin template is built from qcow2 files only", filepath.Base(path))
+	}
+	n := binary.BigEndian.Uint64(h[24:32])
+	if n == 0 || n > math.MaxInt64 {
+		return 0, fmt.Errorf("%s: virtual size %d in the qcow2 header is not usable", filepath.Base(path), n)
+	}
+	return int64(n), nil
+}
+
+// ParseThinDevPath splits exactly /dev/<vg>/<lv> (already clean: no "..", no
+// empty or trailing component) into the VG and LV names, both of which must
+// pass the helper's name rule. /dev/mapper/... is not an LV path. Whether the
+// LV exists, and whose it is, is for the helper's report to say.
+func ParseThinDevPath(p string) (vg, lv string, ok bool) {
+	rest, found := strings.CutPrefix(p, "/dev/")
+	if !found {
+		return "", "", false
+	}
+	parts := strings.Split(rest, "/")
+	if len(parts) != 2 || parts[0] == "mapper" || !thinNameRE.MatchString(parts[0]) || !thinNameRE.MatchString(parts[1]) {
+		return "", "", false
+	}
+	return parts[0], parts[1], true
+}
+
+// ThinDevPath is the device path of an LV: /dev/<vg>/<lv>.
+func ThinDevPath(vg, lv string) string { return "/dev/" + vg + "/" + lv }
+
+// TemplateBuildLVName is the LV name a template is built under, before it is
+// renamed to TemplateLVName: vmtbld- and the same 12 hex characters.
+func TemplateBuildLVName(shaOrID string) (string, error) {
+	lv, err := TemplateLVName(shaOrID)
+	if err != nil {
+		return "", err
+	}
+	return "vmtbld-" + strings.TrimPrefix(lv, "vmtpl-"), nil
+}
+
+// ValidThinLVName reports whether s passes the helper's LV name rule (its
+// reserved-substring list stays the helper's to check).
+func ValidThinLVName(s string) bool { return thinNameRE.MatchString(s) }
