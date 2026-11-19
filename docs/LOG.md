@@ -1480,3 +1480,21 @@ are appended, never edited in; a hook refuses rewrites.
 - Red: 500 where 409 was wanted; remote error not matching. Green;
   `just check` green.
 - Commits: the T6a commit on `clone-identity`.
+
+## 2026-11-18 — S16 The store's backups: daily, on command, 14 kept
+
+- `BlobStore.List(ctx, prefix)` (S3 `ListObjects`, the in-memory double).
+- `internal/store/backup.go`: one backup = `VACUUM INTO` a 0600 temp file in
+  the data dir (removed in every outcome) streamed to
+  `backups/store-<UTC yyyymmddThhmmssZ>.db`; retention keeps the 14 newest
+  and deletes only keys of exactly that shape; one at a time (TryLock);
+  failures logged as op, object, class, duration, never error text.
+- Schedule from `cmd/vmtool-store` serve (signal context): 5 min after start
+  when the newest backup is stale or absent, then every 24 h.
+- `vmtool-store backup`: its own SQLite connection, one line with the object
+  name, exit 0, else non-zero. No route, no spec change.
+- README.md and spec/README.md: backups, the key not in the backup, restore.
+- ansible_labtwo `roles/vmtool_store/README.md` corrected, commit `ab0db41`
+  on `simplify` (not pushed).
+- Red: build failures (no List, run, BackupDeps); green; `just check` green.
+- Commits: the S16 commit on `clone-identity`; ansible_labtwo `ab0db41`.

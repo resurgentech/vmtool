@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -39,6 +40,26 @@ func runContract(t *testing.T, mk func() BlobStore) {
 			if err := s.EnsureBucket(ctx); err != nil {
 				t.Fatalf("EnsureBucket #%d: %v", i, err)
 			}
+		}
+	})
+
+	t.Run("list returns keys under a prefix, sorted", func(t *testing.T) {
+		s := mk()
+		for _, k := range []string{"backups/store-b.db", "images/a", "backups/store-a.db", "backups/other.db", "backupsx/z"} {
+			if err := s.Put(ctx, k, bytes.NewReader([]byte("x")), 1); err != nil {
+				t.Fatal(err)
+			}
+		}
+		got, err := s.List(ctx, "backups/store-")
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+		if want := []string{"backups/store-a.db", "backups/store-b.db"}; !reflect.DeepEqual(got, want) {
+			t.Fatalf("List = %v, want %v", got, want)
+		}
+		none, err := s.List(ctx, "nothing/")
+		if err != nil || len(none) != 0 {
+			t.Fatalf("List none = %v, %v", none, err)
 		}
 	})
 

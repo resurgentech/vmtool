@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -80,6 +82,22 @@ func (m *Memory) Delete(ctx context.Context, key string) error {
 	delete(m.objs, key)
 	m.mu.Unlock()
 	return nil
+}
+
+func (m *Memory) List(ctx context.Context, prefix string) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var keys []string
+	for k := range m.objs {
+		if strings.HasPrefix(k, prefix) {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	return keys, nil
 }
 
 func (m *Memory) lookup(key string) (memObj, bool) {

@@ -360,14 +360,30 @@ makes every stored credential unreadable. A copy of `store.db` is useless
 without the key it was written with. Keep the key with the backup policy for
 OpenBao.
 
-**Backups are not automatic yet.** There is no scheduled backup and no
-`vmtool-store backup` command. Back up by hand: stop the container, copy
-`data/store.db` to somewhere safe, start it again (the `vmtool_store` README
-has the commands). Image blobs are in the MinIO bucket and are not part of
-that copy; they can be pushed again from `image_dir`. To restore, stop the
-container, put the copy back as `data/store.db` owned by 65532 with mode
-0600, make sure `etc/enc.key` is the key the copy was made with, and start
-it.
+**Backups.** The store writes a consistent copy of its database (SQLite
+`VACUUM INTO`) to the bucket as `backups/store-<UTC yyyymmddThhmmssZ>.db`
+every 24 hours, and once 5 minutes after it starts when the newest backup is
+older than 24 hours or there is none. After each one it keeps the 14 newest
+`backups/store-*.db` and deletes the rest. To take one now, in the app
+directory:
+
+    docker compose exec vmtool-store vmtool-store backup
+
+It prints one line, the object name, and exits 0; any failure exits non-zero.
+A failure is logged with the operation, object name, error class and
+duration, and never a credential, token, key or S3 key.
+
+A backup is a copy of the database, so the credential columns stay
+AES-256-GCM ciphertext. **The encryption key is not in the backup.** It is
+kept separately (OpenBao and `etc/enc.key`), and a backup restored without
+the key it was written under is unreadable. Image blobs are not in the backup
+either; they stay in the bucket and can be pushed again from `image_dir`.
+
+To restore: stop the container; fetch the chosen object (`mc cp` or the
+console) to `data/store.db`, owned by 65532 with mode 0600 in the 0700
+directory; make sure `etc/enc.key` is the key that backup was written under;
+start the container; check `GET /version` and read one credential back.
+vmtool adds no restore command.
 
 ### A new machine
 

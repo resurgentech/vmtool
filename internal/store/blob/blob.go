@@ -48,6 +48,9 @@ type BlobStore interface {
 	Stat(ctx context.Context, key string) (Info, error)
 	// Delete removes key; a missing key is not an error.
 	Delete(ctx context.Context, key string) error
+	// List returns the keys that start with prefix, sorted by name. An
+	// empty result is not an error.
+	List(ctx context.Context, prefix string) ([]string, error)
 	// EnsureBucket makes the bucket if it does not exist. Idempotent.
 	EnsureBucket(ctx context.Context) error
 }

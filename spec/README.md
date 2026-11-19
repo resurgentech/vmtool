@@ -337,13 +337,30 @@ not relayed: `create` fails.
 
 `enc.key` (file mode 0600, mounted at `/etc/vmtool-store/enc.key`) encrypts
 every credential column; the store cannot read what another key wrote, so a
-lost or replaced key loses every stored credential. The design calls for a
-daily `VACUUM INTO` snapshot to `backups/` in the bucket (14 kept) and a
-`vmtool-store backup` command. **Neither is built**: `db.Snapshot`
-(`internal/store/db`) exists and nothing calls it, and the command takes only
-`-config`. Until then a backup is a copy of `data/store.db` taken with the
-container stopped, kept with the key (see the `vmtool_store` role's README in
-`ansible_labtwo`, and the root `README.md`).
+lost or replaced key loses every stored credential.
+
+The store backs itself up. A backup is a `VACUUM INTO` copy of the database,
+uploaded to the bucket as `backups/store-<UTC yyyymmddThhmmssZ>.db` every 24
+hours, and once 5 minutes after start when the newest backup is older than 24
+hours or there is none; one runs at a time, and after each the 14 newest
+`backups/store-*.db` are kept and the rest deleted (only keys of exactly that
+shape are ever deleted). `docker compose exec vmtool-store vmtool-store backup`
+takes one on demand through its own SQLite connection (a read transaction,
+safe beside the running store), prints one line with the object name and exits
+0, else non-zero. It adds no HTTP route and no spec change. A failed backup is
+logged with the operation, object name, error class and duration, never a
+credential, token, key, request body or S3 key.
+
+**The encryption key is not in the backup.** The copy holds the credential
+columns as AES-256-GCM ciphertext; the key is kept separately (OpenBao and
+`enc.key`), and a backup restored without the key it was written under is
+unreadable. Image blobs are not in the backup; they stay in the bucket.
+
+Restore: stop the container; fetch the chosen object (`mc cp` or the console)
+to `data/store.db` with mode 0600 in the 0700 directory; use the same
+`enc.key`; start; check `GET /version` and a credential read. vmtool adds no
+restore command. See the `vmtool_store` role's README in `ansible_labtwo` and
+the root `README.md`.
 
 ## URL versioning
 

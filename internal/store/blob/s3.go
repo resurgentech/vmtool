@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"sort"
 	"strings"
 
 	"github.com/minio/minio-go/v7"
@@ -163,6 +164,18 @@ func (s *S3) Delete(ctx context.Context, key string) error {
 		return err
 	}
 	return nil
+}
+
+func (s *S3) List(ctx context.Context, prefix string) ([]string, error) {
+	var keys []string
+	for o := range s.c.ListObjects(ctx, s.bucket, minio.ListObjectsOptions{Prefix: prefix, Recursive: true}) {
+		if o.Err != nil {
+			return nil, mapErr(o.Err)
+		}
+		keys = append(keys, o.Key)
+	}
+	sort.Strings(keys)
+	return keys, nil
 }
 
 var _ BlobStore = (*S3)(nil)
