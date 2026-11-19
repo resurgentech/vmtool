@@ -1154,3 +1154,36 @@ are appended, never edited in; a hook refuses rewrites.
   line), green after; `just check` and `VMTOOL_TEST_ANSIBLE_SYNTAX=1 just
   test ./scripts/` green.
 - Commits: the T1 commit on `clone-identity`.
+
+## 2026-11-18 — T2 The root helper `vmtool-thin`, its sudoers rule, installed by deploy
+
+- `deploy/vmtool-thin`: the only thing the daemon runs as root (`sudo -n
+  /usr/local/libexec/vmtool-thin <verb> …`). Verbs report, create,
+  snapshot (`-kn`, then activated), extend (grow only), remove (`lvremove
+  -y`, never forced), rename, tag, import, export. It acts only in a VG
+  holding a thin pool tagged `vmtool_thinpool`, only on thin volumes
+  tagged `vmtool_vol`/`vmtool_template`/`vmtool_building`, never on a pool;
+  names, tags, BYTES and paths validated (flat files in the image
+  directory, rendered in by deploy from `HV_POOL_DIR`). qemu-img runs as
+  user `vmtool` (`setpriv`) against the LV's device node, handed to vmtool
+  for the call and given back to `root:disk` by a trap, so a qcow2's
+  backing or data file cannot make root read anything; no root `chown` of
+  any image-directory path. PATH fixed, `set -euo pipefail`, no `eval`.
+- `deploy/vmtool-thin.sudoers`: `vmtool ALL=(root) NOPASSWD:
+  /usr/local/libexec/vmtool-thin`. `scripts/deploy.sh` stages both and,
+  in its one sudo script, installs the helper root:root 0755 and the rule
+  0440 under a temporary dotted name, `visudo -cf`, then moves it to
+  `vmtool-thin` (a failed check removes it and stops before the daemon's
+  files). Test seams `LIBEXEC_DIR`, `SUDOERS_DIR`; the justfile's
+  `deploy` passes `HV_POOL_DIR`. `setup_host.yml`'s "no sudo" comment
+  corrected.
+- Tests: `scripts/vmtool_thin_test.go` runs a copy of the script with the
+  PATH line pointed at stub tools and the image dir rendered (the installed
+  copy reads no environment): every verb's argv, one refusal per
+  validation (no writing stub runs), script-text checks;
+  `scripts/deploy_test.go`: install modes, check-before-move, failed
+  visudo, unsafe dirs, the rendered pool dir. Red: script absent, deploy
+  expectations unmet; green after. 21 mutations of the helper (FOREMAN
+  20, one at a time) and one of deploy's visudo gate each fail a test.
+  `just check` green. Never run on a host.
+- Commits: the T2 commit on `clone-identity`.

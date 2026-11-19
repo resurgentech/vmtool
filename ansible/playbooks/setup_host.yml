@@ -314,8 +314,10 @@
         state: present
       when: vmtool_role == 'hypervisor'
 
-    # No login shell, no sudo; home is the install dir but useradd must not
-    # create it (the file task below sets its owner and mode).
+    # No login shell. Its only sudo is the one root helper, vmtool-thin, which
+    # `just deploy` installs with its sudoers rule (this play sets none up).
+    # Home is the install dir but useradd must not create it (the file task
+    # below sets its owner and mode).
     - name: Create the vmtool system user
       ansible.builtin.user:
         name: "{{ vmtool_hv_user }}"

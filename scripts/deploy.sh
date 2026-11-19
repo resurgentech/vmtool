@@ -35,15 +35,25 @@
 #                  When this machine's config.yml has server.url (`vmtool
 #                  config server-url` prints it), `--store-url <url>` is added:
 #                  the daemon's store_url, the one address fetchImage dials
-#   7. install     the rendered unit goes to stage/ on stdin; then one `ssh -t`
-#                  call runs one `sudo sh -c`, which in this order: refuses
+#   7. install     the rendered unit, the rendered root helper vmtool-thin
+#                  (deploy/vmtool-thin with HV_POOL_DIR written into it) and
+#                  its sudoers rule (deploy/vmtool-thin.sudoers) go to stage/
+#                  on stdin; then one `ssh -t` call runs one `sudo sh -c`,
+#                  which in this order: refuses
 #                  if the port is listened on by anything but our daemon
 #                  (vmtool-daemon, or a vmtool.service whose WorkingDirectory
 #                  is HV_DIR), before changing anything; disables, stops and
 #                  removes such an older vmtool.service (any other
-#                  vmtool.service is left alone); installs binary, config.yml,
-#                  crt and key (owner vmtool) into HV_DIR and the unit into
-#                  UNIT_DIR; then daemon-reload, enable, restart
+#                  vmtool.service is left alone); installs the helper as
+#                  root:root 0755 into LIBEXEC_DIR (never owned by vmtool, so
+#                  the daemon cannot rewrite what it runs as root) and the
+#                  sudoers rule root 0440 under a temporary name with a dot
+#                  (sudo ignores such files) in SUDOERS_DIR, which `visudo -cf`
+#                  must pass before it is moved to SUDOERS_DIR/vmtool-thin (a
+#                  failed check removes it and stops the install, before the
+#                  daemon's files are touched); then installs binary,
+#                  config.yml, crt and key (owner vmtool) into HV_DIR and the
+#                  unit into UNIT_DIR; then daemon-reload, enable, restart
 #                  vmtool-daemon. The staged config.yml and key are removed
 #                  either way.
 #   8. check       GET /version over HTTPS (public: no token sent)
@@ -55,8 +65,15 @@
 #   VMTOOL_BIN     local vmtool, used for `config host` (default <root>/vmtool)
 #   DEPLOY_RETRIES seconds to wait for /version after restart (default 15)
 #   VMTOOL_SELF_ADDRESS, VMTOOL_SELF_PORT   this machine, when unlisted
+#   HV_POOL_DIR    the image directory the helper vmtool-thin may read and
+#                  write files in (default /var/lib/vmtool/images; the
+#                  justfile passes the same value `just prereqs` uses)
 #   UNIT_DIR       systemd unit directory on the host (default
 #                  /etc/systemd/system; a test seam)
+#   LIBEXEC_DIR    where the helper is installed (default /usr/local/libexec;
+#                  a test seam: the sudoers rule names the default path)
+#   SUDOERS_DIR    sudoers drop-in directory (default /etc/sudoers.d; a test
+#                  seam)
 #   GO_BIN_DIR     where a prereqs-installed Go lives (default
 #                  /usr/local/go/bin; a test seam)
 # REMOTE_DIR (the old home-directory layout) is ignored, with a warning.
@@ -73,6 +90,11 @@ vmtool_bin="${VMTOOL_BIN:-$root/vmtool}"
 hv="${HV_DIR:-/opt/vmtool}"
 template="$here/../deploy/vmtool.service.in"
 ud="${UNIT_DIR:-/etc/systemd/system}"
+pool_dir="${HV_POOL_DIR:-/var/lib/vmtool/images}"
+libexec="${LIBEXEC_DIR:-/usr/local/libexec}"
+sudoers_dir="${SUDOERS_DIR:-/etc/sudoers.d}"
+thin_src="$here/../deploy/vmtool-thin"
+sudoers_src="$here/../deploy/vmtool-thin.sudoers"
 gobin="${GO_BIN_DIR:-/usr/local/go/bin}"
 export VMTOOL_ROOT="$root" VMTOOL_DOMAIN="$domain" VMTOOL_BIN="$vmtool_bin"
 
@@ -85,6 +107,9 @@ host="${1:-}"
 # hv lands in remote shell commands and a systemd unit unquoted.
 [[ $hv =~ ^/[A-Za-z0-9._/-]+$ ]] || die "HV_DIR '$hv' has characters unsafe in a shell command or systemd unit."
 [[ $ud =~ ^/[A-Za-z0-9._/-]+$ ]] || die "UNIT_DIR '$ud' has characters unsafe in a shell command."
+[[ $pool_dir =~ ^/[A-Za-z0-9._/-]+$ ]] || die "HV_POOL_DIR '$pool_dir' has characters unsafe in a shell command or the vmtool-thin helper."
+[[ $libexec =~ ^/[A-Za-z0-9._/-]+$ ]] || die "LIBEXEC_DIR '$libexec' has characters unsafe in a shell command."
+[[ $sudoers_dir =~ ^/[A-Za-z0-9._/-]+$ ]] || die "SUDOERS_DIR '$sudoers_dir' has characters unsafe in a shell command."
 [[ $gobin =~ ^/[A-Za-z0-9._/-]+$ ]] || die "GO_BIN_DIR '$gobin' has characters unsafe in a shell command."
 [[ -z ${REMOTE_DIR:-} ]] || echo "WARNING: REMOTE_DIR is no longer used and is ignored; the daemon goes to HV_DIR ($hv)." >&2
 
@@ -104,6 +129,7 @@ fi
 
 [[ -x $vmtool_bin ]] || die "$vmtool_bin not found; run 'just build' first."
 [[ -f $template ]] || die "$template not found."
+[[ -f $thin_src && -f $sudoers_src ]] || die "deploy/vmtool-thin or deploy/vmtool-thin.sudoers not found."
 fqdn="$host.$domain"
 
 # This machine? The same test as cert.sh, which keeps tls/ here for it.
@@ -224,6 +250,12 @@ content="$(<"$template")"
 content="${content//@USER@/vmtool}"
 content="${content//@DIR@/$hv}"
 printf '%s\n' "$content" | run "cat > \"$base/stage/vmtool-daemon.service\""
+# The root helper, its image directory rendered in (the installed copy has no
+# other way to learn it), and the sudoers rule that lets vmtool run it.
+thin="$(<"$thin_src")"
+thin="${thin//@POOL_DIR@/$pool_dir}"
+printf '%s\n' "$thin" | run "cat > \"$base/stage/vmtool-thin\""
+run "cat > \"$base/stage/vmtool-thin.sudoers\"" <"$sudoers_src"
 
 # Run as root by `sh -c`, with the staging dir as $1. No single quotes inside.
 # (a) refuse a port that anything but our daemon listens on, before any
@@ -239,6 +271,11 @@ script+="; pids=\$(printf \"%s\\n\" \"\$l\" | grep -o \"pid=[0-9]*\" | cut -d= -
 script+="; if [ -n \"\$l\" ] && [ -z \"\$pids\" ]; then echo \"port $port is listened on by a process that cannot be identified; nothing was changed\" >&2; exit 1; fi"
 script+="; for p in \$pids; do case \"\$ours\" in *\" \$p \"*) ;; *) echo \"port $port is already listened on by pid \$p, which is not vmtool; nothing was changed\" >&2; exit 1 ;; esac; done"
 script+="; if [ \$old = yes ]; then systemctl disable --now vmtool; rm -f $ud/vmtool.service; fi"
+script+="; install -d -m 0755 $libexec"
+script+="; install -o root -g root -m 0755 \"\$1/vmtool-thin\" $libexec/vmtool-thin"
+script+="; install -o root -g root -m 0440 \"\$1/vmtool-thin.sudoers\" $sudoers_dir/vmtool-thin.tmp"
+script+="; visudo -cf $sudoers_dir/vmtool-thin.tmp >/dev/null || { rm -f $sudoers_dir/vmtool-thin.tmp; echo \"the sudoers rule failed visudo; it was not installed and the daemon was not updated\" >&2; exit 1; }"
+script+="; mv $sudoers_dir/vmtool-thin.tmp $sudoers_dir/vmtool-thin"
 script+="; install -d -o vmtool -g vmtool -m 0700 $hv/tls"
 script+="; $own -m 0755 \"\$1/vmtool\" $hv/vmtool"
 script+="; $own -m 0600 \"\$1/config.yml\" $hv/config.yml"

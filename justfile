@@ -46,7 +46,7 @@ prereqs *ARGS:
 
 # Build vmtool on <host> over ssh (after `just prereqs <host>`), install it into hv_dir with one sudo and run it as the vmtool user, as vmtool-daemon.service on the host's port (default 9473; refuses a port something else listens on; removes an older vmtool.service run from hv_dir); on this machine it runs locally, with no ssh, and an unlisted entry (VMTOOL_SELF_ADDRESS, VMTOOL_SELF_PORT, default 9474) is written by `vmtool config set-host` once /version answers
 deploy host:
-    VMTOOL_ROOT="{{ root }}" VMTOOL_DOMAIN="{{ domain }}" BAO_CA_PATH="{{ bao_ca_path }}" CERT_DAYS="{{ cert_days }}" HV_DIR="{{ hv_dir }}" GO_MIN="{{ go_min }}" "{{ root }}/scripts/deploy.sh" "{{ host }}"
+    VMTOOL_ROOT="{{ root }}" VMTOOL_DOMAIN="{{ domain }}" BAO_CA_PATH="{{ bao_ca_path }}" CERT_DAYS="{{ cert_days }}" HV_DIR="{{ hv_dir }}" HV_POOL_DIR="{{ hv_pool_dir }}" GO_MIN="{{ go_min }}" "{{ root }}/scripts/deploy.sh" "{{ host }}"
 
 # Build ./vmtool
 build:

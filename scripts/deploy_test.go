@@ -222,6 +222,8 @@ func TestDeployFlow(t *testing.T) {
 		findCall(t, calls, `mkdir -p `+stage+`/tls"`),
 		findCall(t, calls, "config write --token-stdin --role hypervisor --name veritech01 --listen 0.0.0.0:9473 --tls-cert tls/veritech01.labtwo.crt --tls-key tls/veritech01.labtwo.key"),
 		findCall(t, calls, `cat > `+stage+`/vmtool-daemon.service"`),
+		findCall(t, calls, `cat > `+stage+`/vmtool-thin"`),
+		findCall(t, calls, `cat > `+stage+`/vmtool-thin.sudoers"`),
 		findCall(t, calls, "sudo sh -c"),
 	}
 	for i := 1; i < len(order); i++ {
@@ -232,7 +234,7 @@ func TestDeployFlow(t *testing.T) {
 	if len(calls) != len(order) {
 		t.Errorf("want %d ssh calls, got %d: %+v", len(order), len(calls), calls)
 	}
-	copyCall, cfg, unit, inst := calls[order[2]], calls[order[5]], calls[order[6]], calls[order[7]]
+	copyCall, cfg, unit, inst := calls[order[2]], calls[order[5]], calls[order[6]], calls[order[9]]
 	for _, w := range []string{"umask 077", `mkdir -p "$HOME/.cache/vmtool-deploy/src" ` + stage + `/tls"`, `tar -xzf - -C "$HOME/.cache/vmtool-deploy/src"`} {
 		if !strings.Contains(copyCall.argv, w) {
 			t.Errorf("copy call lacks %q: %q", w, copyCall.argv)
@@ -269,7 +271,7 @@ func TestDeployFlow(t *testing.T) {
 		if c.tty {
 			ttys++
 		}
-		sudos += strings.Count(c.argv, "sudo")
+		sudos += strings.Count(c.argv, "sudo sh -c") // not "vmtool-thin.sudoers"
 	}
 	if ttys != 1 || sudos != 1 || !inst.tty {
 		t.Errorf("want one ssh -t call with one sudo (the install): %d tty, %d sudo", ttys, sudos)
@@ -283,6 +285,11 @@ func TestDeployFlow(t *testing.T) {
 		"install -o vmtool -g vmtool -m 0644 \"$1/tls/veritech01.labtwo.crt\" /opt/vmtool/tls/veritech01.labtwo.crt",
 		"install -o vmtool -g vmtool -m 0600 \"$1/tls/veritech01.labtwo.key\" /opt/vmtool/tls/veritech01.labtwo.key",
 		"install -m 0644 \"$1/vmtool-daemon.service\" /etc/systemd/system/vmtool-daemon.service",
+		"install -d -m 0755 /usr/local/libexec",
+		"install -o root -g root -m 0755 \"$1/vmtool-thin\" /usr/local/libexec/vmtool-thin",
+		"install -o root -g root -m 0440 \"$1/vmtool-thin.sudoers\" /etc/sudoers.d/vmtool-thin.tmp",
+		"visudo -cf /etc/sudoers.d/vmtool-thin.tmp",
+		"mv /etc/sudoers.d/vmtool-thin.tmp /etc/sudoers.d/vmtool-thin",
 		`rm -f "$s/config.yml" "$s/tls/veritech01.labtwo.key"`,
 		"systemctl daemon-reload; systemctl enable --now vmtool-daemon; systemctl restart vmtool-daemon",
 	} {
@@ -553,8 +560,19 @@ done
 [[ -f ${args[0]} ]] || { echo "install: no ${args[0]}" >&2; exit 1; }
 mkdir -p "$d/installed"
 cp "${args[0]}" "$d/installed/$(basename "${args[1]}")"
-echo "${args[1]} $mode" >> "$d/installed.list"`)
-	e.env = append(e.env, "HV_DIR="+hv, "UNIT_DIR="+t.TempDir(), "GO_BIN_DIR="+filepath.Join(e.stub, "nogo"))
+echo "${args[1]} $mode" >> "$d/installed.list"
+# The sudoers temp file is really made: visudo checks it and mv moves it.
+if [[ ${args[1]} == *.tmp ]]; then cp "${args[0]}" "${args[1]}"; chmod "$mode" "${args[1]}"; fi`)
+	// visudo -cf <file>: fails when the file is missing or when the test asked
+	// for a failure (file visudoexit); logs "visudo <file> final=<yes|no>" to
+	// seq, so a test sees whether the final name existed at check time.
+	addStub(t, e.stub, "visudo", `f=${*: -1}
+[[ -f $f ]] || { echo "visudo: no $f" >&2; exit 1; }
+if [[ -e ${f%.tmp} ]]; then fin=yes; else fin=no; fi
+echo "visudo $f final=$fin" >> "$d/seq"
+[[ ! -f $d/visudoexit ]] || exit "$(<"$d/visudoexit")"`)
+	e.env = append(e.env, "HV_DIR="+hv, "UNIT_DIR="+t.TempDir(), "LIBEXEC_DIR="+t.TempDir(), "SUDOERS_DIR="+t.TempDir(),
+		"GO_BIN_DIR="+filepath.Join(e.stub, "nogo"))
 	return e, rhome, hv
 }
 
@@ -588,7 +606,8 @@ func TestDeployRemoteCommandsRun(t *testing.T) {
 		t.Error(errs)
 	}
 	list := readOr(t, filepath.Join(e.stub, "installed.list"))
-	want := hv + "/vmtool 0755\n" + hv + "/config.yml 0600\n" +
+	want := e.get("LIBEXEC_DIR") + "/vmtool-thin 0755\n" + e.get("SUDOERS_DIR") + "/vmtool-thin.tmp 0440\n" +
+		hv + "/vmtool 0755\n" + hv + "/config.yml 0600\n" +
 		hv + "/tls/veritech01.labtwo.crt 0644\n" + hv + "/tls/veritech01.labtwo.key 0600\n" +
 		ud + "/vmtool-daemon.service 0644\n"
 	if list != want {
@@ -812,7 +831,8 @@ func TestDeployLocalNoSSHOneSudo(t *testing.T) {
 	if ss := readOr(t, filepath.Join(e.stub, "ss.argv")); !strings.Contains(ss, "sport = :9475") {
 		t.Errorf("ss argv %q", ss)
 	}
-	want := hv + "/vmtool 0755\n" + hv + "/config.yml 0600\n" +
+	want := e.get("LIBEXEC_DIR") + "/vmtool-thin 0755\n" + e.get("SUDOERS_DIR") + "/vmtool-thin.tmp 0440\n" +
+		hv + "/vmtool 0755\n" + hv + "/config.yml 0600\n" +
 		hv + "/tls/PLACEHOLDER-HOST.labtwo.crt 0644\n" + hv + "/tls/PLACEHOLDER-HOST.labtwo.key 0600\n" +
 		ud + "/vmtool-daemon.service 0644\n"
 	if got := readOr(t, filepath.Join(e.stub, "installed.list")); got != want {
@@ -1100,5 +1120,153 @@ if [[ "$1 $2" == "config server-url" ]]; then echo https://PLACEHOLDER-HOST:8095
 	}
 	if argv := readOr(t, filepath.Join(e.stub, "remote-vmtool.argv")); !strings.Contains(argv, "--store-url https://PLACEHOLDER-HOST:8095") {
 		t.Errorf("config write argv %q", argv)
+	}
+}
+
+const thinSudoersLine = "vmtool ALL=(root) NOPASSWD: /usr/local/libexec/vmtool-thin\n"
+
+// The sudoers rule is exactly the one line the step names.
+func TestThinSudoersText(t *testing.T) {
+	if got := readOr(t, "../deploy/vmtool-thin.sudoers"); got != thinSudoersLine {
+		t.Errorf("deploy/vmtool-thin.sudoers = %q, want %q", got, thinSudoersLine)
+	}
+}
+
+// deploy installs the helper root:root 0755 (the install call's -o root -g
+// root, never vmtool) with the image directory rendered in, and the sudoers
+// rule 0440 under a name with a dot, checked by visudo before it is moved to
+// a name without one. Both land in the seam directories.
+func TestDeployInstallsThinHelperAndSudoers(t *testing.T) {
+	e, _, hv := newRemoteEnv(t)
+	lx, sd := e.get("LIBEXEC_DIR"), e.get("SUDOERS_DIR")
+	r := e.deploy(t, nil, "PLACEHOLDER-HOST")
+	if r.code != 0 {
+		t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
+	}
+	if errs := readOr(t, filepath.Join(e.stub, "errors")); errs != "" {
+		t.Error(errs)
+	}
+	list := readOr(t, filepath.Join(e.stub, "installed.list"))
+	if !strings.HasPrefix(list, lx+"/vmtool-thin 0755\n"+sd+"/vmtool-thin.tmp 0440\n") {
+		t.Errorf("installed.list does not start with the helper and the sudoers temp file:\n%s", list)
+	}
+	// The helper as installed: the template with the default directory.
+	tpl := readOr(t, "../deploy/vmtool-thin")
+	if strings.Count(tpl, "@POOL_DIR@") != 1 {
+		t.Fatalf("template has %d placeholders", strings.Count(tpl, "@POOL_DIR@"))
+	}
+	got := readOr(t, filepath.Join(e.stub, "installed", "vmtool-thin"))
+	if want := strings.Replace(tpl, "@POOL_DIR@", "/var/lib/vmtool/images", 1); got != want {
+		t.Errorf("installed helper differs from the template with the pool directory rendered")
+	}
+	if strings.Contains(got, "@POOL_DIR@") || !strings.Contains(got, "pool_dir='/var/lib/vmtool/images'") {
+		t.Error("pool directory not rendered into the helper")
+	}
+	// The sudoers rule: checked on the temp name, final file in place, temp gone.
+	if seq := readOr(t, filepath.Join(e.stub, "seq")); seq != "visudo "+sd+"/vmtool-thin.tmp final=no\n" {
+		t.Errorf("visudo calls %q", seq)
+	}
+	if v := readOr(t, filepath.Join(e.stub, "visudo.argv")); v != "-cf "+sd+"/vmtool-thin.tmp\n" {
+		t.Errorf("visudo argv %q", v)
+	}
+	if got := readOr(t, filepath.Join(sd, "vmtool-thin")); got != thinSudoersLine {
+		t.Errorf("sudoers file %q", got)
+	}
+	if m := fileMode(t, filepath.Join(sd, "vmtool-thin")); m != 0o440 {
+		t.Errorf("sudoers mode %v", m)
+	}
+	if _, err := os.Stat(filepath.Join(sd, "vmtool-thin.tmp")); err == nil {
+		t.Error("temporary sudoers file left behind")
+	}
+	// The same sudo script, in order: helper, sudoers check, then the daemon.
+	sudo := readOr(t, filepath.Join(e.stub, "sudo.argv"))
+	for _, w := range []string{
+		"install -d -m 0755 " + lx,
+		"install -o root -g root -m 0755 \"$1/vmtool-thin\" " + lx + "/vmtool-thin",
+		"install -o root -g root -m 0440 \"$1/vmtool-thin.sudoers\" " + sd + "/vmtool-thin.tmp",
+		"visudo -cf " + sd + "/vmtool-thin.tmp",
+		"mv " + sd + "/vmtool-thin.tmp " + sd + "/vmtool-thin",
+	} {
+		if !strings.Contains(sudo, w) {
+			t.Errorf("sudo script lacks %q: %q", w, sudo)
+		}
+	}
+	if strings.Index(sudo, "visudo -cf") > strings.Index(sudo, "mv "+sd) || strings.Index(sudo, "mv "+sd) > strings.Index(sudo, hv+"/vmtool") {
+		t.Errorf("order wrong (visudo, mv, daemon install): %q", sudo)
+	}
+	if strings.Contains(sudo, "-o vmtool") && strings.Contains(sudo, "-o vmtool -g vmtool -m 0755 \"$1/vmtool-thin\"") {
+		t.Error("the helper is installed owned by vmtool")
+	}
+}
+
+func TestDeployThinPoolDirFromHVPoolDir(t *testing.T) {
+	e, _, _ := newRemoteEnv(t)
+	if r := e.deploy(t, []string{"HV_POOL_DIR=/srv/images/vm-pool"}, "PLACEHOLDER-HOST"); r.code != 0 {
+		t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
+	}
+	got := readOr(t, filepath.Join(e.stub, "installed", "vmtool-thin"))
+	if !strings.Contains(got, "pool_dir='/srv/images/vm-pool'") || strings.Contains(got, "/var/lib/vmtool/images") || strings.Contains(got, "@POOL_DIR@") {
+		t.Error("HV_POOL_DIR not rendered into the helper")
+	}
+}
+
+// A failing visudo check stops the install: no final sudoers file, no temp
+// file, deploy fails, and the daemon's own files are not touched.
+func TestDeployFailedVisudoInstallsNoSudoers(t *testing.T) {
+	e, rhome, hv := newRemoteEnv(t)
+	sd := e.get("SUDOERS_DIR")
+	writeStub(t, e, "visudoexit", "1\n")
+	r := e.deploy(t, nil, "PLACEHOLDER-HOST")
+	if r.code == 0 {
+		t.Fatal("exit 0 although visudo failed")
+	}
+	for _, f := range []string{"vmtool-thin", "vmtool-thin.tmp"} {
+		if _, err := os.Stat(filepath.Join(sd, f)); err == nil {
+			t.Errorf("%s exists after a failed visudo check", f)
+		}
+	}
+	if list := readOr(t, filepath.Join(e.stub, "installed.list")); strings.Contains(list, hv+"/vmtool") {
+		t.Errorf("daemon installed after a failed sudoers check:\n%s", list)
+	}
+	if got := e.systemctlCalls(t); strings.Contains(got, "restart") || strings.Contains(got, "daemon-reload") {
+		t.Errorf("systemctl changed something: %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(e.stub, "curl.argv")); err == nil {
+		t.Error("curl after a failed install")
+	}
+	if _, err := os.Stat(filepath.Join(rhome, ".cache", "vmtool-deploy", "stage", "config.yml")); err == nil {
+		t.Error("staged config.yml kept")
+	}
+}
+
+func TestDeployRefusesUnsafeThinDirs(t *testing.T) {
+	for _, v := range []string{"HV_POOL_DIR", "LIBEXEC_DIR", "SUDOERS_DIR"} {
+		for _, d := range []string{"rel/dir", "/a b", "/a$(id)", "/a'b", "/a;b", "/"} {
+			t.Run(v+" "+d, func(t *testing.T) {
+				e := newDeployEnv(t, "go1.22.2\n")
+				r := e.deploy(t, []string{v + "=" + d}, "PLACEHOLDER-HOST")
+				if r.code == 0 || !strings.Contains(r.stderr, v) {
+					t.Fatalf("want %s refusal, got %d %q", v, r.code, r.stderr)
+				}
+				for _, f := range []string{"ssh.argv", "scp.argv", "tar.argv", "bao.argv"} {
+					if _, err := os.Stat(filepath.Join(e.stub, f)); err == nil {
+						t.Errorf("%s called despite an unsafe %s", f, v)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestJustDeployPassesPoolDir(t *testing.T) {
+	if _, err := exec.LookPath("just"); err != nil {
+		t.Skip("just not installed")
+	}
+	out, err := exec.Command("just", "--justfile", "../justfile", "--dry-run", "deploy", "h1").CombinedOutput()
+	if err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if !strings.Contains(string(out), `HV_POOL_DIR="/var/lib/vmtool/images"`) {
+		t.Errorf("deploy recipe: %s", out)
 	}
 }

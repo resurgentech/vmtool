@@ -1,0 +1,338 @@
+#!/bin/bash
+# vmtool-thin: the one root-owned helper through which the vmtool daemon
+# manages its LVM thin volumes.
+#
+#   sudo -n /usr/local/libexec/vmtool-thin <verb> <args>
+#
+# Installed by `just deploy` (scripts/deploy.sh) as root:root 0755, never
+# owned by the vmtool user, with a sudoers rule that lets user vmtool run
+# this one file as root. It is the only thing vmtool runs as root. The daemon
+# may be compromised, so every argument is validated here and the helper acts
+# only on what vmtool made:
+#   - a volume group that holds a thin pool tagged vmtool_thinpool;
+#   - logical volumes tagged vmtool_vol, vmtool_template or vmtool_building
+#     (create and report excepted); never a pool, never an untagged volume;
+#   - flat regular files in the image directory, whose path is rendered into
+#     the installed copy by deploy (no environment can change it).
+# It never runs lvm with caller-supplied options, never forces a removal,
+# never builds a command from text, and runs qemu-img only as user vmtool (setpriv), against a
+# device node it hands to vmtool for the duration, so qemu-img can reach only
+# what vmtool can reach anyway (a qcow2 file may name any backing file).
+#
+# Verbs (a refusal prints one line to stderr and exits non-zero):
+#   report                                  lvs JSON over the VGs holding a pool
+#   create VG POOL NAME BYTES TAG...        thin volume of BYTES
+#   snapshot VG SRC NAME TAG...             thin snapshot of SRC, activated
+#   extend VG NAME BYTES                    grow only (equal size: nothing)
+#   remove VG NAME
+#   rename VG OLD NEW
+#   tag VG NAME +TAG|-TAG...
+#   import VG NAME SRC                      qcow2 file -> the volume (raw)
+#   export VG NAME DEST                     the volume -> qcow2 file
+set -euo pipefail
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+export LC_ALL=C
+umask 022
+
+pool_dir='@POOL_DIR@'
+
+die() { echo "vmtool-thin: $*" >&2; exit 1; }
+
+# The image directory must have been rendered by deploy.
+pool_dir=${pool_dir%/}
+[[ $pool_dir == /* && $pool_dir =~ ^/[A-Za-z0-9._/-]+$ ]] || die "image directory not configured"
+case "$pool_dir/" in */../*) die "image directory not configured" ;; esac
+
+name_re='^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$'
+tag_re='^vmtool_[a-z0-9_]+(=[A-Za-z0-9._:-]+)?$'
+bytes_re='^[1-9][0-9]{0,17}$'
+src_re='^[A-Za-z0-9][A-Za-z0-9._-]*$'
+dest_re='^[.]?[A-Za-z0-9][A-Za-z0-9._-]*[.]part$'
+
+reserved=(snapshot pvmove _cdata _cmeta _corig _mlog _mimage _pmspare _rimage _rmeta _tdata _tmeta _vorigin _vdata)
+
+# need_args exact|min N: the verb's argument count.
+need_args() {
+  if [[ $1 == exact ]]; then
+    [[ $nargs -eq $2 ]] || die "$verb: wrong number of arguments"
+  else
+    [[ $nargs -ge $2 ]] || die "$verb: wrong number of arguments"
+  fi
+}
+
+check_vg() {
+  [[ $1 =~ $name_re ]] || die "invalid volume group name"
+}
+
+check_lv_name() {
+  local n=$1 s
+  [[ $n =~ $name_re ]] || die "invalid volume name"
+  for s in "${reserved[@]}"; do
+    [[ $n != *"$s"* ]] || die "volume name uses a name LVM reserves"
+  done
+}
+
+check_bytes() {
+  [[ $1 =~ $bytes_re ]] || die "BYTES must be a positive integer"
+}
+
+# has_tag "<comma list>" TAG: an exact element of the list.
+has_tag() {
+  [[ ",$1," == *",$2,"* ]]
+}
+
+# load_vg VG: the VG's visible LVs, one "name|attr|size|tags" line each.
+load_vg() {
+  listing=$(lvs --noheadings --units b --nosuffix --separator '|' -o lv_name,lv_attr,lv_size,lv_tags "$1" 2>/dev/null) \
+    || die "cannot list the volume group"
+}
+
+# find_lv NAME (after load_vg): sets L_attr, L_size, L_tags; false if absent.
+find_lv() {
+  local n a s t
+  L_attr='' L_size='' L_tags=''
+  while IFS='|' read -r n a s t; do
+    n=${n// /}
+    if [[ $n == "$1" ]]; then
+      L_attr=${a// /}
+      L_size=${s// /}
+      L_size=${L_size%%.*}
+      L_tags=${t// /}
+      return 0
+    fi
+  done <<<"$listing"
+  return 1
+}
+
+# A pool: a thin-pool LV carrying the vmtool_thinpool tag.
+is_pool() {
+  [[ $L_attr == t* ]] && has_tag "$L_tags" vmtool_thinpool
+}
+
+# vg_has_pool (after load_vg).
+vg_has_pool() {
+  local n a s t
+  while IFS='|' read -r n a s t; do
+    a=${a// /}
+    t=${t// /}
+    if [[ $a == t* ]] && has_tag "$t" vmtool_thinpool; then
+      return 0
+    fi
+  done <<<"$listing"
+  return 1
+}
+
+# require_pool_vg VG: the VG is valid, listable and holds a pool.
+require_pool_vg() {
+  check_vg "$1"
+  load_vg "$1"
+  vg_has_pool || die "volume group holds no vmtool thin pool"
+}
+
+# require_target NAME (after require_pool_vg): a vmtool-tagged LV, not a pool.
+require_target() {
+  check_lv_name "$1"
+  find_lv "$1" || die "no such volume: $1"
+  if [[ $L_attr == t* ]] || has_tag "$L_tags" vmtool_thinpool; then
+    die "$1 is a thin pool"
+  fi
+  if ! has_tag "$L_tags" vmtool_vol && ! has_tag "$L_tags" vmtool_template && ! has_tag "$L_tags" vmtool_building; then
+    die "$1 is not a vmtool volume"
+  fi
+  # Everything vmtool makes is a thin volume; a tagged thick LV is not ours.
+  [[ $L_attr == V* ]] || die "$1 is not a thin volume"
+}
+
+# require_new NAME (after require_pool_vg): a valid name nothing uses yet.
+require_new() {
+  check_lv_name "$1"
+  if find_lv "$1"; then
+    die "$1 already exists"
+  fi
+}
+
+# new_tags TAG...: validates tags to add to a new LV, fills tag_args.
+new_tags() {
+  local t kind=no
+  tag_args=()
+  for t in "$@"; do
+    [[ $t =~ $tag_re ]] || die "invalid tag"
+    [[ ${t%%=*} != vmtool_thinpool ]] || die "the pool tag cannot be set here"
+    case $t in
+      vmtool_vol | vmtool_template | vmtool_building) kind=yes ;;
+    esac
+    tag_args+=(--addtag "$t")
+  done
+  [[ $kind == yes ]] || die "a new volume needs a vmtool_vol, vmtool_template or vmtool_building tag"
+}
+
+# src_path PATH: SRC is exactly <image dir>/<file>, a regular file, no symlink.
+src_path() {
+  local f
+  [[ $1 == "$pool_dir"/* ]] || die "source is not in the image directory"
+  f=${1#"$pool_dir"/}
+  [[ $f =~ $src_re ]] || die "source is not a plain file name in the image directory"
+  [[ -f $1 && ! -L $1 ]] || die "source is not a regular file"
+}
+
+# dest_path PATH: exactly <image dir>/<file>.part, which does not exist.
+dest_path() {
+  local f
+  [[ $1 == "$pool_dir"/* ]] || die "destination is not in the image directory"
+  f=${1#"$pool_dir"/}
+  [[ $f =~ $dest_re ]] || die "destination is not a plain .part file name in the image directory"
+  [[ ! -e $1 && ! -L $1 ]] || die "destination exists"
+}
+
+# import and export hand the LV's device node (/dev/VG/NAME, a link root's
+# udev made) to vmtool while qemu-img runs, and a trap gives it back on every
+# exit path. Nothing else is chowned, and never a path in the image directory.
+dev_owned=no
+restore_dev() {
+  if [[ $dev_owned == yes ]]; then
+    dev_owned=no
+    chown root:disk "/dev/$vg/$name" || true
+  fi
+}
+
+[[ $# -ge 1 ]] || die "usage: vmtool-thin VERB [ARGS]"
+verb=$1
+shift
+nargs=$#
+
+case $verb in
+  report)
+    need_args exact 0
+    all=$(lvs --noheadings --separator '|' -o vg_name,lv_attr,lv_tags 2>/dev/null) || die "cannot list volume groups"
+    vgs=()
+    seen=' '
+    while IFS='|' read -r v a t; do
+      v=${v// /}
+      a=${a// /}
+      t=${t// /}
+      [[ $v =~ $name_re ]] || continue
+      [[ $a == t* ]] && has_tag "$t" vmtool_thinpool || continue
+      [[ $seen != *" $v "* ]] || continue
+      seen+="$v "
+      vgs+=("$v")
+    done <<<"$all"
+    if ((${#vgs[@]} == 0)); then
+      echo '{"report": [{"lv": []}]}'
+      exit 0
+    fi
+    exec lvs --reportformat json --units b --nosuffix -o lv_name,vg_name,lv_attr,lv_size,pool_lv,origin,data_percent,metadata_percent,lv_tags,lv_time "${vgs[@]}"
+    ;;
+
+  create)
+    need_args min 5
+    vg=$1 pool=$2 name=$3 bytes=$4
+    shift 4
+    require_pool_vg "$vg"
+    check_lv_name "$pool"
+    find_lv "$pool" && is_pool || die "not the vmtool thin pool"
+    require_new "$name"
+    check_bytes "$bytes"
+    new_tags "$@"
+    lvcreate -V "${bytes}b" --thin -n "$name" "${tag_args[@]}" "$vg/$pool" >/dev/null
+    ;;
+
+  snapshot)
+    need_args min 4
+    vg=$1 src=$2 name=$3
+    shift 3
+    require_pool_vg "$vg"
+    require_target "$src"
+    [[ $L_attr == V* ]] || die "$src is not a thin volume"
+    require_new "$name"
+    new_tags "$@"
+    lvcreate -s -kn -n "$name" "${tag_args[@]}" "$vg/$src" >/dev/null
+    lvchange -ay "$vg/$name" >/dev/null
+    ;;
+
+  extend)
+    need_args exact 3
+    vg=$1 name=$2 bytes=$3
+    require_pool_vg "$vg"
+    require_target "$name"
+    check_bytes "$bytes"
+    [[ $L_size =~ ^[0-9]{1,18}$ ]] || die "cannot read the size of $name"
+    if ((10#$bytes < 10#$L_size)); then
+      die "BYTES is smaller than the current size of $name"
+    fi
+    if ((10#$bytes > 10#$L_size)); then
+      lvextend -L "${bytes}b" "$vg/$name" >/dev/null
+    fi
+    ;;
+
+  remove)
+    need_args exact 2
+    vg=$1 name=$2
+    require_pool_vg "$vg"
+    require_target "$name"
+    lvremove -y "$vg/$name" >/dev/null
+    ;;
+
+  rename)
+    need_args exact 3
+    vg=$1 old=$2 new=$3
+    require_pool_vg "$vg"
+    require_target "$old"
+    require_new "$new"
+    lvrename "$vg" "$old" "$new" >/dev/null
+    ;;
+
+  tag)
+    need_args min 3
+    vg=$1 name=$2
+    shift 2
+    require_pool_vg "$vg"
+    require_target "$name"
+    tag_args=()
+    for item in "$@"; do
+      t=${item:1}
+      [[ $t =~ $tag_re ]] || die "invalid tag"
+      [[ ${t%%=*} != vmtool_thinpool ]] || die "the pool tag cannot be changed"
+      case $item in
+        +*) tag_args+=(--addtag "$t") ;;
+        -*) tag_args+=(--deltag "$t") ;;
+        *) die "tags are given as +TAG or -TAG" ;;
+      esac
+    done
+    lvchange "${tag_args[@]}" "$vg/$name" >/dev/null
+    ;;
+
+  import)
+    need_args exact 3
+    vg=$1 name=$2 src=$3
+    require_pool_vg "$vg"
+    require_target "$name"
+    src_path "$src"
+    trap restore_dev EXIT
+    trap 'exit 129' HUP
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    dev_owned=yes
+    chown vmtool:vmtool "/dev/$vg/$name"
+    setpriv --reuid=vmtool --regid=vmtool --init-groups -- qemu-img convert -f qcow2 -n -O raw -t none -W "$src" "/dev/$vg/$name" >/dev/null
+    ;;
+
+  export)
+    need_args exact 3
+    vg=$1 name=$2 dest=$3
+    require_pool_vg "$vg"
+    require_target "$name"
+    dest_path "$dest"
+    trap restore_dev EXIT
+    trap 'exit 129' HUP
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    dev_owned=yes
+    chown vmtool:vmtool "/dev/$vg/$name"
+    setpriv --reuid=vmtool --regid=vmtool --init-groups -- qemu-img convert -f raw -O qcow2 "/dev/$vg/$name" "$dest" >/dev/null
+    ;;
+
+  *)
+    die "unknown verb"
+    ;;
+esac
