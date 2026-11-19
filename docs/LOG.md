@@ -736,3 +736,25 @@ are appended, never edited in; a hook refuses rewrites.
   green after; `just check` green. Two status fixtures and the server's
   `TestListHosts` connector now allow the one local open.
 - Commits: the W2 commit on `clone-identity`.
+
+## 2026-11-18 — W3 Surfaces never open libvirt eagerly
+
+- No surface calls `vmtool.NewManager()` any more; every local open goes
+  through the resolver and only when the own name is used and not
+  listed. `metal add` (CLI and REST) skips the libvirt name check
+  silently when local libvirt is not used or cannot be opened.
+- Base-image lookup in local pools (CLI, server, TUI) answers "not found"
+  without opening anything when the own name is listed, and also when
+  libvirt cannot be opened, so create uses the host's cached copy.
+- `vmtool tunnel <own>/x` and `x.<own>.vmtool` with the own name listed
+  go through the daemon's tunnel route.
+- The TUI starts without opening libvirt (`newModel`); the local host is
+  resolved per action; with neither, its row is an ERROR row and the
+  create form opens with empty pickers.
+- `vmtool list` with neither leaves the own name out with one stderr
+  `note:` line; exit status unchanged.
+- A workstation server with its own name listed forwards
+  getImageManifest for that name to the daemon (403 only when not listed).
+- Tests in `internal/{cli,server,tui}/ownlisted_test.go`: red before,
+  green after; `just check` green.
+- Commits: the W3 commit on `clone-identity`.

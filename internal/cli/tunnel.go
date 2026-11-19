@@ -85,7 +85,7 @@ The VM is host/vm, or its SSH name <vm>.<host>.vmtool (what the block from
 }
 
 // openTunnel connects to arg's port 22: directly for the local host, through
-// the host's daemon for a configured one. arg is host/vm, or the VM SSH name
+// the host's daemon for a configured one (the own name too, when it is listed). arg is host/vm, or the VM SSH name
 // <vm>.<host>.vmtool that ssh passes (%n). The suffix is matched ignoring
 // case so a wrong-case name gets ParseSSHName's message, not a host/vm one.
 func openTunnel(ctx context.Context, e *env, arg string) (io.ReadWriteCloser, error) {
@@ -106,7 +106,7 @@ func openTunnel(ctx context.Context, e *env, arg string) (io.ReadWriteCloser, er
 	setup, cancel := context.WithTimeout(ctx, tunnelSetupTimeout)
 	defer cancel()
 
-	if ref.Host == r.Local() {
+	if ref.Host == r.Local() && !r.OwnListed() {
 		ip, err := tunnelVMIP(e, ref)
 		if err != nil {
 			return nil, err

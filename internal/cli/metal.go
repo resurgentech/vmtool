@@ -8,7 +8,6 @@ import (
 	"text/tabwriter"
 
 	"github.com/jaredeh/vmtool/internal/app"
-	"github.com/jaredeh/vmtool/pkg/vmtool"
 	"github.com/spf13/cobra"
 )
 
@@ -53,11 +52,8 @@ Re-running with the same host and kind resumes a failed onboarding.
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// libvirt is only needed to refuse VM names; machines work without it.
-			var vms app.Manager
-			if m, err := vmtool.NewManager(); err == nil {
-				defer m.Close()
-				vms = m
-			}
+			vms, release := e.libvirtNameCheck()
+			defer release()
 			info, err := e.service("").AddMachine(cmd.Context(), vms, app.AddMachineInput{
 				Name:       args[0],
 				Host:       args[1],

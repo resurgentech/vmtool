@@ -154,7 +154,10 @@ func (h *handlers) GetImageManifest(ctx context.Context, req api.GetImageManifes
 	if !vmtool.ValidImageName(req.Name) {
 		return api.GetImageManifest400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: badImageName(req.Name)}}, nil
 	}
-	if h.role != config.RoleHypervisor && req.Host == h.hosts.Local() {
+	// A workstation keeps no image cache; with its own name listed the
+	// daemon behind that name does, so the request is forwarded like any
+	// listed host's.
+	if h.role != config.RoleHypervisor && req.Host == h.hosts.Local() && !h.hosts.OwnListed() {
 		return api.GetImageManifest403JSONResponse{Error: fmt.Sprintf(
 			"image manifests are kept by hypervisor daemons; %s is the workstation and keeps no image cache", req.Host)}, nil
 	}

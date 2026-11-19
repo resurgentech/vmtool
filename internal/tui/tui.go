@@ -159,9 +159,13 @@ func uploadTitle(name string, ev app.ProgressEvent) string {
 // --- Model ---
 
 type model struct {
-	// manager is the local host's Manager: it lists the rows and fills the
-	// create form. Actions on a VM use resolve instead.
+	// manager, when set, is the local host's Manager (tests). Run leaves it
+	// nil: the local host is resolved through resolve when an action needs
+	// it, so nothing opens libvirt at start, and a listed own name goes to
+	// its daemon.
 	manager app.Manager
+	// ownListed is whether the own name has a daemon (no local pools).
+	ownListed bool
 	// resolve returns the Manager for a host and its release func; every VM
 	// action resolves the VM's host through it.
 	resolve func(host string) (app.Manager, func(), error)
@@ -250,8 +254,14 @@ func (m model) fetchRows() []vmRow {
 	switch {
 	case m.listAll != nil:
 		hv = m.listAll(context.Background())
-	case m.manager != nil:
-		vms, err := m.manager.List()
+	default:
+		mgr, release, err := m.local()
+		if err != nil {
+			hv = []app.HostVMs{{Host: m.host, Err: err}}
+			break
+		}
+		defer release()
+		vms, err := mgr.List()
 		hv = []app.HostVMs{{Host: m.host, VMs: vms, Err: err}}
 	}
 	rows := []vmRow{}
@@ -349,10 +359,20 @@ func (m *model) addLog(title string) int {
 func (m model) svc() *app.Service {
 	s := &app.Service{PlaybookDir: m.playbookDir, InventoryPath: m.inventoryPath, HostNames: m.hostNames,
 		IPTimeout: m.ipTimeout, SSHTimeout: m.sshTimeout}
-	if local := m.manager; local != nil {
-		// create on a remote host uploads the image from this host's pools.
-		// The TUI is a workstation tool: a miss refreshes the pools once.
-		s.LocalImages = func(name string) (string, error) { return app.FindLocalImage(local, true, name) }
+	// create on a remote host uploads the image from this host's pools.
+	// The TUI is a workstation tool: a miss refreshes the pools once. With
+	// the own name listed there are no local pools; with no libvirt either
+	// the answer is the same: not found, so the host's cached copy is used.
+	s.LocalImages = func(name string) (string, error) {
+		if m.ownListed {
+			return "", fmt.Errorf("image %q: %s has a daemon, so it has no local pools: %w", name, m.host, vmtool.ErrNotFound)
+		}
+		mgr, release, err := m.local()
+		if err != nil {
+			return "", fmt.Errorf("image %q: %v: %w", name, err, vmtool.ErrNotFound)
+		}
+		defer release()
+		return app.FindLocalImage(mgr, true, name)
 	}
 	return s.WithTunnel(m.tunnel)
 }
@@ -365,6 +385,19 @@ func (m model) vmRef(vm vmRow) app.VMRef {
 		host = m.host
 	}
 	return app.VMRef{Host: host, Name: vm.Name}
+}
+
+// local is the local host's Manager and its release func: the fixed manager
+// when one was set, else resolved now through the resolver (the daemon when
+// the own name is listed, libvirt otherwise). Nothing is opened until asked.
+func (m model) local() (app.Manager, func(), error) {
+	if m.manager != nil {
+		return m.manager, func() {}, nil
+	}
+	if m.resolve == nil {
+		return nil, nil, fmt.Errorf("host %q: no host resolver", m.host)
+	}
+	return m.resolve(m.host)
 }
 
 // onHost runs fn on the Manager of host, resolved for this one action and
@@ -686,22 +719,33 @@ func formPool(v string) string {
 }
 
 func (m model) enterCreateMode() (tea.Model, tea.Cmd) {
-	images := flatImages(m.manager)
+	// The pickers come from the local host's Manager, resolved now: the
+	// daemon when the own name is listed, else libvirt. When it cannot be
+	// reached the form still opens, with empty pickers, and the log says why.
+	var images, networks, bridges []string
+	var poolInfos []vmtool.PoolInfo
+	if mgr, release, err := m.local(); err != nil {
+		m.addLog(fmt.Sprintf("%s: %v", m.host, err))
+	} else {
+		images = flatImages(mgr)
+		networks, _ = mgr.ListNetworks()
+		bridges, _ = mgr.ListBridges()
+		// The named pools are this host's.
+		poolInfos, _ = mgr.ListPools()
+		release()
+	}
 	playbooks, _ := vmtool.ListPlaybooks(m.playbookDir)
 
 	pbOptions := []string{"(none)"}
 	pbOptions = append(pbOptions, playbooks...)
 
-	networks, _ := m.manager.ListNetworks()
 	if len(networks) == 0 {
 		networks = []string{"default"}
 	}
-	bridges, _ := m.manager.ListBridges()
 	nics, _ := vmtool.ListPhysicalNICs()
 
 	// The first option, selected by default, sends no pool: the target
-	// host picks its own default. The named pools are this host's.
-	poolInfos, _ := m.manager.ListPools()
+	// host picks its own default.
 	pools := make([]string, 0, len(poolInfos)+1)
 	pools = append(pools, hostDefaultPool)
 	for _, p := range poolInfos {
@@ -1178,7 +1222,6 @@ func (m model) submitBridge() (tea.Model, tea.Cmd) {
 		brCfg := cfg
 		logIdx := m.addLog(fmt.Sprintf("creating bridge %s on %s...", brCfg.Name, brCfg.NIC))
 		m.mode = modeList
-		mgr := m.manager
 		return m, func() tea.Msg {
 			err := vmtool.CreateBridge(brCfg)
 			if err != nil {
@@ -1189,7 +1232,11 @@ func (m model) submitBridge() (tea.Model, tea.Cmd) {
 				}
 			}
 			// Refresh bridge list after creation
-			newBridges, _ := mgr.ListBridges()
+			var newBridges []string
+			if mgr, release, err := m.local(); err == nil {
+				newBridges, _ = mgr.ListBridges()
+				release()
+			}
 			return bridgeCreatedMsg{
 				logIdx:  logIdx,
 				name:    brCfg.Name,
@@ -1636,32 +1683,31 @@ func flatImages(mgr app.Manager) []string {
 // carrying the resolver's token). Machine names may not take any host name.
 // tunnel is how guests are reached (the CLI's own executable and token).
 func Run(r *hosts.Resolver, tunnel vmtool.Tunnel, ipWait, sshWait time.Duration) error {
-	host := r.Local()
-	mgr, release, err := r.Resolve(host)
-	if err != nil {
-		return err
-	}
-	defer release()
+	m := newModel(r, tunnel, ipWait, sshWait)
+	m.send = &msgSender{}
+	p := tea.NewProgram(m)
+	m.send.fn = p.Send
+	_, err := p.Run()
+	return err
+}
 
+// newModel builds the TUI's model from the resolver. It opens nothing: no
+// libvirt, no daemon connection. The local host is resolved when an action
+// needs it, through the resolver, so a machine whose own name is listed never
+// opens libvirt and one with neither still starts (its own row says why).
+func newModel(r *hosts.Resolver, tunnel vmtool.Tunnel, ipWait, sshWait time.Duration) model {
+	host := r.Local()
 	playbookDir := filepath.Join("ansible", "playbooks")
 	inventoryPath := filepath.Join("ansible", "inventory.yml")
 
-	m := initialModel(mgr, host, playbookDir, inventoryPath)
+	m := initialModel(nil, host, playbookDir, inventoryPath)
+	m.ownListed = r.OwnListed()
 	m.hostNames = r.AllNames()
-	m.resolve = func(h string) (app.Manager, func(), error) {
-		if h == host {
-			return mgr, func() {}, nil
-		}
-		return r.Resolve(h)
-	}
+	m.resolve = r.Resolve
 	m.listAll = func(ctx context.Context) []app.HostVMs {
 		return app.ListAll(ctx, m.hostNames, m.resolve, app.ListTimeout)
 	}
 	m.tunnel = tunnel
 	m.ipTimeout, m.sshTimeout = ipWait, sshWait
-	m.send = &msgSender{}
-	p := tea.NewProgram(m)
-	m.send.fn = p.Send
-	_, err = p.Run()
-	return err
+	return m
 }

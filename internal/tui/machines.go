@@ -172,7 +172,6 @@ func (m model) submitAddMachine() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.mode = modeList
-	mgr := m.manager
 	return m.runMachineOutput("adding "+in.Kind+" "+in.Name, func(svc *app.Service) (string, error) {
 		var buf strings.Builder
 		in.OnProgress = func(ev app.ProgressEvent) {
@@ -184,7 +183,16 @@ func (m model) submitAddMachine() (tea.Model, tea.Cmd) {
 				buf.WriteByte('\n')
 			}
 		}
-		_, err := svc.AddMachine(context.Background(), mgr, in)
+		// libvirt only refuses VM names: skipped silently when local libvirt
+		// is not used (the own name is listed) or cannot be opened.
+		var vms app.Manager
+		if !m.ownListed {
+			if mgr, release, err := m.local(); err == nil {
+				defer release()
+				vms = mgr
+			}
+		}
+		_, err := svc.AddMachine(context.Background(), vms, in)
 		return buf.String(), err
 	})
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/jaredeh/vmtool/internal/app"
 	"github.com/jaredeh/vmtool/internal/config"
 	"github.com/jaredeh/vmtool/internal/hosts"
+	"github.com/jaredeh/vmtool/pkg/vmtool"
 )
 
 // Server is the vmtool REST API.
@@ -68,12 +69,18 @@ func (s *Server) Handler() http.Handler {
 }
 
 // localImages finds an image in the local host's libvirt pools, opening the
-// local Manager for the lookup only.
+// local Manager for the lookup only, and only when the own name has no
+// daemon: with it listed there are no local pools to search (not found, so
+// create uses the host's cached copy). With no libvirt either the answer is
+// the same, not a failure.
 func localImages(r *hosts.Resolver, workstation bool) func(string) (string, error) {
 	return func(name string) (string, error) {
+		if r.OwnListed() {
+			return "", fmt.Errorf("image %q: %s has a daemon, so it has no local pools: %w", name, r.Local(), vmtool.ErrNotFound)
+		}
 		m, done, err := r.Resolve(r.Local())
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("image %q: %v: %w", name, err, vmtool.ErrNotFound)
 		}
 		defer done()
 		return app.FindLocalImage(m, workstation, name)

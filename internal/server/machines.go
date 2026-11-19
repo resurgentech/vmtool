@@ -5,7 +5,6 @@ import (
 
 	"github.com/jaredeh/vmtool/internal/api"
 	"github.com/jaredeh/vmtool/internal/app"
-	"github.com/jaredeh/vmtool/pkg/vmtool"
 )
 
 func toAPIMachine(info *app.MachineInfo) api.MachineInfo {
@@ -39,6 +38,20 @@ func (h *handlers) ListMachines(ctx context.Context, _ api.ListMachinesRequestOb
 	return api.ListMachines200JSONResponse(out), nil
 }
 
+// libvirtNameCheck is the local libvirt for refusing VM names: nil, and a
+// no-op release, when local libvirt is not used (the own name is listed) or
+// cannot be opened.
+func (h *handlers) libvirtNameCheck() (app.Manager, func()) {
+	if h.hosts.OwnListed() {
+		return nil, func() {}
+	}
+	m, release, err := h.hosts.Resolve(h.hosts.Local())
+	if err != nil {
+		return nil, func() {}
+	}
+	return m, release
+}
+
 func (h *handlers) AddMachine(ctx context.Context, req api.AddMachineRequestObject) (api.AddMachineResponseObject, error) {
 	if req.Body == nil {
 		return api.AddMachine400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: "request body required"}}, nil
@@ -53,11 +66,8 @@ func (h *handlers) AddMachine(ctx context.Context, req api.AddMachineRequestObje
 	}
 	// Name collisions with libvirt domains are checked when libvirt is up;
 	// machines do not otherwise need it.
-	var vms app.Manager
-	if m, err := vmtool.NewManager(); err == nil {
-		defer m.Close()
-		vms = m
-	}
+	vms, release := h.libvirtNameCheck()
+	defer release()
 	info, err := h.svc.AddMachine(ctx, vms, in)
 	if err != nil {
 		switch kindOf(err) {

@@ -289,16 +289,38 @@ func (e *env) service(inventory string) *app.Service {
 }
 
 // localImages finds a base image in this machine's own libvirt pools: create
-// on a remote host uploads it from there. The local Manager is opened only
-// for the lookup (only a remote create asks).
+// on a remote host uploads it from there. Local libvirt is opened only for the
+// lookup, and only when the own name has no daemon: with the own name listed
+// there are no local pools to search. A machine with neither a daemon nor
+// libvirt has none either. Both answer "not found", so create falls back to
+// the host's cached copy.
 func (e *env) localImages(name string) (string, error) {
 	r := e.resolver()
+	if r.OwnListed() {
+		return "", fmt.Errorf("image %q: %s has a daemon, so it has no local pools: %w", name, r.Local(), vmtool.ErrNotFound)
+	}
 	m, release, err := r.Resolve(r.Local())
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("image %q: %v: %w", name, err, vmtool.ErrNotFound)
 	}
 	defer release()
 	return app.FindLocalImage(m, e.cfg == nil || e.cfg.Role != config.RoleHypervisor, name)
+}
+
+// libvirtNameCheck is the local libvirt for refusing VM names (metal add):
+// nil, and a no-op release, when local libvirt is not used (the own name is
+// listed) or cannot be opened. Machines work without it, so neither says
+// anything.
+func (e *env) libvirtNameCheck() (app.Manager, func()) {
+	r := e.resolver()
+	if r.OwnListed() {
+		return nil, func() {}
+	}
+	m, release, err := r.Resolve(r.Local())
+	if err != nil {
+		return nil, func() {}
+	}
+	return m, release
 }
 
 // uploadProgress renders create's image-upload events on stderr as one

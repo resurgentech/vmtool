@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jaredeh/vmtool/internal/app"
+	"github.com/jaredeh/vmtool/internal/hosts"
 	"github.com/spf13/cobra"
 )
 
@@ -43,9 +44,30 @@ that host; then its failure is the command's error.`,
 			if len(args) == 1 && rows[0].Err != nil {
 				return rows[0].Err
 			}
+			rows = leaveOutOwnName(cmd.ErrOrStderr(), r, rows)
 			return printVMTable(cmd.OutOrStdout(), rows)
 		},
 	}
+}
+
+// noLocalBackend is how Resolve words the own name's failure when it has no
+// daemon listed and local libvirt cannot be opened (internal/hosts).
+const noLocalBackend = "no daemon listed for "
+
+// leaveOutOwnName drops the own name's row when it has neither a daemon nor
+// local libvirt and says so once on stderr: the listing ran for every host
+// that can answer, so the exit status is unchanged. Any other failure of the
+// own name stays an ERROR row.
+func leaveOutOwnName(stderr io.Writer, r *hosts.Resolver, rows []app.HostVMs) []app.HostVMs {
+	out := rows[:0:0]
+	for _, h := range rows {
+		if h.Host == r.Local() && !r.OwnListed() && h.Err != nil && strings.HasPrefix(h.Err.Error(), noLocalBackend) {
+			fmt.Fprintf(stderr, "note: %s; %s left out of this listing\n", oneLine(h.Err.Error()), h.Host)
+			continue
+		}
+		out = append(out, h)
+	}
+	return out
 }
 
 // printVMTable writes the combined listing: one row per VM, one ERROR row
