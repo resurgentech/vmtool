@@ -116,4 +116,7 @@ type VMInfo struct {
 	// DiskBacking is file or block for vda, read from the domain XML by Info;
 	// empty when unknown. List leaves it empty.
 	DiskBacking string `json:"disk_backing,omitempty"`
+	// UUID is the libvirt domain UUID, filled by Info; empty when unknown
+	// (List, or a daemon that predates the field).
+	UUID string `json:"uuid,omitempty"`
 }

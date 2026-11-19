@@ -282,7 +282,7 @@ the body and keeps the error.
 | `ListNetworks` / `ListBridges` | `listNetworks` / `listBridges` | |
 | `ListImagesByPool` | `listImages` | `{pool: [image]}`. |
 | `DeleteImage` | `deleteImage` | `pool` query, default `default`. |
-| `ListPools` | `listPools` | `PoolInfo{name,path,active,type?}`; `type` (2.2.0) is libvirt's pool type (`dir`, `logical`, …). `GET` VM adds `disk_backing` (`file`/`block`) the same release. |
+| `ListPools` | `listPools` | `PoolInfo{name,path,active,type?}`; `type` (2.2.0) is libvirt's pool type (`dir`, `logical`, …). `GET` VM adds `disk_backing` (`file`/`block`) the same release, and `uuid` (the domain UUID) in 2.3.0. |
 | `CreatePool` | `createPool` | |
 
 | `ImageManifest` (`app.ImageStore`) | `getImageManifest` | New. Optional interface, remote only. `{name, sha256?, size?, foreign, path?}`. |

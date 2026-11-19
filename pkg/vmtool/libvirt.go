@@ -700,6 +700,9 @@ func (m *Manager) Info(name string) (*VMInfo, error) {
 	if state == libvirt.DOMAIN_RUNNING {
 		vi.IP, _ = m.getIP(dom)
 	}
+	if u, err := dom.GetUUIDString(); err == nil {
+		vi.UUID = u
+	}
 	if xmlDesc, err := dom.GetXMLDesc(0); err == nil {
 		vi.Firmware = domainFirmware(xmlDesc)
 		vi.DiskCache = diskCacheOf(xmlDesc, "vda")

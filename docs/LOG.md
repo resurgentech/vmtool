@@ -853,3 +853,18 @@ are appended, never edited in; a hook refuses rewrites.
 - Group 1 of tranche 10 (W1–W8) is built. Phase A and B of the rollout
   are the user's and XO's.
 - Commits: the W8 commit on `clone-identity`.
+
+## 2026-11-18 — S1 `VMInfo.uuid` on the daemon API (2.3.0)
+
+- `spec/openapi/vmtool.yaml`: `info.version` 2.3.0; optional `uuid` on
+  `VMInfo` (plain string); `internal/api` regenerated.
+- `pkg/vmtool` `Info` fills `VMInfo.UUID` from the domain
+  (`GetUUIDString`); `List` leaves it empty. The server sends `uuid` only
+  when known; `internal/remote` maps it and treats a missing field (an
+  older daemon) as "" with no error; `vmtool info` prints a last line
+  `UUID:` with the value or `unknown` (`writeVMInfo`).
+- Tests: `TestToAPIUUID`, `TestRemoteMapsUUID`,
+  `TestRemoteOldDaemonLacksUUID`, `TestWriteVMInfoUUID` (red: build
+  failures on the missing fields; green after), `TestVersion` pins 2.3.0.
+  `just check` green.
+- Commits: the S1 commit on `clone-identity`.

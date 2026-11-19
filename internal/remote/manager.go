@@ -285,6 +285,9 @@ func fromAPI(v api.VMInfo) vmtool.VMInfo {
 	if v.DiskBacking != nil {
 		out.DiskBacking = string(*v.DiskBacking)
 	}
+	if v.Uuid != nil {
+		out.UUID = *v.Uuid
+	}
 	return out
 }
 

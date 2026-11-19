@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: vmtool API
-  version: 2.2.0
+  version: 2.3.0
   description: >
     HTTP surface of `vmtool server`. Spec-first: models, stdlib ServerInterface,
     embedded spec, and a test client are generated from this file. Metal and
@@ -1365,6 +1365,9 @@ components:
           type: string
           enum: [file, block]
           description: What backs the boot disk (vda), read from its XML. file is an image file, block a block device such as a logical volume. Omitted when unknown or by a daemon that predates the field (API 2.2.0).
+        uuid:
+          type: string
+          description: The libvirt domain UUID. Omitted when unknown or by a daemon that predates the field (API 2.3.0).
     CreateVMRequest:
       type: object
       required: [name, image]

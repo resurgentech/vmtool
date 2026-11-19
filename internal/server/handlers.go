@@ -108,6 +108,10 @@ func toAPI(info *vmtool.VMInfo) api.VMInfo {
 		db := api.VMInfoDiskBacking(info.DiskBacking)
 		out.DiskBacking = &db
 	}
+	if info.UUID != "" {
+		u := info.UUID
+		out.Uuid = &u
+	}
 	if info.Firmware != "" {
 		fw := api.VMInfoFirmware(info.Firmware)
 		out.Firmware = &fw

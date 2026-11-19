@@ -607,23 +607,34 @@ func infoCmd(e *env) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			ip := info.IP
-			if ip == "" {
-				ip = "-"
-			}
-			autostart := "off"
-			if info.Autostart {
-				autostart = "on"
-			}
-			fmt.Printf("Name:      %s\n", info.Name)
-			fmt.Printf("State:     %s\n", info.State)
-			fmt.Printf("VCPUs:     %d\n", info.VCPUs)
-			fmt.Printf("Memory:    %d GiB\n", info.Memory)
-			fmt.Printf("Autostart: %s\n", autostart)
-			fmt.Printf("IP:        %s\n", ip)
+			writeVMInfo(os.Stdout, info)
 			return nil
 		}),
 	}
+}
+
+// writeVMInfo prints `vmtool info`; an unknown UUID (a daemon older than API
+// 2.3.0) shows as "unknown".
+func writeVMInfo(out io.Writer, info *vmtool.VMInfo) {
+	ip := info.IP
+	if ip == "" {
+		ip = "-"
+	}
+	autostart := "off"
+	if info.Autostart {
+		autostart = "on"
+	}
+	uuid := info.UUID
+	if uuid == "" {
+		uuid = "unknown"
+	}
+	fmt.Fprintf(out, "Name:      %s\n", info.Name)
+	fmt.Fprintf(out, "State:     %s\n", info.State)
+	fmt.Fprintf(out, "VCPUs:     %d\n", info.VCPUs)
+	fmt.Fprintf(out, "Memory:    %d GiB\n", info.Memory)
+	fmt.Fprintf(out, "Autostart: %s\n", autostart)
+	fmt.Fprintf(out, "IP:        %s\n", ip)
+	fmt.Fprintf(out, "UUID:      %s\n", uuid)
 }
 
 func sshCmd(e *env) *cobra.Command {
