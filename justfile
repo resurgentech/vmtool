@@ -37,7 +37,7 @@ cert host:
 
 # Build, certify, write config.yml and run vmtool as a systemd service on this machine
 install:
-    VMTOOL_ROOT="{{ root }}" VMTOOL_DOMAIN="{{ domain }}" BAO_CA_PATH="{{ bao_ca_path }}" CERT_DAYS="{{ cert_days }}" "{{ root }}/scripts/install.sh"
+    VMTOOL_ROOT="{{ root }}" VMTOOL_DOMAIN="{{ domain }}" BAO_CA_PATH="{{ bao_ca_path }}" CERT_DAYS="{{ cert_days }}" HV_DIR="{{ hv_dir }}" "{{ root }}/scripts/install.sh"
 
 # Install host prerequisites (packages, libvirt, default network + pool; on a host also the vmtool user, /opt/vmtool, the vmtool pool and the host's daemon port in ufw); `just prereqs <host>` does it over ssh, or locally (ansible_connection=local) when <host> is this machine; the port is the host's `port` in config.yml (default 9473; this machine unlisted: VMTOOL_SELF_PORT, default 9474)
 [positional-arguments]

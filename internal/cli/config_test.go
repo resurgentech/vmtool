@@ -190,3 +190,29 @@ func TestConfigSetHost(t *testing.T) {
 		t.Fatal("missing --ssh-user accepted")
 	}
 }
+
+// install.sh runs `config write` with exactly these flags; every hosts:
+// entry (own name included) and image_dir must survive it.
+func TestConfigWriteInstallKeepsHosts(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("VMTOOL_TOKEN", "PLACEHOLDER-not-a-secret-1")
+	orig := "name: hv1\nrole: workstation\nimage_dir: /srv/PLACEHOLDER-images\nhosts:\n" +
+		"  hv1: { address: 127.0.0.1, ssh_user: ubuntu, port: 9474 }\n" +
+		"  PLACEHOLDER-HOST: { address: ph.example, ssh_user: ubuntu }\n"
+	if err := os.WriteFile(filepath.Join(dir, "config.yml"), []byte(orig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runConfig(t, dir, "", "write", "--name", "hv1", "--role", "workstation",
+		"--listen", "127.0.0.1:9473", "--tls-cert", "tls/hv1.labtwo.crt", "--tls-key", "tls/hv1.labtwo.key"); err != nil {
+		t.Fatal(err)
+	}
+	c, err := config.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.ImageDir != "/srv/PLACEHOLDER-images" || len(c.Hosts) != 2 ||
+		c.Hosts["hv1"].Port != 9474 || c.Hosts["hv1"].Address != "127.0.0.1" ||
+		c.Hosts["PLACEHOLDER-HOST"].Address != "ph.example" || c.Listen != "127.0.0.1:9473" {
+		t.Fatalf("%+v", c)
+	}
+}

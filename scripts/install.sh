@@ -10,6 +10,8 @@
 # Environment:
 #   VMTOOL_ROOT   the repo directory (holds .env, config.yml, .machines/)
 #   UNIT_PATH     where the unit goes (default /etc/systemd/system/vmtool.service)
+#   HV_DIR        where a hypervisor daemon lives (default /opt/vmtool); a
+#                 vmtool.service at UNIT_PATH run from there is refused
 #   VMTOOL_DOMAIN, BAO_CA_PATH, CERT_DAYS   passed on to cert.sh
 #
 # cert.sh runs before `config write`, so it sees no config.yml on a first
@@ -23,6 +25,7 @@ here="$(cd "$(dirname "$0")" && pwd)"
 root="${VMTOOL_ROOT:-$(cd "$here/.." && pwd)}"
 domain="${VMTOOL_DOMAIN:-labtwo}"
 unit_path="${UNIT_PATH:-/etc/systemd/system/vmtool.service}"
+hv_dir="${HV_DIR:-/opt/vmtool}"
 template="$here/../deploy/vmtool.service.in"
 export VMTOOL_ROOT="$root" VMTOOL_DOMAIN="$domain"
 
@@ -40,6 +43,12 @@ user="$(id -un)"
 # The unit is written unquoted, so refuse paths systemd would split or expand.
 [[ $root != *[[:space:]%\"\'\\]* ]] || die "repo path '$root' has characters unsafe in a systemd unit."
 [[ -f $template ]] || die "$template not found."
+
+# An older hypervisor daemon is a vmtool.service run from HV_DIR; overwriting it
+# with this workstation unit would take the daemon down. deploy replaces it.
+if grep -Fqx "WorkingDirectory=$hv_dir" "$unit_path" 2>/dev/null; then
+  die "$unit_path is a hypervisor daemon's vmtool.service (WorkingDirectory=$hv_dir); run 'just deploy <host>' first, which replaces it with vmtool-daemon.service."
+fi
 
 # 2. Build.
 (cd "$root" && go build -o "$root/vmtool" ./cmd/vmtool)

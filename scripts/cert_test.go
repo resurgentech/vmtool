@@ -432,3 +432,82 @@ func TestInstallNeedsToken(t *testing.T) {
 		}
 	}
 }
+
+// installEnv is newCertEnv plus the stubs install.sh needs (go, sudo,
+// systemctl) and a token in .env. unit is a temp UNIT_PATH.
+func installEnv(t *testing.T) (e *certEnv, unit string, env []string) {
+	t.Helper()
+	e = newCertEnv(t, "")
+	addStub(t, e.stub, "go", `if [[ $1 == build && $2 == -o ]]; then
+  printf '#!/bin/sh\necho "$*" >> "$(dirname "$0")/vmtool.argv"\n' > "$3"; chmod +x "$3"
+fi`)
+	addStub(t, e.stub, "sudo", `exec "$@"`)
+	addStub(t, e.stub, "systemctl", "exit 0")
+	if err := os.WriteFile(filepath.Join(e.wd, ".env"), []byte("VMTOOL_TOKEN=abc\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	unit = filepath.Join(t.TempDir(), "vmtool.service")
+	return e, unit, append([]string{"UNIT_PATH=" + unit}, e.env[:3]...)
+}
+
+// An older hypervisor daemon is a vmtool.service whose WorkingDirectory is
+// HV_DIR; install must not overwrite it with a workstation unit.
+func TestInstallRefusesDaemonUnit(t *testing.T) {
+	e, unit, env := installEnv(t)
+	old := "[Service]\nUser=vmtool\nWorkingDirectory=/opt/vmtool\nExecStart=/opt/vmtool/vmtool server\n"
+	if err := os.WriteFile(unit, []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := runScript(t, e.stub, e.wd, "install.sh", env)
+	if r.code == 0 || !strings.Contains(r.stderr, "vmtool.service") || !strings.Contains(r.stderr, "just deploy") {
+		t.Fatalf("exit %d stderr %q, want refusal naming vmtool.service and just deploy", r.code, r.stderr)
+	}
+	for _, f := range []string{"go.argv", "sudo.argv", "systemctl.argv", "bao.argv", "vmtool.argv"} {
+		if _, err := os.Stat(filepath.Join(e.stub, f)); err == nil {
+			t.Errorf("%s exists: install went on after refusing", f)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(e.wd, "vmtool.argv")); err == nil {
+		t.Error("config write ran after refusing")
+	}
+	if got := readOr(t, unit); got != old {
+		t.Errorf("unit changed:\n%s", got)
+	}
+
+	// HV_DIR moves the check: the same unit is fine when the daemon lives elsewhere.
+	r = runScript(t, e.stub, e.wd, "install.sh", append([]string{"HV_DIR=/srv/other"}, env...))
+	if r.code != 0 {
+		t.Fatalf("HV_DIR=/srv/other: exit %d: %s%s", r.code, r.stdout, r.stderr)
+	}
+}
+
+// A previous loopback install (WorkingDirectory is the checkout) is replaced.
+func TestInstallReplacesLoopbackUnit(t *testing.T) {
+	e, unit, env := installEnv(t)
+	old := "[Service]\nWorkingDirectory=" + e.wd + "\n"
+	if err := os.WriteFile(unit, []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := runScript(t, e.stub, e.wd, "install.sh", env)
+	if r.code != 0 {
+		t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
+	}
+	if got := readOr(t, unit); got == old || !strings.Contains(got, "WorkingDirectory="+e.wd) {
+		t.Errorf("unit not rewritten:\n%s", got)
+	}
+}
+
+// install's `config write` passes only identity, listen and TLS flags, so
+// hosts: and image_dir are never named (see internal/cli TestConfigWriteInstallKeepsHosts).
+func TestInstallConfigWriteFlags(t *testing.T) {
+	e, _, env := installEnv(t)
+	r := runScript(t, e.stub, e.wd, "install.sh", env)
+	if r.code != 0 {
+		t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
+	}
+	want := "config write --name fallbackhost --role workstation --listen 127.0.0.1:9473 " +
+		"--tls-cert tls/fallbackhost.labtwo.crt --tls-key tls/fallbackhost.labtwo.key"
+	if got := strings.TrimSpace(readOr(t, filepath.Join(e.wd, "vmtool.argv"))); got != want {
+		t.Errorf("config write argv:\n got %q\nwant %q", got, want)
+	}
+}

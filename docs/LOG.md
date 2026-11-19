@@ -817,3 +817,18 @@ are appended, never edited in; a hook refuses rewrites.
   `image_dir` must name the same folder. `./run generate` and `update`
   are unchanged (outside the step).
 - Commits: the W6 commit on `clone-identity`.
+
+## 2026-11-18 — W7 `just install` keeps the hosts entries and refuses a daemon's unit
+
+- `scripts/install.sh` dies before building or writing anything when
+  UNIT_PATH (`vmtool.service`) has `WorkingDirectory=$HV_DIR` (an older
+  hypervisor daemon), telling the user to run `just deploy <host>` first;
+  any other `vmtool.service` is replaced as before. The justfile's
+  `install` passes `HV_DIR`.
+- install's `config write` keeps every `hosts:` entry (own name included)
+  and `image_dir`: already true of `config.Write`; pinned by
+  `TestConfigWriteInstallKeepsHosts` (real command, install's flags) and
+  `TestInstallConfigWriteFlags` (install's exact argv).
+- `TestInstallRefusesDaemonUnit`: red before, green after;
+  `TestInstallReplacesLoopbackUnit` green; `just check` green.
+- Commits: the W7 commit on `clone-identity`.
