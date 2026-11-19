@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: vmtool API
-  version: 2.3.0
+  version: 2.4.0
   description: >
     HTTP surface of `vmtool server`. Spec-first: models, stdlib ServerInterface,
     embedded spec, and a test client are generated from this file. Metal and
@@ -1707,7 +1707,30 @@ components:
         active: { type: boolean }
         type:
           type: string
-          description: libvirt's pool type, such as dir or logical. Omitted when unknown or by a daemon that predates the field (API 2.2.0).
+          description: >
+            libvirt's pool type, such as dir or logical, or thin for an LVM
+            thin pool the daemon manages itself (API 2.4.0). Omitted when
+            unknown or by a daemon that predates the field (API 2.2.0).
+        size_bytes:
+          type: integer
+          format: int64
+          description: capacity in bytes (API 2.4.0). Omitted when unknown.
+        used_bytes:
+          type: integer
+          format: int64
+          description: bytes in use (API 2.4.0). Omitted when unknown.
+        virtual_bytes:
+          type: integer
+          format: int64
+          description: thin pools only (API 2.4.0). The sum of the sizes of every thin volume in the pool, the space it has promised.
+        data_percent:
+          type: number
+          format: double
+          description: thin pools only (API 2.4.0). Percent of the data area in use.
+        metadata_percent:
+          type: number
+          format: double
+          description: thin pools only (API 2.4.0). Percent of the metadata area in use.
     ImageManifestEntry:
       type: object
       required: [name, foreign]

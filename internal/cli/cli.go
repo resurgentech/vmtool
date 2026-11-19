@@ -1067,10 +1067,49 @@ func poolListCmd(e *env) *cobra.Command {
 	return cmd
 }
 
-// writePoolTable prints the pool list; an unknown type shows as "-".
+// poolWarnPercent is where a thin pool's name gets a "!": at or above it,
+// data or metadata, the pool is near the 80 % refusal line of thin creates.
+const poolWarnPercent = 80.0
+
+// formatPoolBytes is a compact binary size: 512B, 1K, 1.5M, 60G, 1.5T.
+func formatPoolBytes(n int64) string {
+	if n <= 0 {
+		return "0"
+	}
+	if n < 1<<10 {
+		return fmt.Sprintf("%dB", n)
+	}
+	v, unit := float64(n), ""
+	for _, u := range []string{"K", "M", "G", "T"} {
+		v /= 1024
+		unit = u
+		if v < 1024 {
+			break
+		}
+	}
+	return strings.TrimSuffix(fmt.Sprintf("%.1f", v), ".0") + unit
+}
+
+func poolBytesCell(n *int64) string {
+	if n == nil {
+		return ""
+	}
+	return formatPoolBytes(*n)
+}
+
+func poolPercentCell(f *float64) string {
+	if f == nil {
+		return ""
+	}
+	return fmt.Sprintf("%.1f", *f)
+}
+
+// writePoolTable prints the pool list. An unknown type shows as "-" and an
+// unknown size, usage or percentage as a blank cell. A thin pool at or above
+// poolWarnPercent data or metadata gets a "!" after its name.
 func writePoolTable(out io.Writer, pools []vmtool.PoolInfo) error {
 	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tTYPE\tPATH\tACTIVE")
+	fmt.Fprintln(w, "NAME\tTYPE\tSIZE\tUSED\tVIRTUAL\tDATA%\tMETA%\tACTIVE\tPATH")
 	for _, p := range pools {
 		active := "no"
 		if p.Active {
@@ -1080,7 +1119,14 @@ func writePoolTable(out io.Writer, pools []vmtool.PoolInfo) error {
 		if typ == "" {
 			typ = "-"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", p.Name, typ, p.Path, active)
+		name := p.Name
+		if p.Type == vmtool.PoolTypeThin &&
+			((p.DataPercent != nil && *p.DataPercent >= poolWarnPercent) || (p.MetaPercent != nil && *p.MetaPercent >= poolWarnPercent)) {
+			name += "!"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", name, typ,
+			poolBytesCell(p.SizeBytes), poolBytesCell(p.UsedBytes), poolBytesCell(p.VirtualBytes),
+			poolPercentCell(p.DataPercent), poolPercentCell(p.MetaPercent), active, p.Path)
 	}
 	return w.Flush()
 }

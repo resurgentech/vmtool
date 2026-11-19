@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -722,8 +723,22 @@ func formPool(v string) string {
 	if v == hostDefaultPool {
 		return ""
 	}
+	if m := poolOptionRE.FindStringSubmatch(v); m != nil {
+		return m[1]
+	}
 	return v
 }
+
+// poolOption is a Pool picker entry: the name, then the pool's type in
+// parentheses when known ("nvme-thin (thin)"). formPool strips it again.
+func poolOption(p vmtool.PoolInfo) string {
+	if p.Type == "" {
+		return p.Name
+	}
+	return p.Name + " (" + p.Type + ")"
+}
+
+var poolOptionRE = regexp.MustCompile(`^(.*\S) \([a-z]+\)$`)
 
 func (m model) enterCreateMode() (tea.Model, tea.Cmd) {
 	// The pickers come from the local host's Manager, resolved now: the
@@ -756,7 +771,7 @@ func (m model) enterCreateMode() (tea.Model, tea.Cmd) {
 	pools := make([]string, 0, len(poolInfos)+1)
 	pools = append(pools, hostDefaultPool)
 	for _, p := range poolInfos {
-		pools = append(pools, p.Name)
+		pools = append(pools, poolOption(p))
 	}
 
 	fields := []formField{

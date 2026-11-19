@@ -69,8 +69,8 @@ func TestUnknownHost404(t *testing.T) {
 
 func TestVersion(t *testing.T) {
 	doc := loadSpec(t)
-	if doc.Info.Version != "2.3.0" {
-		t.Fatalf("spec info.version = %q, want 2.3.0", doc.Info.Version)
+	if doc.Info.Version != "2.4.0" {
+		t.Fatalf("spec info.version = %q, want 2.4.0", doc.Info.Version)
 	}
 	h := handlerFor(&handlers{hosts: noLibvirt(t)})
 	rec := httptest.NewRecorder()

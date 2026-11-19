@@ -63,6 +63,17 @@ type ThinPool struct {
 	VirtualBytes int64
 }
 
+// PoolInfo is the pool listing's row for the thin pool: named after the
+// thin-pool LV, type thin, path /dev/<vg>. UsedBytes is the data percent of
+// the size, rounded to the byte.
+func (p ThinPool) PoolInfo() PoolInfo {
+	size, virt := p.SizeBytes, p.VirtualBytes
+	used := int64(math.Round(float64(size) * p.DataPercent / 100))
+	data, meta := p.DataPercent, p.MetaPercent
+	return PoolInfo{Name: p.Name, Path: "/dev/" + p.VG, Active: true, Type: PoolTypeThin,
+		SizeBytes: &size, UsedBytes: &used, VirtualBytes: &virt, DataPercent: &data, MetaPercent: &meta}
+}
+
 // ThinVolume is a thin LV in a vmtool pool carrying a vmtool tag.
 type ThinVolume struct {
 	Name        string

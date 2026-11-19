@@ -1242,3 +1242,28 @@ are appended, never edited in; a hook refuses rewrites.
 - Test `scripts/store_image_test.go` (text only, no docker): red with the
   files missing, green after. `just check` green.
 - Commits: the S13 commit on `clone-identity`.
+
+## 2026-11-18 — T4 Thin pools in pool listings; pool usage (API 2.4.0)
+
+- Spec 2.4.0: `PoolInfo` gains optional `size_bytes`, `used_bytes`,
+  `virtual_bytes`, `data_percent`, `metadata_percent`; `type` may be
+  `thin`. Regenerated.
+- `vmtool.PoolInfo` carries them as pointers (nil = unknown); libvirt
+  pools get size/used from `GetInfo` (active pools only);
+  `ThinPool.PoolInfo()` maps a thin pool (path `/dev/<vg>`, used =
+  size x data%).
+- `internal/hosts/thinpools.go`: `ThinPools{Manager, Thin, Log}` wraps a
+  hypervisor-role local Manager (inside `hypervisorPools`; `New` gives a
+  hypervisor `&vmtool.Thin{}`): `ListPools` appends the helper's thin
+  pools; a name clash is left out with a log line; a failing helper or
+  `sudo -n` is one log line and no thin pools. T5 extends this type.
+- Server and remote map the fields (absent = unknown). `pool list`:
+  NAME TYPE SIZE USED VIRTUAL DATA% META% ACTIVE PATH, blanks when
+  unknown, `!` after a thin pool's name at >= 80 % data or metadata. TUI
+  pool picker shows `name (type)`.
+- Tests: wrapper with a fake inner Manager and a stub `sudo` (one pool,
+  clash, helper failure, no pools, pass-through, role wiring), remote
+  decoding of an old daemon's response, server mapping, CLI columns,
+  blanks and mark, TUI label, `TestVersion` 2.4.0. Red: build failures
+  (tests before code); green; `just check` green.
+- Commits: the T4 commit on `clone-identity`.

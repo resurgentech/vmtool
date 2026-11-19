@@ -610,7 +610,9 @@ func (h *handlers) ListPools(ctx context.Context, req api.ListPoolsRequestObject
 	pools := v.([]vmtool.PoolInfo)
 	out := make([]api.PoolInfo, len(pools))
 	for i, p := range pools {
-		out[i] = api.PoolInfo{Name: p.Name, Path: p.Path, Active: p.Active, Type: nonEmptyPtr(p.Type)}
+		out[i] = api.PoolInfo{Name: p.Name, Path: p.Path, Active: p.Active, Type: nonEmptyPtr(p.Type),
+			SizeBytes: p.SizeBytes, UsedBytes: p.UsedBytes, VirtualBytes: p.VirtualBytes,
+			DataPercent: p.DataPercent, MetadataPercent: p.MetaPercent}
 	}
 	return api.ListPools200JSONResponse(out), nil
 }

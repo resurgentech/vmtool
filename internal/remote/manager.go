@@ -489,7 +489,9 @@ func (m *Manager) ListPools() ([]vmtool.PoolInfo, error) {
 	}
 	out := make([]vmtool.PoolInfo, len(vs))
 	for i, p := range vs {
-		out[i] = vmtool.PoolInfo{Name: p.Name, Path: p.Path, Active: p.Active}
+		out[i] = vmtool.PoolInfo{Name: p.Name, Path: p.Path, Active: p.Active,
+			SizeBytes: p.SizeBytes, UsedBytes: p.UsedBytes, VirtualBytes: p.VirtualBytes,
+			DataPercent: p.DataPercent, MetaPercent: p.MetadataPercent}
 		if p.Type != nil {
 			out[i].Type = *p.Type
 		}

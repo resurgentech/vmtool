@@ -1446,6 +1446,28 @@ type PoolInfo struct {
 	Active bool   `json:"active"`
 	// Type is libvirt's pool type (dir, logical, …); empty when unknown.
 	Type string `json:"type,omitempty"`
+	// Usage. A nil field is unknown (an inactive pool, a failed GetInfo, a
+	// daemon older than API 2.4.0), which is not the same as 0. Virtual,
+	// data and metadata are thin-pool concepts: libvirt pools leave them nil.
+	SizeBytes    *int64   `json:"size_bytes,omitempty"`
+	UsedBytes    *int64   `json:"used_bytes,omitempty"`
+	VirtualBytes *int64   `json:"virtual_bytes,omitempty"`
+	DataPercent  *float64 `json:"data_percent,omitempty"`
+	MetaPercent  *float64 `json:"metadata_percent,omitempty"`
+}
+
+// PoolTypeThin is PoolInfo.Type of an LVM thin pool vmtool manages itself.
+const PoolTypeThin = "thin"
+
+// poolUsage turns a libvirt pool's GetInfo into capacity and allocation. An
+// inactive pool reports stale or zero numbers and a failed call none: both
+// are unknown (nil).
+func poolUsage(active bool, info *libvirt.StoragePoolInfo, err error) (size, used *int64) {
+	if !active || err != nil || info == nil {
+		return nil, nil
+	}
+	s, u := int64(info.Capacity), int64(info.Allocation)
+	return &s, &u
 }
 
 // ListPools returns metadata for all storage pools.
@@ -1463,7 +1485,10 @@ func (m *Manager) ListPools() ([]PoolInfo, error) {
 			path = parsePoolPath(xmlDesc)
 			typ = parsePoolType(xmlDesc)
 		}
-		result = append(result, PoolInfo{Name: name, Path: path, Active: active, Type: typ})
+		pi := PoolInfo{Name: name, Path: path, Active: active, Type: typ}
+		info, ierr := pool.GetInfo()
+		pi.SizeBytes, pi.UsedBytes = poolUsage(active, info, ierr)
+		result = append(result, pi)
 		pool.Free()
 	}
 	return result, nil

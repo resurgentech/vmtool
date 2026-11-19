@@ -67,6 +67,8 @@ type Resolver struct {
 	// host and for each remote host: where an empty pool sends a new VM disk.
 	defaultPool string
 	hostPools   map[string]string
+	// thin is the helper client of a hypervisor's thin pools; nil lists none.
+	thin *vmtool.Thin
 }
 
 // New builds the resolver for cfg: the local libvirt and, for every hosts:
@@ -91,6 +93,9 @@ func New(cfg *config.Config, opts ...remote.Option) *Resolver {
 		role = config.RoleWorkstation
 	}
 	r := NewWith(name, role, others, libvirtLocalNamed(name))
+	if role == config.RoleHypervisor {
+		r = r.WithThin(&vmtool.Thin{})
+	}
 	if cfg != nil && cfg.TLSCert != "" {
 		r = r.WithLocalCert(cfg.Path(cfg.TLSCert))
 	}
@@ -141,6 +146,15 @@ func NewWith(name, role string, configured []string, local Connector) *Resolver 
 func (r *Resolver) WithRemote(rc RemoteConnector) *Resolver {
 	c := *r
 	c.remote = rc
+	return &c
+}
+
+// WithThin returns a copy of r whose hypervisor-role local Manager also lists
+// the thin pools t reports (see ThinPools). New sets it for a hypervisor;
+// without it, or on any other role, no thin pool is listed.
+func (r *Resolver) WithThin(t *vmtool.Thin) *Resolver {
+	c := *r
+	c.thin = t
 	return &c
 }
 
@@ -246,6 +260,9 @@ func (r *Resolver) Resolve(host string) (app.Manager, func(), error) {
 			err = fmt.Errorf("no daemon listed for %s and no local libvirt: %w", r.name, err)
 		}
 		if err == nil && m != nil && r.role == config.RoleHypervisor {
+			if r.thin != nil {
+				m = ThinPools{Manager: m, Thin: r.thin}
+			}
 			m = hypervisorPools{m}
 		}
 		if err == nil && m != nil && r.defaultPool != "" {

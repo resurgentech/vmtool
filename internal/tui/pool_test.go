@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/jaredeh/vmtool/internal/app"
@@ -17,7 +18,7 @@ func (formFake) ListImagesByPool() (map[string][]string, error) {
 func (formFake) ListNetworks() ([]string, error) { return []string{"default"}, nil }
 func (formFake) ListBridges() ([]string, error)  { return nil, nil }
 func (formFake) ListPools() ([]vmtool.PoolInfo, error) {
-	return []vmtool.PoolInfo{{Name: "boot-scratch"}, {Name: "tp"}, {Name: "vt"}}, nil
+	return []vmtool.PoolInfo{{Name: "boot-scratch"}, {Name: "tp"}, {Name: "vt"}, {Name: "nvme-thin", Type: "thin"}}, nil
 }
 
 // The create form's first Pool option is "(host default)", selected unless
@@ -45,5 +46,22 @@ func TestCreateFormPoolHostDefault(t *testing.T) {
 	m.formValues[fPool] = "tp"
 	if in, _, _ := m.createInput(); in.Pool != "tp" {
 		t.Errorf("picked tp, input pool %q", in.Pool)
+	}
+}
+
+// The Pool picker shows each pool's type beside its name; the value sent is
+// the bare name.
+func TestCreateFormPoolShowsType(t *testing.T) {
+	mm, _ := initialModel(formFake{}, "jetfire", t.TempDir(), "inv.yml").enterCreateMode()
+	m := mm.(model)
+	opts := m.formFields[fPool].options
+	want := []string{hostDefaultPool, "boot-scratch", "tp", "vt", "nvme-thin (thin)"}
+	if !reflect.DeepEqual(opts, want) {
+		t.Fatalf("Pool options %q, want %q", opts, want)
+	}
+	m.formValues[fName] = "web"
+	m.formValues[fPool] = "nvme-thin (thin)"
+	if in, _, _ := m.createInput(); in.Pool != "nvme-thin" {
+		t.Errorf("picked the thin pool, input pool %q", in.Pool)
 	}
 }
