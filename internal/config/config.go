@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -29,6 +30,10 @@ const (
 	EnvFileName = ".env"
 	// TokenEnv is the environment variable (and .env key) holding the token.
 	TokenEnv = "VMTOOL_TOKEN"
+	// ServerTokenEnv is the environment variable (and .env key) holding the
+	// client's token for the store named by server.url. It is never read from
+	// config.yml.
+	ServerTokenEnv = "VMTOOL_SERVER_TOKEN"
 
 	RoleWorkstation = "workstation"
 	RoleHypervisor  = "hypervisor"
@@ -49,6 +54,9 @@ var (
 	ErrNotFound = errors.New("config.yml not found")
 	// ErrNoToken means neither VMTOOL_TOKEN nor .env supplied a token.
 	ErrNoToken = errors.New("no VMTOOL_TOKEN in environment or .env")
+	// ErrNoServerToken means neither VMTOOL_SERVER_TOKEN nor .env supplied
+	// the store token.
+	ErrNoServerToken = errors.New("no VMTOOL_SERVER_TOKEN in environment or .env")
 	// ErrTokenMismatch means the token does not match token_sha256.
 	ErrTokenMismatch = errors.New("token does not match token_sha256 in config.yml")
 )
@@ -80,8 +88,34 @@ type Config struct {
 	// hypervisor accepts and ignores them.
 	IPWaitSeconds  int `yaml:"ip_wait_seconds"`
 	SSHWaitSeconds int `yaml:"ssh_wait_seconds"`
+	// Server names the optional central store (tranche 10). Absent: images
+	// and guest credentials stay on this machine.
+	Server StoreServer `yaml:"server"`
 	// Dir is the directory config.yml was loaded from.
 	Dir string `yaml:"-"`
+}
+
+// StoreServer is config.yml's server: block. The store token is not part of
+// it: it comes from VMTOOL_SERVER_TOKEN (ServerToken).
+type StoreServer struct {
+	// URL is the store's base URL, https only, for example
+	// https://vmtool-store.labtwo.
+	URL string `yaml:"url"`
+}
+
+// StoreConfigured reports whether config.yml names a store.
+func (c *Config) StoreConfigured() bool { return c != nil && c.Server.URL != "" }
+
+// checkServerURL validates server.url. The message never echoes the value:
+// a URL can carry credentials.
+func checkServerURL(raw string) error {
+	const bad = "server.url must be an https URL with a host, like https://vmtool-store.labtwo (no credentials, query or fragment)"
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil ||
+		u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.Opaque != "" {
+		return errors.New(bad)
+	}
+	return nil
 }
 
 // Host is a remote hypervisor the workstation can reach.
@@ -213,6 +247,11 @@ func (c *Config) finish() error {
 			return fmt.Errorf("%s must be 0 (default 120) or from 1 to %d seconds", w.key, MaxWaitSeconds)
 		}
 	}
+	if c.Server.URL != "" {
+		if err := checkServerURL(c.Server.URL); err != nil {
+			return err
+		}
+	}
 	if c.TokenSHA256 != "" && !tokenhash.Valid(c.TokenSHA256) {
 		return errors.New("token_sha256 must be 64 lowercase hex characters")
 	}
@@ -312,21 +351,30 @@ func Verify(dir string) error {
 }
 
 // Token returns VMTOOL_TOKEN from the environment, else from dir/.env.
-func Token(dir string) (string, error) {
-	if v := os.Getenv(TokenEnv); v != "" {
+func Token(dir string) (string, error) { return envToken(dir, TokenEnv, ErrNoToken) }
+
+// ServerToken returns VMTOOL_SERVER_TOKEN from the environment, else from
+// dir/.env: the client's token for the store. It returns ErrNoServerToken
+// when there is none. Never print or log the result.
+func ServerToken(dir string) (string, error) {
+	return envToken(dir, ServerTokenEnv, ErrNoServerToken)
+}
+
+func envToken(dir, key string, none error) (string, error) {
+	if v := os.Getenv(key); v != "" {
 		return v, nil
 	}
 	b, err := os.ReadFile(filepath.Join(dir, EnvFileName))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return "", ErrNoToken
+			return "", none
 		}
 		return "", fmt.Errorf("read %s: %w", EnvFileName, err)
 	}
-	if v := parseDotEnv(b)[TokenEnv]; v != "" {
+	if v := parseDotEnv(b)[key]; v != "" {
 		return v, nil
 	}
-	return "", ErrNoToken
+	return "", none
 }
 
 func parseDotEnv(b []byte) map[string]string {

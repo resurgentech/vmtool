@@ -10,12 +10,14 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"text/tabwriter"
 
 	"github.com/jaredeh/vmtool/internal/app"
 	"github.com/jaredeh/vmtool/internal/config"
 	"github.com/jaredeh/vmtool/internal/hosts"
 	"github.com/jaredeh/vmtool/internal/server"
+	"github.com/jaredeh/vmtool/internal/storeclient"
 	"github.com/jaredeh/vmtool/internal/tui"
 	"github.com/jaredeh/vmtool/pkg/vmtool"
 	"github.com/spf13/cobra"
@@ -49,6 +51,59 @@ type env struct {
 	// means the running executable. Tests set it to a stub path, since under
 	// go test the running executable is refused (vmtool.CurrentExe).
 	tunnelExe string
+	// errw is where a command's stderr goes (set by the gate's hook before
+	// any RunE); nil means os.Stderr.
+	errw io.Writer
+	// store is this command's session with the optional central store (nil
+	// when config.yml has no server: block), opened on first use by session.
+	store     *app.StoreSession
+	storeOnce sync.Once
+}
+
+// storeClientOptions are extra storeclient options for the CLI's store
+// client; tests inject their CA here. Production leaves it empty: the system
+// trust store.
+var storeClientOptions []storeclient.Option
+
+// session is this command's StoreSession: nil when no server: is configured.
+// It reads VMTOOL_SERVER_TOKEN (environment, else .env) when first opened,
+// makes no network call until the mode is needed, and prints the one
+// fallback line to stderr when the store is not usable.
+func (e *env) session() *app.StoreSession {
+	e.storeOnce.Do(func() {
+		if !e.cfg.StoreConfigured() {
+			return
+		}
+		e.store = app.OpenStoreSession(e.cfg.Server.URL,
+			func() (string, error) { return config.ServerToken(e.dir) },
+			storeClientOptions,
+			func(line string) { fmt.Fprintln(e.stderr(), line) })
+	})
+	return e.store
+}
+
+func (e *env) stderr() io.Writer {
+	if e.errw != nil {
+		return e.errw
+	}
+	return os.Stderr
+}
+
+// storeCommands are the top-level commands that use guest credentials or base
+// images. Each decides the store mode at its start (the design: "at the start
+// of every command that uses credentials or base images"); no other command
+// pays for the probe.
+var storeCommands = map[string]bool{
+	"create": true, "delete": true, "ssh": true, "exec": true, "playbook": true,
+	"resize-disk": true, "i": true, "metal": true,
+}
+
+func usesStore(cmd *cobra.Command) bool {
+	top := cmd
+	for top.HasParent() && top.Parent().HasParent() {
+		top = top.Parent()
+	}
+	return top.HasParent() && storeCommands[top.Name()]
 }
 
 // gateError is the gate's refusal. Error is one line naming the fix; Unwrap
@@ -167,6 +222,10 @@ it checks the bearer token of every request instead.`,
 				cmd.SilenceErrors = true
 				return err
 			}
+			e.errw = cmd.ErrOrStderr()
+			if !isServerCmd(cmd) && usesStore(cmd) {
+				e.session().Mode(cmd.Context())
+			}
 			return nil
 		},
 	}
@@ -282,6 +341,7 @@ func (e *env) service(inventory string) *app.Service {
 		InventoryPath: inventory,
 		HostNames:     e.resolver().AllNames(),
 		Images:        app.LocalImages{Dir: e.imageDir(), Pools: e.localImages},
+		Store:         e.session(),
 		// create's waits come from the workstation's config.yml (nil: 120s).
 		IPTimeout:  e.cfg.IPWait(),
 		SSHTimeout: e.cfg.SSHWait(),
@@ -789,7 +849,7 @@ func interactiveCmd(e *env) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return tui.Run(e.resolver(), t, e.cfg.IPWait(), e.cfg.SSHWait(), e.imageDir())
+			return tui.Run(e.resolver(), t, e.cfg.IPWait(), e.cfg.SSHWait(), e.imageDir(), e.session())
 		},
 	}
 }

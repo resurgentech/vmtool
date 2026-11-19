@@ -17,6 +17,13 @@ info:
     routes are scoped to a host (/v1/hosts/{host}/...). GET /version is
     public and unversioned: a reachability probe that clients do not use to
     compare versions.
+    A workstation whose config.yml has a `server:` block decides, per request,
+    for the operations that use guest credentials, machine records or base
+    images, whether its store answers. When it does not, the request still
+    runs, in local mode, and the response carries one `X-Vmtool-Warnings`
+    header per warning: one line of text, absent when there is none. The
+    header is not declared per response; it can appear on any response of
+    those operations.
     createVM and runPlaybook are synchronous and may run for many minutes; clients must not
     use a short HTTP timeout.
 servers:

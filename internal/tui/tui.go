@@ -166,6 +166,8 @@ type model struct {
 	manager app.Manager
 	// ownListed is whether the own name has a daemon (no local pools).
 	ownListed bool
+	// store is the run's session with the central store (nil: none).
+	store *app.StoreSession
 	// imageDir is the config's resolved image_dir ("" when unset), where
 	// create looks for base images after the local pools.
 	imageDir string
@@ -378,6 +380,7 @@ func (m model) svc() *app.Service {
 		return app.FindLocalImage(mgr, true, name)
 	}
 	s.Images = app.LocalImages{Dir: m.imageDir, Pools: pools}
+	s.Store = m.store
 	return s.WithTunnel(m.tunnel)
 }
 
@@ -1686,9 +1689,13 @@ func flatImages(mgr app.Manager) []string {
 // local libvirt connection is reused; another host gets a remote client
 // carrying the resolver's token). Machine names may not take any host name.
 // tunnel is how guests are reached (the CLI's own executable and token).
-func Run(r *hosts.Resolver, tunnel vmtool.Tunnel, ipWait, sshWait time.Duration, imageDir string) error {
+//
+// store is the session with the optional central store, already decided for
+// this run (the CLI decides at start); nil means no server: is configured.
+func Run(r *hosts.Resolver, tunnel vmtool.Tunnel, ipWait, sshWait time.Duration, imageDir string, store *app.StoreSession) error {
 	m := newModel(r, tunnel, ipWait, sshWait)
 	m.imageDir = imageDir
+	m.store = store
 	m.send = &msgSender{}
 	p := tea.NewProgram(m)
 	m.send.fn = p.Send

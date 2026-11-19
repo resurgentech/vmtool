@@ -59,6 +59,10 @@ type Service struct {
 	// ImageStore uploads the image from there. nil means this machine has no
 	// local copy to offer: a host's cached copy is then used as it is.
 	Images ImageSource
+	// Store is this command's (or request's) view of the optional central
+	// store: it decides the mode on first use and remembers it. nil means no
+	// server: is configured: local mode, local sources.
+	Store *StoreSession
 	// ImageCachePath is this machine's image-hash cache; empty means
 	// vmtool.ImageManifestFile in the working directory.
 	ImageCachePath string
@@ -72,6 +76,24 @@ func (s *Service) WithTunnel(t vmtool.Tunnel) *Service {
 	c.Tunnel = t
 	return &c
 }
+
+// WithStore returns a shallow copy of s that uses session st for credentials
+// and the image catalog. The receiver is not changed. The loopback service
+// gives each request its own session.
+func (s *Service) WithStore(st *StoreSession) *Service {
+	c := *s
+	c.Store = st
+	return &c
+}
+
+// Credentials is where this command's guest credentials and machine records
+// live: the store in store mode, .machines/ otherwise. The mode is decided on
+// the first call that needs it.
+func (s *Service) Credentials() CredentialSource { return s.Store.Credentials() }
+
+// ImageCatalog is the store's side of base images in store mode; in local
+// mode every call answers ErrNoStore.
+func (s *Service) ImageCatalog() ImageCatalog { return s.Store.Catalog() }
 
 func (s *Service) playbookDir() string {
 	if s.PlaybookDir == "" {

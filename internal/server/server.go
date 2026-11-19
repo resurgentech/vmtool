@@ -15,6 +15,7 @@ import (
 	"github.com/jaredeh/vmtool/internal/app"
 	"github.com/jaredeh/vmtool/internal/config"
 	"github.com/jaredeh/vmtool/internal/hosts"
+	"github.com/jaredeh/vmtool/internal/storeclient"
 	"github.com/jaredeh/vmtool/pkg/vmtool"
 )
 
@@ -27,6 +28,10 @@ type Server struct {
 	// bearer token whose SHA-256 is Config.TokenSHA256. A nil Config or an
 	// empty hash authenticates nothing, and ListenAndServe refuses both.
 	Config *config.Config
+	// StoreOptions are extra options for the store client the service builds
+	// for each request (tests inject their CA). Production leaves it empty:
+	// the system trust store.
+	StoreOptions []storeclient.Option
 
 	// h is the handlers Handler last built (ListenAndServe warms its pool
 	// directory).
@@ -56,6 +61,13 @@ func (s *Server) Handler() http.Handler {
 	}
 	if s.Config != nil {
 		h.role = s.Config.Role
+		// A hypervisor daemon holds no store token and never uses the store.
+		if s.Config.StoreConfigured() && s.Config.Role != config.RoleHypervisor {
+			dir := s.Config.Dir
+			h.storeURL = s.Config.Server.URL
+			h.storeToken = func() (string, error) { return config.ServerToken(dir) }
+			h.storeOpts = s.StoreOptions
+		}
 	}
 	s.h = h
 	var hash string
@@ -109,7 +121,7 @@ func chain(h *handlers, auth func(http.Handler) http.Handler) http.Handler {
 	}
 	// tunnelMux serves openVMTunnel itself (it takes over the connection);
 	// every other operation goes to the strict adapter.
-	mux := tunnelMux{ServerInterface: api.NewStrictHandler(h, []api.StrictMiddlewareFunc{noteOperation}), h: h}
+	mux := tunnelMux{ServerInterface: api.NewStrictHandler(h, []api.StrictMiddlewareFunc{noteOperation, h.decideStore}), h: h}
 	var next http.Handler = withMaxBytes(withRequest(api.HandlerFromMux(mux, http.NewServeMux())))
 	// A hypervisor refuses the workstation-only operations here, after auth
 	// and before the body is read or any handler runs.

@@ -107,7 +107,13 @@ follows for each certificate with fewer than 30 days left.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			st := e.resolver().Status(cmd.Context(), app.ListTimeout)
-			return printHosts(cmd.OutOrStdout(), st, nowFn())
+			if err := printHosts(cmd.OutOrStdout(), st, nowFn()); err != nil {
+				return err
+			}
+			if sess := e.session(); sess != nil {
+				return printStore(cmd.OutOrStdout(), sess.Status(cmd.Context(), app.WhoamiTimeout))
+			}
+			return nil
 		},
 	}
 }
@@ -147,6 +153,31 @@ func printHosts(out io.Writer, st []app.HostStatus, now time.Time) error {
 		fmt.Fprintln(out, line)
 	}
 	return nil
+}
+
+// printStore writes the store's row, after a blank line: whether it answered,
+// the name it gave this token, and its version. An unreachable store is a row,
+// not a failure.
+func printStore(out io.Writer, st app.StoreStatus) error {
+	fmt.Fprintln(out)
+	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(w, "NAME\tURL\tREACHABLE\tCALLER\tVERSION\tERROR")
+	reach := "no"
+	if st.Reachable {
+		reach = "yes"
+	}
+	caller, version, msg := "-", "-", "-"
+	if st.Caller != "" {
+		caller = st.Caller
+	}
+	if st.Version != "" {
+		version = st.Version
+	}
+	if st.Err != nil {
+		msg = oneLine(st.Err.Error())
+	}
+	fmt.Fprintf(w, "store\t%s\t%s\t%s\t%s\t%s\n", st.URL, reach, caller, version, msg)
+	return w.Flush()
 }
 
 func certWarning(s app.HostStatus, days int) string {

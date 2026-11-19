@@ -14,6 +14,7 @@ import (
 	"github.com/jaredeh/vmtool/internal/buildinfo"
 	"github.com/jaredeh/vmtool/internal/config"
 	"github.com/jaredeh/vmtool/internal/hosts"
+	"github.com/jaredeh/vmtool/internal/storeclient"
 	"github.com/jaredeh/vmtool/pkg/vmtool"
 )
 
@@ -48,6 +49,11 @@ type handlers struct {
 	poolDir string
 	// console is the open consoles and their limits (console.go).
 	console consoles
+	// storeURL, storeToken and storeOpts are the optional central store of a
+	// workstation (store.go): empty storeURL means none.
+	storeURL   string
+	storeToken func() (string, error)
+	storeOpts  []storeclient.Option
 }
 
 // guestSvc is h.svc with a Tunnel for this request: the running vmtool as
@@ -61,7 +67,11 @@ func (h *handlers) guestSvc(ctx context.Context) *app.Service {
 		t.Exe, _ = vmtool.CurrentExe()
 	}
 	t.Token = requestToken(ctx)
-	return h.svc.WithTunnel(t)
+	svc := h.svc.WithTunnel(t)
+	if sess := storeSessionOf(ctx); sess != nil {
+		svc = svc.WithStore(sess)
+	}
+	return svc
 }
 
 // requestToken is the bearer of the request ctx carries (requireBearer has

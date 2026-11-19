@@ -986,3 +986,33 @@ are appended, never edited in; a hook refuses rewrites.
   stubs; green after. FOREMAN checked the secrecy test with a debug line
   logging the password (it failed) and reverted. `just check` green.
 - Commits: the S6 commit on `clone-identity`.
+
+## 2026-11-18 — S7 Client store config, per-command mode, the two sources
+
+- `config.yml` `server: {url}` (https, no credentials, query or fragment;
+  the error never echoes it); `VMTOOL_SERVER_TOKEN` from the environment,
+  else `.env`, never from config.yml (`config.ServerToken`).
+- `internal/storeclient` (new): HTTP client over `internal/storeapi`;
+  bearer only in `Authorization` (not on `GET /version`), no redirects, no
+  proxy, system trust store; errors name the operation and status only.
+- `internal/app`: `StoreSession` decides the mode once per command (one
+  `GET /v1/whoami`, 3 s); reachable → store mode for the whole command,
+  otherwise local mode and one line "<host> unreachable: using this
+  machine's .machines/ and image_dir" (a missing token gets its own
+  variant). `CredentialSource` (`LocalCredentials`, `StoreCredentials`)
+  and `ImageCatalog` (`StoreImages`, `LocalCatalog`) beside W4's
+  `ImageSource`; `Service.Store`. No workflow uses them yet (S8, S10).
+- CLI: create, delete, ssh, exec, playbook, resize-disk, i and every
+  `metal` subcommand decide at start; `vmtool hosts` prints a store table
+  (URL, reachable, caller, version). The loopback service decides per
+  request for the store operations and puts the line in the
+  `X-Vmtool-Warnings` response header (documented in the spec's
+  description; API stays 2.3.0); a hypervisor never uses the store.
+- `cmd/vmtool` `TestNoStoreServerDeps`: no minio-go, sqlite or
+  `internal/store/...` in the vmtool binary.
+- Tests in config, storeclient, app, cli, server, tui, cmd/vmtool; red
+  was build failure, plus a mutation (`usesStore` false) failing
+  `TestStoreModeDecidedAtCommandStart`. FOREMAN found the bearer skipped
+  for any path ending in `/version` (an image named `version`); fixed,
+  `TestBearerOnEveryRouteButVersion` red then green. `just check` green.
+- Commits: the S7 commit on `clone-identity`.
