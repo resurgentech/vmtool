@@ -1381,3 +1381,24 @@ are appended, never edited in; a hook refuses rewrites.
   templates; statuses (404/409/400); workstation forwarding; CLI, TUI,
   remote, app. Red: build failures; green; `just check` green.
 - Commits: the T7 commit on `clone-identity`.
+
+## 2026-11-18 — T8 Save a VM as a project template
+
+- Spec (2.4.0, no bump): `CreateTemplateRequest` gains `from_vm`, `name`,
+  `replace`; `TemplateInfo` gains optional `extra_disks`. Exactly one of
+  `image` / `from_vm`; regenerated.
+- `internal/hosts/savetemplate.go` (on `ThinPools`): shut off only (409
+  "shut it down first"), boot disk must be a `vmtool_vol` thin LV (400
+  "templates are saved from VMs on a thin pool"), name free of templates
+  and cached images (409; `--replace` replaces only one saved template,
+  made new first, old removed under lock after a re-read), room check
+  (409), then one helper write: `snapshot <vg> <vm> vmtpl-<12 random
+  hex>` with the saved tags. Extra disks returned as a warning.
+- `internal/app` `Service.SaveTemplate` (optional `TemplateSaver`; syncs
+  no image); server dispatch and no store probe for a save; remote client;
+  CLI `templates save host/vm <name> [--replace]` ending with a pointer to
+  README "What a template must be"; TUI `W` with a name prompt.
+- Tests: fake helper asserts the only write naming the source LV is the
+  snapshot origin; refusals; replace order and re-read; statuses;
+  workstation forwarding. Red: build failures; green; `just check` green.
+- Commits: the T8 commit on `clone-identity`.

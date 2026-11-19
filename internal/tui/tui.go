@@ -41,6 +41,7 @@ const (
 	modeBridge
 	modeAddMachine
 	modeTemplates
+	modeSaveTemplate
 )
 
 type pane int
@@ -250,6 +251,11 @@ type model struct {
 	listTemplates func(ctx context.Context) []app.HostTemplates
 	tplRows       []tplRow
 	tplCursor     int
+	// save-as-template prompt (modeSaveTemplate): the VM, the name typed so far
+	// and whether it replaces a saved template of that name.
+	saveRef     app.VMRef
+	saveName    string
+	saveReplace bool
 	// confirmBack is the view a cancelled confirm returns to (the VM list unless set).
 	confirmBack viewMode
 }
@@ -555,6 +561,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateAddMachine(msg)
 		case modeTemplates:
 			return m.updateTemplates(msg)
+		case modeSaveTemplate:
+			return m.updateSaveTemplate(msg)
 		default:
 			return m.updateList(msg)
 		}
@@ -629,6 +637,10 @@ func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "T":
 		if m.focus == paneVMs {
 			return m.enterTemplatesMode()
+		}
+	case "W":
+		if vm, ok := m.selectedVM(); ok && m.focus == paneVMs {
+			return m.enterSaveTemplateMode(vm)
 		}
 	case "s", "S":
 		if vm, ok := m.selectedVM(); ok && m.focus == paneVMs {
@@ -1452,6 +1464,8 @@ func (m model) View() string {
 		return b.String() + m.viewAddMachine()
 	case modeTemplates:
 		return b.String() + m.viewTemplates()
+	case modeSaveTemplate:
+		return b.String() + m.viewSaveTemplate()
 	}
 
 	// --- VM list pane ---
@@ -1571,7 +1585,7 @@ func (m model) View() string {
 
 	b.WriteString("\n")
 	if m.focus == paneVMs {
-		b.WriteString(helpStyle.Render("c=create  m=add machine  s=start/stop  b=reboot  a=autostart  p=playbook  T=templates  t=ssh  D=delete/forget  r=refresh  tab=log  q=quit"))
+		b.WriteString(helpStyle.Render("c=create  m=add machine  s=start/stop  b=reboot  a=autostart  p=playbook  T=templates  W=save template  t=ssh  D=delete/forget  r=refresh  tab=log  q=quit"))
 	} else {
 		b.WriteString(helpStyle.Render("enter=view output  tab=vms  q=quit"))
 	}

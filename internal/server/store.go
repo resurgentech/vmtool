@@ -44,6 +44,11 @@ func (h *handlers) decideStore(f api.StrictHandlerFunc, operationID string) api.
 		return f
 	}
 	return func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error) {
+		// Saving a VM as a template moves no image and uses no credentials:
+		// it never decides the mode.
+		if req, ok := request.(api.CreateTemplateRequestObject); ok && req.Body != nil && req.Body.FromVm != nil && *req.Body.FromVm != "" {
+			return f(ctx, w, r, request)
+		}
 		// A session per request: the mode is decided per request and not
 		// shared between concurrent ones.
 		// Every line the session delivers (the fallback line, and the notices of

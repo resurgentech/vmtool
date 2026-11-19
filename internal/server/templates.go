@@ -53,17 +53,28 @@ func (h *handlers) CreateTemplate(ctx context.Context, req api.CreateTemplateReq
 	switch {
 	case b == nil:
 		bad = errors.New("request body required")
+	case derefStr(b.FromVm) != "" && derefStr(b.Image) != "":
+		bad = errors.New("image and from_vm are exclusive: build an image template or save a VM, not both")
+	case derefStr(b.FromVm) != "":
+		bad = checkSaveRequest(b)
 	case derefStr(b.Image) == "":
-		bad = errors.New("image is required")
+		bad = errors.New("image or from_vm is required")
 	case !vmtool.ValidImageName(derefStr(b.Image)):
 		bad = badName("image", derefStr(b.Image))
 	case !xmlSafe(derefStr(b.Pool)):
 		bad = errors.New("pool contains invalid characters")
+	case derefStr(b.Name) != "" || (b.Replace != nil && *b.Replace):
+		bad = errors.New("name and replace go with from_vm")
 	}
 	if bad != nil {
 		return api.CreateTemplate400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: bad.Error()}}, nil
 	}
+	save := derefStr(b.FromVm) != ""
 	v, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
+		if save {
+			return h.svc.SaveTemplate(ctx, m, app.SaveTemplateInput{Host: req.Host, VM: derefStr(b.FromVm), Name: derefStr(b.Name),
+				Replace: b.Replace != nil && *b.Replace})
+		}
 		return h.guestSvc(ctx).PrepareTemplate(ctx, m, app.PrepareTemplateInput{Host: req.Host, Image: derefStr(b.Image), Pool: derefStr(b.Pool)})
 	})
 	if err != nil {
@@ -78,7 +89,30 @@ func (h *handlers) CreateTemplate(ctx context.Context, req api.CreateTemplateReq
 			return api.CreateTemplate500JSONResponse(apiErr(err)), nil
 		}
 	}
+	if st, ok := v.(app.SavedTemplate); ok {
+		out := toAPITemplate(st.TemplateInfo)
+		if len(st.ExtraDisks) > 0 {
+			out.ExtraDisks = &st.ExtraDisks
+		}
+		return api.CreateTemplate201JSONResponse(out), nil
+	}
 	return api.CreateTemplate201JSONResponse(toAPITemplate(v.(app.TemplateInfo))), nil
+}
+
+// checkSaveRequest is the input check of a save: a plain VM name and template
+// name, and no pool (the template is made in the VM's own pool).
+func checkSaveRequest(b *api.CreateTemplateRequest) error {
+	switch {
+	case !vmtool.ValidMachineName(derefStr(b.FromVm)):
+		return badName("from_vm", derefStr(b.FromVm))
+	case derefStr(b.Name) == "":
+		return errors.New("name is required with from_vm")
+	case !vmtool.ValidImageName(derefStr(b.Name)):
+		return badName("name", derefStr(b.Name))
+	case derefStr(b.Pool) != "":
+		return errors.New("pool does not go with from_vm: the template is made in the VM's own pool")
+	}
+	return nil
 }
 
 func (h *handlers) DeleteTemplate(ctx context.Context, req api.DeleteTemplateRequestObject) (api.DeleteTemplateResponseObject, error) {

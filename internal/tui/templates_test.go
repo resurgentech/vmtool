@@ -16,6 +16,7 @@ import (
 type tplFake struct {
 	app.Manager
 	deleted []string
+	saved   []string
 }
 
 func (f *tplFake) ListTemplates() ([]app.TemplateInfo, error) { return nil, nil }

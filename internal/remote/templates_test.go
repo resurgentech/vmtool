@@ -102,3 +102,28 @@ func TestRemoteTemplateErrors(t *testing.T) {
 		}
 	}
 }
+
+// A save is createTemplate with from_vm and name (and replace when set), no
+// image and no pool; the extra disks come back.
+func TestRemoteSaveTemplate(t *testing.T) {
+	var method, path, body string
+	f := newFakeAPI(t, specVersion(t), func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		method, path, body = r.Method, r.URL.Path, string(b)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"name":"proj","origin":"saved","pool":"thin-test","lv":"vmtpl-000000000009","size_bytes":1,"used_bytes":0,"clones":0,"stale":false,"extra_disks":["vdb"]}`))
+	})
+	var ts app.TemplateSaver = f.manager(t) // the remote client saves
+	got, err := ts.SaveTemplate("vm1", "proj", true)
+	if err != nil || got.LV != "vmtpl-000000000009" || got.Origin != vmtool.TemplateOriginSaved || len(got.ExtraDisks) != 1 || got.ExtraDisks[0] != "vdb" {
+		t.Fatalf("SaveTemplate = %+v, %v", got, err)
+	}
+	if method != "POST" || !strings.HasSuffix(path, "/templates") || !strings.Contains(body, `"from_vm":"vm1"`) ||
+		!strings.Contains(body, `"name":"proj"`) || !strings.Contains(body, `"replace":true`) || strings.Contains(body, "image") || strings.Contains(body, "pool") {
+		t.Errorf("request %s %s %s", method, path, body)
+	}
+	if _, err := f.manager(t).SaveTemplate("vm1", "proj", false); err != nil || strings.Contains(body, "replace") {
+		t.Errorf("no replace: %v %s", err, body)
+	}
+}

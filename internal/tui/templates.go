@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/jaredeh/vmtool/internal/app"
+	"github.com/jaredeh/vmtool/pkg/vmtool"
 )
 
 // The templates view (T from the VM list): every host's thin-pool templates,
@@ -186,6 +187,89 @@ func (m model) viewTemplates() string {
 	}
 	b.WriteString("\n")
 	b.WriteString(helpStyle.Render("D=delete  r=refresh  esc=back"))
+	b.WriteString("\n")
+	return b.String()
+}
+
+// Save a VM as a project template (W on a shut-off VM in the VM list): a name
+// prompt, then app.SaveTemplate on the VM's host. The host refuses a disk that
+// is not on a thin pool, and the log shows why. tab toggles replace.
+
+// enterSaveTemplateMode asks for the template's name, or logs why the VM
+// cannot be saved when it is not shut off.
+func (m model) enterSaveTemplateMode(vm vmRow) (tea.Model, tea.Cmd) {
+	ref := m.vmRef(vm)
+	if vm.State != vmtool.StateShutoff {
+		idx := m.addLog(fmt.Sprintf("save template %s: %s is %s: shut it down first: `vmtool stop %s`", ref, ref, vm.State, ref))
+		m.log[idx].status = logStatusError
+		return m, nil
+	}
+	m.saveRef, m.saveName, m.saveReplace = ref, "", false
+	m.mode = modeSaveTemplate
+	return m, nil
+}
+
+func (m model) updateSaveTemplate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch k := msg.String(); k {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		m.mode = modeList
+	case "tab":
+		m.saveReplace = !m.saveReplace
+	case "backspace":
+		if n := len(m.saveName); n > 0 {
+			m.saveName = m.saveName[:n-1]
+		}
+	case "enter":
+		if m.saveName == "" {
+			return m, nil
+		}
+		m.mode = modeList
+		return m.saveTemplate(m.saveRef, m.saveName, m.saveReplace)
+	default:
+		if len(k) == 1 {
+			m.saveName += k
+		}
+	}
+	return m, nil
+}
+
+// saveTemplate saves ref as the template name on ref's host, then refreshes
+// the VM rows. The log line names the extra disks left out.
+func (m model) saveTemplate(ref app.VMRef, name string, replace bool) (tea.Model, tea.Cmd) {
+	idx := m.addLog(fmt.Sprintf("save template %s as %s...", ref, name))
+	svc := m.svc()
+	return m, func() tea.Msg {
+		var saved app.SavedTemplate
+		err := m.onHost(ref.Host, func(mgr app.Manager) error {
+			var err error
+			saved, err = svc.SaveTemplate(context.Background(), mgr, app.SaveTemplateInput{Host: ref.Host, VM: ref.Name, Name: name, Replace: replace})
+			return err
+		})
+		title, status := fmt.Sprintf("save template %s as %s/%s (%s)", ref, ref.Host, name, saved.LV), logStatusDone
+		if len(saved.ExtraDisks) > 0 {
+			title += fmt.Sprintf("; extra disks (%s) are not part of the template", strings.Join(saved.ExtraDisks, ", "))
+		}
+		if err != nil {
+			title, status = fmt.Sprintf("save template %s as %s: error: %v", ref, name, err), logStatusError
+		}
+		return cmdDoneMsg{logIdx: idx, title: title, status: status, vms: m.fetchRows()}
+	}
+}
+
+func (m model) viewSaveTemplate() string {
+	var b strings.Builder
+	b.WriteString(promptStyle.Render("Save as template"))
+	b.WriteString("\n\n")
+	fmt.Fprintf(&b, "  VM:     %s (shut off; its boot disk is snapshotted, nothing else is touched)\n", m.saveRef)
+	fmt.Fprintf(&b, "  Name:   %s_\n", m.saveName)
+	mark := " "
+	if m.saveReplace {
+		mark = "x"
+	}
+	fmt.Fprintf(&b, "  [%s] replace the saved template of that name (tab)\n\n", mark)
+	b.WriteString(helpStyle.Render("enter=save  tab=toggle replace  esc=cancel"))
 	b.WriteString("\n")
 	return b.String()
 }

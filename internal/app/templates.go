@@ -39,6 +39,31 @@ type TemplateManager interface {
 	DeleteTemplate(name, pool string) (TemplateInfo, error)
 }
 
+// SavedTemplate is the answer to a save: the new template, and the VM's other
+// disks (targets such as vdb), which are not part of it.
+type SavedTemplate struct {
+	TemplateInfo
+	ExtraDisks []string
+}
+
+// TemplateSaver is implemented by a Manager that can save a VM as a template:
+// the thin-pool Manager of a hypervisor daemon and the remote client for one.
+// It is separate from TemplateManager so a fake of the older operations need
+// not grow it.
+type TemplateSaver interface {
+	// SaveTemplate makes the saved template name from the boot disk of the
+	// shut-off VM vm, replacing the saved template of that name when replace.
+	SaveTemplate(vm, name string, replace bool) (SavedTemplate, error)
+}
+
+// SaveTemplateInput is a request to save a VM as a project template.
+type SaveTemplateInput struct {
+	Host    string
+	VM      string
+	Name    string
+	Replace bool
+}
+
 // ErrNoThinPools is what a Manager (or a wrapper over one) without thin
 // pools answers a template operation with.
 var ErrNoThinPools = errors.New("no thin pools on this host")
@@ -234,4 +259,38 @@ func (s *Service) listTemplatesOne(ctx context.Context, host string, open HostOp
 		}
 		return HostTemplates{Host: host, Err: ctx.Err()}
 	}
+}
+
+// SaveTemplate saves the VM in.VM of the host as the project template in.Name:
+// a thin snapshot of its boot disk (the host's work; nothing is booted,
+// mounted or inspected). The VM must be shut off, which is checked here with
+// the host/vm in the message, and again by the host. No image is synced: a
+// save moves no image.
+func (s *Service) SaveTemplate(_ context.Context, m Manager, in SaveTemplateInput) (SavedTemplate, error) {
+	const op = "save_template"
+	if !vmtool.ValidMachineName(in.VM) {
+		return SavedTemplate{}, invalid(op, fmt.Errorf("VM name %q must be a plain name (letters, digits, '.', '_', '-')", in.VM))
+	}
+	if !vmtool.ValidImageName(in.Name) {
+		return SavedTemplate{}, invalid(op, fmt.Errorf("template name %q must be a plain name (letters, digits, '.', '_', '-')", in.Name))
+	}
+	ts, ok := m.(TemplateSaver)
+	if !ok {
+		return SavedTemplate{}, invalid(op, fmt.Errorf("templates are saved from VMs on a thin pool; this host has none: %w", ErrNoThinPools))
+	}
+	info, err := m.Info(in.VM)
+	if err != nil {
+		return SavedTemplate{}, wrap(op, err)
+	}
+	if info.State != vmtool.StateShutoff {
+		return SavedTemplate{}, conflict(op, fmt.Errorf("%s/%s is %s: shut it down first: `vmtool stop %s/%s`", in.Host, in.VM, info.State, in.Host, in.VM))
+	}
+	t, err := ts.SaveTemplate(in.VM, in.Name, in.Replace)
+	if errors.Is(err, ErrNoThinPools) {
+		return SavedTemplate{}, invalid(op, fmt.Errorf("templates are saved from VMs on a thin pool; this host has none: %w", err))
+	}
+	if err != nil {
+		return SavedTemplate{}, wrap(op, err)
+	}
+	return t, nil
 }

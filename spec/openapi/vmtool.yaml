@@ -880,9 +880,10 @@ paths:
         '500': { $ref: '#/components/responses/Error' }
     post:
       operationId: createTemplate
-      summary: Build an image template ahead of the first create (API 2.4.0)
+      summary: Build an image template ahead of the first create, or save a VM as a template (API 2.4.0)
       description: >
-        Builds the image template of `image` in the thin pool `pool` (omitted:
+        With `from_vm` (and `name`), saves a VM as a project template instead;
+        see below. Otherwise builds the image template of `image` in the thin pool `pool` (omitted:
         the host's default pool) from the host's cached copy of the image, as
         the first create into that pool would; a template that is already
         built is returned unchanged and nothing is written. When the request
@@ -891,7 +892,20 @@ paths:
         upload). The host has no image of that name: 404. `pool` is not a thin
         pool, the image is not in the daemon's manifest, or the request has no
         `image`: 400. The pool has no room: 409. A host with no thin pools: 400.
-        Only `image` and `pool` are accepted in this release.
+        Save: `from_vm` names a VM of the host and `name` the template. The VM
+        must be shut off, and its boot disk must be a `vmtool_vol` thin LV; the
+        template is a `-kn` thin snapshot of that LV, in the same pool, tagged
+        `vmtool_template`, `vmtool_origin=saved`, `vmtool_name=<name>`. The VM
+        and its disk are untouched, and nothing is booted, mounted or inspected.
+        No image is synced. `image` and `from_vm` together, or neither: 400. A
+        VM that is not shut off: 409. A disk that is not on a thin pool, or an
+        invalid `name`: 400. A `name` already used by a template or a cached
+        image on the host: 409, unless `replace` is true and the thing is a
+        saved template (an image template or a cached image is never
+        replaced); the new template is made before the old one is removed. No
+        room in the pool: 409. A VM that is not found: 404. The 201 body's
+        `extra_disks` lists the VM's other disks, which are not part of the
+        template.
       requestBody:
         required: true
         content:
@@ -1844,14 +1858,21 @@ components:
         clones: { type: integer, minimum: 0, description: "volumes in the same VG that are snapshots of this template" }
         stale: { type: boolean, description: "an image template whose image is not the host's current manifest entry for that name" }
         created: { type: string, format: date-time, description: "omitted when the host does not know" }
+        extra_disks:
+          type: array
+          items: { type: string }
+          description: "set only by a save (createTemplate with from_vm): the VM's disk targets other than vda, which are not part of the template"
     CreateTemplateRequest:
       type: object
       description: >
-        What to build a template from. This release takes `image` (and `pool`);
-        later releases add other sources as further optional fields.
+        What to make a template from: exactly one of `image` (with an optional
+        `pool`) or `from_vm` (with `name`, and optionally `replace`).
       properties:
-        image: { type: string, description: "the image to build the template of; required in this release" }
-        pool: { type: string, description: "the thin pool; omitted is the host's default pool" }
+        image: { type: string, description: "build the image template of this image" }
+        pool: { type: string, description: "with image: the thin pool; omitted is the host's default pool" }
+        from_vm: { type: string, description: "save this VM (shut off, boot disk on a thin pool) as a project template" }
+        name: { type: string, description: "with from_vm: the template's name, a plain image name" }
+        replace: { type: boolean, description: "with from_vm: replace the saved template of that name; never an image template or a cached image" }
     ImageManifestEntry:
       type: object
       required: [name, foreign]

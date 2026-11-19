@@ -19,10 +19,11 @@ func templatesCmd(e *env) *cobra.Command {
 		Long: `A thin pool holds one template per (image, SHA-256), built from the host's cached
 image the first time a VM is created into the pool; a clone is a thin snapshot
 of it. Templates are removed only here. A stale template is an image template
-whose image is no longer the host's current copy under that name. Removing a
-template never touches its clones.`,
+whose image is no longer the host's current copy under that name. A saved
+template is a project template: a snapshot of a shut-off VM's boot disk (see
+"save"). Removing a template never touches its clones.`,
 	}
-	cmd.AddCommand(templatesListCmd(e), templatesPrepareCmd(e), templatesDeleteCmd(e), templatesPruneCmd(e))
+	cmd.AddCommand(templatesListCmd(e), templatesPrepareCmd(e), templatesDeleteCmd(e), templatesPruneCmd(e), templatesSaveCmd(e))
 	return cmd
 }
 
@@ -239,4 +240,52 @@ never removed, and neither are any clones.`,
 			return nil
 		},
 	}
+}
+
+// requirementsPointer ends the output of a save: where the author reads what a
+// template must be before cloning it.
+const requirementsPointer = `Before cloning, check the template requirements: README.md, "What a template must be".`
+
+func templatesSaveCmd(e *env) *cobra.Command {
+	var replace bool
+	cmd := &cobra.Command{
+		Use:   "save <host>/<vm> <name>",
+		Short: "Save a shut-off VM on a thin pool as a project template",
+		Long: `Save the boot disk of the shut-off VM <host>/<vm> as the template <name> on the
+same host: a thin snapshot in the VM's own pool, made by the host in one step.
+vmtool does not boot, mount, inspect or change the disk, and the VM and its
+disk are untouched, so it still starts. Clone the template into new VMs with
+create, giving <name> as the image.
+
+The VM must be shut off (vmtool stop <host>/<vm>) and its boot disk must be a
+thin volume vmtool made, so the VM must be on a thin pool. Extra disks are not
+part of the template. <name> must not be the name of a template or a cached
+image on the host; --replace replaces a saved template of that name (after the
+new one exists), never an image template or a cached image.`,
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ref, err := app.ParseVMRef(args[0], e.resolver().Local())
+			if err != nil {
+				return printAppErr(err)
+			}
+			m, release, err := e.resolver().Resolve(ref.Host)
+			if err != nil {
+				return err
+			}
+			defer release()
+			t, err := e.service("").SaveTemplate(cmd.Context(), m, app.SaveTemplateInput{Host: ref.Host, VM: ref.Name, Name: args[1], Replace: replace})
+			if err != nil {
+				return printAppErr(err)
+			}
+			out := cmd.OutOrStdout()
+			fmt.Fprintf(out, "Template %s/%s saved from %s (%s in pool %s, %s)\n", ref.Host, t.Name, ref, t.LV, t.Pool, formatPoolBytes(t.SizeBytes))
+			if len(t.ExtraDisks) > 0 {
+				fmt.Fprintf(out, "warning: extra disks (%s) are not part of the template\n", strings.Join(t.ExtraDisks, ", "))
+			}
+			fmt.Fprintln(out, requirementsPointer)
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&replace, "replace", false, "replace the saved template of that name (never an image template or a cached image)")
+	return cmd
 }

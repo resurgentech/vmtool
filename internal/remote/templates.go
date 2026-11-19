@@ -68,4 +68,28 @@ func (m *Manager) DeleteTemplate(name, pool string) (app.TemplateInfo, error) {
 	return templateFromAPI(v), nil
 }
 
-var _ app.TemplateManager = (*Manager)(nil)
+// SaveTemplate is createTemplate with from_vm and name: the daemon snapshots
+// the shut-off VM's boot disk. A snapshot is quick, so it gets the ordinary
+// timeout.
+func (m *Manager) SaveTemplate(vm, name string, replace bool) (app.SavedTemplate, error) {
+	var v api.TemplateInfo
+	req := api.CreateTemplateRequest{FromVm: nonEmpty(vm), Name: nonEmpty(name)}
+	if replace {
+		req.Replace = &replace
+	}
+	if err := m.call("createTemplate", m.timeout, &v, func(ctx context.Context) (*http.Response, error) {
+		return m.client.CreateTemplate(ctx, m.name, req)
+	}); err != nil {
+		return app.SavedTemplate{}, err
+	}
+	out := app.SavedTemplate{TemplateInfo: templateFromAPI(v)}
+	if v.ExtraDisks != nil {
+		out.ExtraDisks = *v.ExtraDisks
+	}
+	return out, nil
+}
+
+var (
+	_ app.TemplateManager = (*Manager)(nil)
+	_ app.TemplateSaver   = (*Manager)(nil)
+)
