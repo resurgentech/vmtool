@@ -778,3 +778,28 @@ are appended, never edited in; a hook refuses rewrites.
   `TestServiceImagesFromImageDir`, `TestServerImageDirHelper`: red against
   a lookup with no folder search, green after; `just check` green.
 - Commits: the W4 commit on `clone-identity`.
+
+## 2026-11-18 — W5 prereqs and deploy: this machine, per-host port, vmtool-daemon.service, the hosts entry
+
+- `vmtool config host <h>` prints `address ssh_user port` (port default
+  9473); deploy.sh, prereqs.sh and cert.sh read three fields.
+- prereqs passes `vmtool_daemon_port=<port>`; deploy writes
+  `--listen 0.0.0.0:<port>` and checks `https://<host>.<domain>:<port>/version`.
+- This machine (`cert.sh --local-name`: `name:` else `hostname -s`):
+  prereqs uses `ansible_connection=local`; deploy runs every step in
+  local bash, no ssh, one sudo. Unlisted: VMTOOL_SELF_ADDRESS (default
+  `<host>.<domain>`) / VMTOOL_SELF_PORT (default 9474), and after a good
+  `/version` deploy runs `vmtool config set-host`; a listed entry is never
+  rewritten.
+- The daemon unit is `vmtool-daemon.service`. The one sudo script first
+  refuses a port held by any pid but our daemon (`ss -Htlnp`, MainPIDs),
+  then disables, stops and removes a `vmtool.service` whose
+  WorkingDirectory is HV_DIR (others left alone), then installs and
+  restarts. cert.sh's remote restart covers both unit names.
+- Test seams UNIT_DIR and GO_BIN_DIR in deploy.sh.
+- Tests: `TestConfigHostPort`, `TestDeployLocal*`, `TestDeployUnit*`,
+  `TestDeployRefusesForeignListener`, `TestDeployAccepts*Listener`,
+  `TestDeployListedPort`, `TestPrereqsHostPort`, `TestPrereqsThisMachine`,
+  `TestCertRemoteOldUnitOnly`: red against the old scripts, green after;
+  `just check` green.
+- Commits: the W5 commit on `clone-identity`.

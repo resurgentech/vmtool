@@ -129,7 +129,7 @@ func TestConfigHost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out != "v.labtwo ubuntu\n" {
+	if out != "v.labtwo ubuntu 9473\n" {
 		t.Fatalf("%q", out)
 	}
 	if _, err := runConfig(t, dir, "", "host", "nope"); err == nil || !strings.Contains(err.Error(), "nope") {
@@ -137,6 +137,22 @@ func TestConfigHost(t *testing.T) {
 	}
 	if _, err := runConfig(t, t.TempDir(), "", "host", "veritech01"); err == nil {
 		t.Fatal("missing config should error")
+	}
+}
+
+// config host prints "address ssh_user port": 9473 when the entry has no
+// port, the entry's own port when it has one.
+func TestConfigHostPort(t *testing.T) {
+	dir := t.TempDir()
+	body := "hosts:\n  hv1: { address: hv1.example, ssh_user: u }\n  PLACEHOLDER-HOST: { address: p.example, ssh_user: u2, port: 9474 }\n"
+	if err := os.WriteFile(filepath.Join(dir, "config.yml"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]string{"hv1": "hv1.example u 9473\n", "PLACEHOLDER-HOST": "p.example u2 9474\n"} {
+		out, err := runConfig(t, dir, "", "host", name)
+		if err != nil || out != want {
+			t.Errorf("config host %s = %q, %v; want %q", name, out, err, want)
+		}
 	}
 }
 

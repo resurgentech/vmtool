@@ -13,7 +13,12 @@
 # as a hypervisor (-e vmtool_role=hypervisor): the vmtool user, HV_DIR, the
 # vmtool pool at HV_POOL_DIR, Go only when missing or older than GO_MIN
 # (GO_INSTALL_VERSION is what gets installed), and the daemon port in ufw
-# (-e vmtool_daemon_port=9473). It always asks for the become password.
+# (-e vmtool_daemon_port=<port>: the host's `port` in config.yml, default
+# 9473; `vmtool config host <host>` prints "address ssh_user port"). It always
+# asks for the become password. When <host> is this machine (the name that
+# scripts/cert.sh --local-name prints) the inventory uses
+# ansible_connection=local, with no ssh; if config.yml does not list it, the
+# port is VMTOOL_SELF_PORT (default 9474).
 # Opt-in NVMe stripe (destructive by nature, runs only with the drives named,
 # and refuses non-blank drives): pass the drives as extra arguments, e.g.
 #   just prereqs veritech02 -e '{"vmtool_nvme_drives":["/dev/disk/by-id/nvme-A","/dev/disk/by-id/nvme-B"]}'
@@ -54,12 +59,37 @@ if [[ -n $host ]]; then
   root="${VMTOOL_ROOT:-$repo}"
   vmtool_bin="${VMTOOL_BIN:-$root/vmtool}"
   [[ -x $vmtool_bin ]] || { echo "ERROR: $vmtool_bin not found; run 'just build' first." >&2; exit 1; }
-  read -r addr ssh_user < <(cd "$root" && "$vmtool_bin" config host "$host") \
-    || { echo "ERROR: 'vmtool config host $host' failed; is $host in config.yml?" >&2; exit 1; }
-  [[ -n ${addr:-} && -n ${ssh_user:-} ]] || { echo "ERROR: no address/ssh_user for host $host in config.yml." >&2; exit 1; }
+  # This machine? The same test as cert.sh and deploy.sh.
+  local_name=$(VMTOOL_ROOT="$root" "$repo/scripts/cert.sh" --local-name) || { echo "ERROR: could not work out this machine's name." >&2; exit 1; }
+  is_local=no
+  [[ $host != "$local_name" ]] || is_local=yes
+  # "address ssh_user port" from config.yml; this machine, when not listed,
+  # uses VMTOOL_SELF_PORT (default 9474), as deploy.sh does.
+  rc=0
+  out=$(cd "$root" && "$vmtool_bin" config host "$host" 2>&1) || rc=$?
+  if [[ $rc -eq 0 ]]; then
+    read -r addr ssh_user port <<<"$out" || true
+    port="${port:-9473}"
+    [[ -n ${addr:-} && -n ${ssh_user:-} ]] || { echo "ERROR: no address/ssh_user for host $host in config.yml." >&2; exit 1; }
+  elif [[ $is_local == yes && $out == *"unknown host"* ]]; then
+    addr=
+    ssh_user=
+    port="${VMTOOL_SELF_PORT:-9474}"
+  else
+    echo "ERROR: 'vmtool config host $host' failed (is $host in config.yml?): $out" >&2
+    exit 1
+  fi
+  [[ $port =~ ^[0-9]{1,5}$ ]] && ((10#$port >= 1 && 10#$port <= 65535)) || { echo "ERROR: port '$port' for $host is not a port number." >&2; exit 1; }
+  port=$((10#$port))
   inv=$(mktemp)
   trap 'rm -f "$inv"' EXIT
-  printf '%s ansible_host=%s ansible_user=%s\n' "$host" "$addr" "$ssh_user" >"$inv"
+  if [[ $is_local == yes ]]; then
+    printf '%s ansible_connection=local\n' "$host" >"$inv"
+    where="this machine"
+  else
+    printf '%s ansible_host=%s ansible_user=%s\n' "$host" "$addr" "$ssh_user" >"$inv"
+    where="$ssh_user@$addr"
+  fi
   become=()
   if [[ ! " $* " == *" -K "* && ! " $* " == *" --ask-become-pass "* ]]; then
     become=(--ask-become-pass)
@@ -72,12 +102,12 @@ if [[ -n $host ]]; then
     go_install=$(sed -n 's/^go \([0-9][0-9.]*\)$/\1/p' "$repo/go.mod" | head -n1)
   fi
   [[ -n $go_install ]] || { echo "ERROR: no Go version for GO_INSTALL_VERSION (go.mod has no go line)." >&2; exit 1; }
-  echo "Running $playbook on $host ($ssh_user@$addr)"
+  echo "Running $playbook on $host ($where)"
   rc=0
   ansible-playbook -i "$inv" "$playbook" -e "vmtool_hosts=$host" -e vmtool_role=hypervisor \
     -e "vmtool_hv_dir=$hv_dir" -e "vmtool_hv_pool_dir=$hv_pool_dir" \
     -e "vmtool_go_min=$go_min" -e "vmtool_go_install_version=$go_install" \
-    -e vmtool_install_go=true -e vmtool_daemon_port=9473 "${become[@]}" "$@" || rc=$?
+    -e vmtool_install_go=true -e "vmtool_daemon_port=$port" "${become[@]}" "$@" || rc=$?
   exit "$rc"
 fi
 

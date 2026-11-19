@@ -393,3 +393,78 @@ func TestSetupHostInstallsOVMF(t *testing.T) {
 		}
 	}
 }
+
+// A listed host's own port goes to the playbook (the ufw rule).
+func TestPrereqsHostPort(t *testing.T) {
+	e := newDeployEnv(t, "")
+	addStub(t, e.stub, "vmtool", `if [[ "$1 $2" == "config host" ]]; then echo "10.0.0.5 jared 9474"; fi`)
+	r := runScript(t, e.stub, e.wd, "prereqs.sh", e.env, "PLACEHOLDER-HOST")
+	if r.code != 0 {
+		t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
+	}
+	argv := readOr(t, filepath.Join(e.stub, "ansible-playbook.argv"))
+	if !strings.Contains(argv, "-e vmtool_daemon_port=9474") || strings.Contains(argv, "9473") {
+		t.Errorf("argv %q", argv)
+	}
+	if inv := readOr(t, filepath.Join(e.stub, "inventory.copy")); !strings.Contains(inv, "PLACEHOLDER-HOST ansible_host=10.0.0.5 ansible_user=jared") || strings.Contains(inv, "ansible_connection") {
+		t.Errorf("inventory %q", inv)
+	}
+}
+
+// This machine (the `hostname` stub; config.yml has no name:) is run with
+// ansible_connection=local and no ssh, listed or not.
+func TestPrereqsThisMachine(t *testing.T) {
+	cases := []struct {
+		name, listed string
+		env          []string
+		port         string
+	}{
+		{"unlisted default", "", nil, "9474"},
+		{"unlisted self port", "", []string{"VMTOOL_SELF_PORT=9480"}, "9480"},
+		{"listed", "10.0.0.9 ops 9475", nil, "9475"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			e := newDeployEnv(t, "")
+			os.WriteFile(filepath.Join(e.wd, "config.yml"), []byte("role: workstation\n"), 0o644)
+			addStub(t, e.stub, "hostname", "echo PLACEHOLDER-HOST")
+			addStub(t, e.stub, "ssh", "exit 99")
+			addStub(t, e.stub, "sudo", "exit 99")
+			body := `if [[ "$1 $2" == "config host" ]]; then echo 'Error: unknown host "PLACEHOLDER-HOST" in config.yml' >&2; exit 1; fi`
+			if c.listed != "" {
+				body = `if [[ "$1 $2" == "config host" ]]; then echo "` + c.listed + `"; fi`
+			}
+			addStub(t, e.stub, "vmtool", body)
+			r := runScript(t, e.stub, e.wd, "prereqs.sh", append(e.env, c.env...), "PLACEHOLDER-HOST")
+			if r.code != 0 {
+				t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
+			}
+			argv := readOr(t, filepath.Join(e.stub, "ansible-playbook.argv"))
+			if !strings.Contains(argv, "-e vmtool_daemon_port="+c.port) || !strings.Contains(argv, "-e vmtool_role=hypervisor") {
+				t.Errorf("argv %q", argv)
+			}
+			if inv := readOr(t, filepath.Join(e.stub, "inventory.copy")); inv != "PLACEHOLDER-HOST ansible_connection=local\n" {
+				t.Errorf("inventory %q", inv)
+			}
+			for _, f := range []string{"ssh.argv", "sudo.argv"} {
+				if _, err := os.Stat(filepath.Join(e.stub, f)); err == nil {
+					t.Errorf("%s called", f)
+				}
+			}
+		})
+	}
+}
+
+// An unlisted name that is not this machine, or any other config host
+// failure, is still an error.
+func TestPrereqsUnlistedRemoteFails(t *testing.T) {
+	e := newDeployEnv(t, "")
+	addStub(t, e.stub, "vmtool", `echo 'Error: unknown host "hv1" in config.yml' >&2; exit 1`)
+	r := runScript(t, e.stub, e.wd, "prereqs.sh", e.env, "hv1")
+	if r.code == 0 || !strings.Contains(r.stderr, "unknown host") {
+		t.Fatalf("exit %d: %q", r.code, r.stderr)
+	}
+	if _, err := os.Stat(filepath.Join(e.stub, "ansible-playbook.argv")); err == nil {
+		t.Error("ansible-playbook ran")
+	}
+}

@@ -5,7 +5,19 @@
 #   scripts/deploy.sh <host>
 #
 # `just prereqs <host>` must have run first (it makes the vmtool user, HV_DIR
-# and the vmtool pool). Steps, in order; each stops the run if it fails:
+# and the vmtool pool). The daemon is the unit vmtool-daemon.service,
+# listening on 0.0.0.0:<port>; <port> is the host's `port` in config.yml
+# (default 9473; `vmtool config host <host>` prints "address ssh_user port").
+#
+# This machine: when <host> is this machine's name (scripts/cert.sh
+# --local-name: `name:` in config.yml, else `hostname -s`), every step runs
+# locally, with no ssh and one sudo for the install. If config.yml has no
+# hosts entry for it, address and port come from VMTOOL_SELF_ADDRESS (default
+# <host>.<domain>) and VMTOOL_SELF_PORT (default 9474), and after a good
+# /version `vmtool config set-host` writes the entry. A listed entry is used
+# as it stands and never rewritten.
+#
+# Steps, in order; each stops the run if it fails:
 #   1. go check    `go env GOVERSION` over ssh, /usr/local/go/bin first on PATH,
 #                  must be >= GO_MIN (the first Go that honours
 #                  GOTOOLCHAIN=auto, which fetches the go.mod one)
@@ -14,15 +26,23 @@
 #                  ~/.cache/vmtool-deploy/src (tracked files only: no .env,
 #                  .machines, config.yml or tls/); stage/ is emptied too
 #   4. build       go build there as the login user into stage/vmtool
-#   5. cert        CERT_STAGE_ONLY=1 scripts/cert.sh <host> (into stage/tls)
+#   5. cert        CERT_STAGE_ONLY=1 scripts/cert.sh <host> (into stage/tls;
+#                  on this machine cert.sh keeps tls/ in the checkout and the
+#                  pair is copied into stage/tls, the checkout's copy stays)
 #   6. config      `vmtool config write --token-stdin` run in stage/; the token
 #                  rides stdin of an ssh call with no tty and no sudo, so it
 #                  never meets a sudo prompt; config.yml holds only its hash
 #   7. install     the rendered unit goes to stage/ on stdin; then one `ssh -t`
-#                  call runs one `sudo sh -c`: install binary, config.yml,
+#                  call runs one `sudo sh -c`, which in this order: refuses
+#                  if the port is listened on by anything but our daemon
+#                  (vmtool-daemon, or a vmtool.service whose WorkingDirectory
+#                  is HV_DIR), before changing anything; disables, stops and
+#                  removes such an older vmtool.service (any other
+#                  vmtool.service is left alone); installs binary, config.yml,
 #                  crt and key (owner vmtool) into HV_DIR and the unit into
-#                  /etc/systemd/system, then daemon-reload, enable, restart.
-#                  The staged config.yml and key are removed either way.
+#                  UNIT_DIR; then daemon-reload, enable, restart
+#                  vmtool-daemon. The staged config.yml and key are removed
+#                  either way.
 #   8. check       GET /version over HTTPS (public: no token sent)
 #
 # Environment (the justfile passes these):
@@ -31,6 +51,11 @@
 #   GO_MIN         minimum Go as major.minor (default 1.21)
 #   VMTOOL_BIN     local vmtool, used for `config host` (default <root>/vmtool)
 #   DEPLOY_RETRIES seconds to wait for /version after restart (default 15)
+#   VMTOOL_SELF_ADDRESS, VMTOOL_SELF_PORT   this machine, when unlisted
+#   UNIT_DIR       systemd unit directory on the host (default
+#                  /etc/systemd/system; a test seam)
+#   GO_BIN_DIR     where a prereqs-installed Go lives (default
+#                  /usr/local/go/bin; a test seam)
 # REMOTE_DIR (the old home-directory layout) is ignored, with a warning.
 # The token comes from VMTOOL_TOKEN, else .env in VMTOOL_ROOT, read with bash
 # builtins so it is never in any argv.
@@ -44,7 +69,8 @@ retries="${DEPLOY_RETRIES:-15}"
 vmtool_bin="${VMTOOL_BIN:-$root/vmtool}"
 hv="${HV_DIR:-/opt/vmtool}"
 template="$here/../deploy/vmtool.service.in"
-port=9473
+ud="${UNIT_DIR:-/etc/systemd/system}"
+gobin="${GO_BIN_DIR:-/usr/local/go/bin}"
 export VMTOOL_ROOT="$root" VMTOOL_DOMAIN="$domain" VMTOOL_BIN="$vmtool_bin"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
@@ -55,6 +81,8 @@ host="${1:-}"
 [[ $domain =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] || die "invalid domain '$domain'"
 # hv lands in remote shell commands and a systemd unit unquoted.
 [[ $hv =~ ^/[A-Za-z0-9._/-]+$ ]] || die "HV_DIR '$hv' has characters unsafe in a shell command or systemd unit."
+[[ $ud =~ ^/[A-Za-z0-9._/-]+$ ]] || die "UNIT_DIR '$ud' has characters unsafe in a shell command."
+[[ $gobin =~ ^/[A-Za-z0-9._/-]+$ ]] || die "GO_BIN_DIR '$gobin' has characters unsafe in a shell command."
 [[ -z ${REMOTE_DIR:-} ]] || echo "WARNING: REMOTE_DIR is no longer used and is ignored; the daemon goes to HV_DIR ($hv)." >&2
 
 # Token: env, else .env. Builtins only.
@@ -72,25 +100,60 @@ fi
 [[ -n $tok ]] || die "no VMTOOL_TOKEN found; run 'just token' or 'just token-fetch' first."
 
 [[ -x $vmtool_bin ]] || die "$vmtool_bin not found; run 'just build' first."
-read -r addr ssh_user < <(cd "$root" && "$vmtool_bin" config host "$host") \
-  || die "'vmtool config host $host' failed; is $host in config.yml?"
-[[ -n ${addr:-} && -n ${ssh_user:-} ]] || die "no address/ssh_user for host $host in config.yml."
-# Both form ssh's destination argument: nothing ssh could read as an option.
-[[ $ssh_user =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ ]] || die "ssh_user '$ssh_user' for $host in config.yml is not a plain user name."
-[[ $addr =~ ^[A-Za-z0-9][A-Za-z0-9.:-]*$ ]] || die "address '$addr' for $host in config.yml is not a plain host name or IP."
-target="$ssh_user@$addr"
 [[ -f $template ]] || die "$template not found."
 fqdn="$host.$domain"
 
+# This machine? The same test as cert.sh, which keeps tls/ here for it.
+local_name=$("$here/cert.sh" --local-name) || die "could not work out this machine's name."
+is_local=no
+[[ $host != "$local_name" ]] || is_local=yes
+
+# Host entry: "address ssh_user port". An own name that is not listed uses
+# VMTOOL_SELF_ADDRESS / VMTOOL_SELF_PORT; any other failure is fatal.
+listed=yes
+rc=0
+out=$(cd "$root" && "$vmtool_bin" config host "$host" 2>&1) || rc=$?
+if [[ $rc -eq 0 ]]; then
+  read -r addr ssh_user port <<<"$out" || true
+  port="${port:-9473}"
+  [[ -n ${addr:-} && -n ${ssh_user:-} ]] || die "no address/ssh_user for host $host in config.yml."
+elif [[ $is_local == yes && $out == *"unknown host"* ]]; then
+  listed=no
+  addr="${VMTOOL_SELF_ADDRESS:-$fqdn}"
+  port="${VMTOOL_SELF_PORT:-9474}"
+  ssh_user="$(id -un)"
+else
+  die "'vmtool config host $host' failed (is $host in config.yml?): $out"
+fi
+# addr and ssh_user form ssh's destination argument: nothing ssh could read as an option.
+[[ $ssh_user =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ ]] || die "ssh_user '$ssh_user' for $host is not a plain user name."
+[[ $addr =~ ^[A-Za-z0-9][A-Za-z0-9.:-]*$ ]] || die "address '$addr' for $host is not a plain host name or IP."
+[[ $port =~ ^[0-9]{1,5}$ ]] && ((10#$port >= 1 && 10#$port <= 65535)) || die "port '$port' for $host is not a port number."
+port=$((10#$port))
+
+# run <command>: on the host over ssh, or here in bash when it is this machine.
+# runt is the install call: `ssh -t` so a sudo prompt works.
+if [[ $is_local == yes ]]; then
+  where="$host (this machine)"
+  lsh='bash -c'
+  run() { bash -c "$1"; }
+  runt() { bash -c "$1"; }
+else
+  target="$ssh_user@$addr"
+  where="$target"
+  lsh='bash -lc'
+  run() { ssh "$target" "$1"; }
+  runt() { ssh -t "$target" "$1"; }
+fi
+
 # Staging area in the login user's home. Single-quoted: $HOME is expanded by
-# the remote shell, never here.
+# the shell that runs the command, never here.
 base='$HOME/.cache/vmtool-deploy'
-gobin=/usr/local/go/bin
 
 # 1. Go check, before anything is copied or built.
 rc=0
-found=$(ssh "$target" "bash -lc 'PATH=$gobin:\$PATH; go env GOVERSION'") || rc=$?
-[[ $rc -ne 255 ]] || die "ssh to $target failed."
+found=$(run "$lsh 'PATH=$gobin:\$PATH; go env GOVERSION'") || rc=$?
+[[ $rc -ne 255 ]] || die "ssh to $where failed."
 found="${found//[$' \t\r\n']/}"
 [[ $rc -eq 0 && -n $found ]] || found="not installed"
 
@@ -112,48 +175,65 @@ fi
 
 # 2. Prereqs: the vmtool user and HV_DIR, before anything is copied.
 rc=0
-ssh "$target" "id vmtool >/dev/null 2>&1 && test -d $hv" || rc=$?
-[[ $rc -ne 255 ]] || die "ssh to $target failed."
+run "id vmtool >/dev/null 2>&1 && test -d $hv" || rc=$?
+[[ $rc -ne 255 ]] || die "ssh to $where failed."
 [[ $rc -eq 0 ]] || die "$host has no vmtool user or no $hv; run 'just prereqs $host' first."
 
 # 3. Copy tracked files into a fresh src/; empty stage/. umask 077: the
 #    staging area will hold config.yml and the TLS key.
-echo "Copying tracked files to $target:~/.cache/vmtool-deploy/src"
+echo "Copying tracked files to $where:~/.cache/vmtool-deploy/src"
 git -C "$root" ls-files -z | tar -C "$root" --null -T - -czf - \
-  | ssh "$target" "umask 077 && rm -rf \"$base/src\" \"$base/stage\" && mkdir -p \"$base/src\" \"$base/stage/tls\" && chmod 700 \"$base\" \"$base/src\" \"$base/stage\" \"$base/stage/tls\" && tar -xzf - -C \"$base/src\""
+  | run "umask 077 && rm -rf \"$base/src\" \"$base/stage\" && mkdir -p \"$base/src\" \"$base/stage/tls\" && chmod 700 \"$base\" \"$base/src\" \"$base/stage\" \"$base/stage/tls\" && tar -xzf - -C \"$base/src\""
 
 # 4. Build there as the login user.
 echo "Building vmtool on $host"
-ssh "$target" "bash -lc 'export PATH=$gobin:\$PATH; cd \"$base/src\" && GOTOOLCHAIN=auto go build -o \"$base/stage/vmtool\" ./cmd/vmtool'"
+run "$lsh 'export PATH=$gobin:\$PATH; cd \"$base/src\" && GOTOOLCHAIN=auto go build -o \"$base/stage/vmtool\" ./cmd/vmtool'"
 
 # 5. Certificate into stage/tls (cert.sh drops the local key; no sudo there).
+#    On this machine cert.sh leaves the pair in tls/ of the checkout (the
+#    loopback `just install` uses it too); copy it into stage/tls.
 CERT_STAGE_ONLY=1 HV_DIR="$hv" "$here/cert.sh" "$host"
+if [[ $is_local == yes ]]; then
+  stage_dir="$HOME/.cache/vmtool-deploy/stage/tls"
+  cp -p "$root/tls/$fqdn.crt" "$root/tls/$fqdn.key" "$stage_dir/"
+  chmod 600 "$stage_dir/$fqdn.key"
+fi
 
 # 6. config.yml in stage/, from scratch; the token rides stdin of this call
 #    alone (no -t, no sudo). The cert paths are relative to the working
 #    directory, so they hold in stage/ and in HV_DIR alike.
-printf '%s\n' "$tok" | ssh "$target" "cd \"$base/stage\" && umask 077 && rm -f config.yml && ./vmtool config write --token-stdin --role hypervisor --name $host --listen 0.0.0.0:$port --tls-cert tls/$fqdn.crt --tls-key tls/$fqdn.key"
+printf '%s\n' "$tok" | run "cd \"$base/stage\" && umask 077 && rm -f config.yml && ./vmtool config write --token-stdin --role hypervisor --name $host --listen 0.0.0.0:$port --tls-cert tls/$fqdn.crt --tls-key tls/$fqdn.key"
 
 # 7. Unit (rendered here) to stage/, then one sudo for the whole install.
 content="$(<"$template")"
 content="${content//@USER@/vmtool}"
 content="${content//@DIR@/$hv}"
-printf '%s\n' "$content" | ssh "$target" "cat > \"$base/stage/vmtool.service\""
+printf '%s\n' "$content" | run "cat > \"$base/stage/vmtool-daemon.service\""
 
 # Run as root by `sh -c`, with the staging dir as $1. No single quotes inside.
+# (a) refuse a port that anything but our daemon listens on, before any
+# change; ours: vmtool-daemon, and an older vmtool.service run from HV_DIR.
+# (b) remove that older unit. (c) install. (d) reload, enable, restart.
 own='install -o vmtool -g vmtool'
 script="set -e"
 script+="; test -d $hv || { echo \"$hv missing: run just prereqs $host first\" >&2; exit 1; }"
+script+="; ours=\" \$(systemctl show -p MainPID --value vmtool-daemon 2>/dev/null || true) \"; old=no"
+script+="; if grep -Fqx \"WorkingDirectory=$hv\" $ud/vmtool.service 2>/dev/null; then old=yes; ours=\"\$ours\$(systemctl show -p MainPID --value vmtool 2>/dev/null || true) \"; fi"
+script+="; l=\$(ss -Htlnp \"sport = :$port\")"
+script+="; pids=\$(printf \"%s\\n\" \"\$l\" | grep -o \"pid=[0-9]*\" | cut -d= -f2 || true)"
+script+="; if [ -n \"\$l\" ] && [ -z \"\$pids\" ]; then echo \"port $port is listened on by a process that cannot be identified; nothing was changed\" >&2; exit 1; fi"
+script+="; for p in \$pids; do case \"\$ours\" in *\" \$p \"*) ;; *) echo \"port $port is already listened on by pid \$p, which is not vmtool; nothing was changed\" >&2; exit 1 ;; esac; done"
+script+="; if [ \$old = yes ]; then systemctl disable --now vmtool; rm -f $ud/vmtool.service; fi"
 script+="; install -d -o vmtool -g vmtool -m 0700 $hv/tls"
 script+="; $own -m 0755 \"\$1/vmtool\" $hv/vmtool"
 script+="; $own -m 0600 \"\$1/config.yml\" $hv/config.yml"
 script+="; $own -m 0644 \"\$1/tls/$fqdn.crt\" $hv/tls/$fqdn.crt"
 script+="; $own -m 0600 \"\$1/tls/$fqdn.key\" $hv/tls/$fqdn.key"
-script+="; install -m 0644 \"\$1/vmtool.service\" /etc/systemd/system/vmtool.service"
-script+="; systemctl daemon-reload; systemctl enable --now vmtool; systemctl restart vmtool"
+script+="; install -m 0644 \"\$1/vmtool-daemon.service\" $ud/vmtool-daemon.service"
+script+="; systemctl daemon-reload; systemctl enable --now vmtool-daemon; systemctl restart vmtool-daemon"
 # -t so a sudo password prompt works; the token never rides this call.
-ssh -t "$target" "s=\"$base/stage\"; sudo sh -c '$script' sh \"\$s\"; rc=\$?; rm -f \"\$s/config.yml\" \"\$s/tls/$fqdn.key\"; exit \$rc" \
-  || die "installing on $host failed; the staged config.yml and key were removed. Re-run 'just deploy $host'."
+runt "s=\"$base/stage\"; sudo sh -c '$script' sh \"\$s\"; rc=\$?; rm -f \"\$s/config.yml\" \"\$s/tls/$fqdn.key\"; exit \$rc" \
+  || die "installing on $host failed (a refused port, or the install itself); the staged config.yml and key were removed. Re-run 'just deploy $host'."
 
 # 8. GET /version (public; verified against the system trust store).
 # The cert names <host>.<domain>, so that is the URL. curl's --resolve takes
@@ -167,9 +247,15 @@ while :; do
   n=$((n + 1))
   if curl --fail -sS "${resolve[@]}" "https://$fqdn:$port/version" </dev/null; then
     echo
-    echo "Deployed vmtool to $target:$hv (runs as vmtool) and it answers on https://$fqdn:$port."
-    exit 0
+    break
   fi
-  ((n < retries)) || die "GET https://$fqdn:$port/version did not succeed; check 'systemctl status vmtool' on $host."
+  ((n < retries)) || die "GET https://$fqdn:$port/version did not succeed; check 'systemctl status vmtool-daemon' on $host."
   sleep 1
 done
+
+# This machine, not listed: record it now that the daemon answers.
+if [[ $is_local == yes && $listed == no ]]; then
+  (cd "$root" && "$vmtool_bin" config set-host "$host" --address "$addr" --ssh-user "$ssh_user" --port "$port") \
+    || die "vmtool is deployed, but 'vmtool config set-host $host' failed; add the hosts: entry by hand."
+fi
+echo "Deployed vmtool to $where:$hv (runs as vmtool) and it answers on https://$fqdn:$port."

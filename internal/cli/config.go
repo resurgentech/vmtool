@@ -61,7 +61,7 @@ func configCmd(dirFn func() (string, error)) *cobra.Command {
 
 	host := &cobra.Command{
 		Use:   "host <name>",
-		Short: "Print \"address ssh_user\" for a configured host",
+		Short: "Print \"address ssh_user port\" for a configured host",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			dir, err := dirFn()
@@ -76,7 +76,11 @@ func configCmd(dirFn func() (string, error)) *cobra.Command {
 			if !ok {
 				return fmt.Errorf("unknown host %q in %s", args[0], config.FileName)
 			}
-			fmt.Fprintf(c.OutOrStdout(), "%s %s\n", h.Address, h.SSHUser)
+			port := h.Port
+			if port == 0 {
+				port = config.DefaultPort
+			}
+			fmt.Fprintf(c.OutOrStdout(), "%s %s %d\n", h.Address, h.SSHUser, port)
 			return nil
 		},
 	}

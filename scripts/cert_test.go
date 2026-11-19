@@ -172,7 +172,7 @@ func TestCertRemote(t *testing.T) {
 		"sudo sh -c",
 		"install -o vmtool -g vmtool -m 0644 \"$1/tls/optimus.labtwo.crt\" /opt/vmtool/tls/optimus.labtwo.crt",
 		"install -o vmtool -g vmtool -m 0600 \"$1/tls/optimus.labtwo.key\" /opt/vmtool/tls/optimus.labtwo.key",
-		"systemctl try-restart vmtool",
+		"for u in vmtool-daemon vmtool; do if systemctl cat $u >/dev/null 2>&1; then systemctl try-restart $u; fi; done",
 		`rm -f "$s/tls/optimus.labtwo.key"`,
 	} {
 		if !strings.Contains(inst, w) {
@@ -259,7 +259,7 @@ func TestCertRemoteCommandsRun(t *testing.T) {
 	if !strings.Contains(readOr(t, filepath.Join(e.stub, "installed", "veritech01.labtwo.key")), "PRIVATE KEY") {
 		t.Error("installed key is not a key")
 	}
-	if got := strings.TrimSpace(readOr(t, filepath.Join(e.stub, "systemctl.argv"))); got != "try-restart vmtool" {
+	if got := strings.ReplaceAll(strings.TrimSpace(readOr(t, filepath.Join(e.stub, "systemctl.argv"))), "\n", ";"); got != "cat vmtool-daemon;try-restart vmtool-daemon;cat vmtool;try-restart vmtool" {
 		t.Errorf("systemctl %q", got)
 	}
 	if n := strings.Count(readOr(t, filepath.Join(e.stub, "sudo.argv")), "\n"); n != 1 {
@@ -276,6 +276,20 @@ func TestCertRemoteCommandsRun(t *testing.T) {
 		t.Error("local key kept")
 	}
 	e.noCAKey(t)
+}
+
+// A host that still runs the older vmtool unit (no vmtool-daemon): only that
+// unit is restarted, and the run does not fail on the missing one.
+func TestCertRemoteOldUnitOnly(t *testing.T) {
+	e, _, hv := newRemoteEnv(t)
+	addStub(t, e.stub, "systemctl", `[[ "$1 $2" == "cat vmtool-daemon" ]] && exit 1; exit 0`)
+	r := e.run(t, []string{"HV_DIR=" + hv}, "veritech01")
+	if r.code != 0 {
+		t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
+	}
+	if got := strings.ReplaceAll(strings.TrimSpace(readOr(t, filepath.Join(e.stub, "systemctl.argv"))), "\n", ";"); got != "cat vmtool-daemon;cat vmtool;try-restart vmtool" {
+		t.Errorf("systemctl %q", got)
+	}
 }
 
 func TestCertScpFailureKeepsKey(t *testing.T) {

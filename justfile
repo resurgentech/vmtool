@@ -39,12 +39,12 @@ cert host:
 install:
     VMTOOL_ROOT="{{ root }}" VMTOOL_DOMAIN="{{ domain }}" BAO_CA_PATH="{{ bao_ca_path }}" CERT_DAYS="{{ cert_days }}" "{{ root }}/scripts/install.sh"
 
-# Install host prerequisites (packages, libvirt, default network + pool; on a host also the vmtool user, /opt/vmtool and the vmtool pool); `just prereqs <host>` does it over ssh
+# Install host prerequisites (packages, libvirt, default network + pool; on a host also the vmtool user, /opt/vmtool, the vmtool pool and the host's daemon port in ufw); `just prereqs <host>` does it over ssh, or locally (ansible_connection=local) when <host> is this machine; the port is the host's `port` in config.yml (default 9473; this machine unlisted: VMTOOL_SELF_PORT, default 9474)
 [positional-arguments]
 prereqs *ARGS:
     VMTOOL_ROOT="{{ root }}" HV_DIR="{{ hv_dir }}" HV_POOL_DIR="{{ hv_pool_dir }}" GO_MIN="{{ go_min }}" GO_INSTALL_VERSION="{{ go_install_version }}" "{{ root }}/scripts/prereqs.sh" "$@"
 
-# Build vmtool on <host> over ssh (after `just prereqs <host>`), install it into hv_dir with one sudo and run it as the vmtool user
+# Build vmtool on <host> over ssh (after `just prereqs <host>`), install it into hv_dir with one sudo and run it as the vmtool user, as vmtool-daemon.service on the host's port (default 9473; refuses a port something else listens on; removes an older vmtool.service run from hv_dir); on this machine it runs locally, with no ssh, and an unlisted entry (VMTOOL_SELF_ADDRESS, VMTOOL_SELF_PORT, default 9474) is written by `vmtool config set-host` once /version answers
 deploy host:
     VMTOOL_ROOT="{{ root }}" VMTOOL_DOMAIN="{{ domain }}" BAO_CA_PATH="{{ bao_ca_path }}" CERT_DAYS="{{ cert_days }}" HV_DIR="{{ hv_dir }}" GO_MIN="{{ go_min }}" "{{ root }}/scripts/deploy.sh" "{{ host }}"
 

@@ -299,7 +299,7 @@ func TestGatePassesConfigHost(t *testing.T) {
 	t.Setenv(config.TokenEnv, "")
 	dir := writeWorkdir(t, goodConfig(), "VMTOOL_TOKEN="+gateToken+"\n")
 	r := runGate(t, dir, map[string]bool{"vmtool config host": true}, "config", "host", "veritech01")
-	if r.err != nil || r.out != "v.labtwo ubuntu\n" {
+	if r.err != nil || r.out != "v.labtwo ubuntu 9473\n" {
 		t.Fatalf("err %v, out %q", r.err, r.out)
 	}
 	if r.env.cfg == nil || r.env.cfg.Dir != dir || r.env.token != gateToken {

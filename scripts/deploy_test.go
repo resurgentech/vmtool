@@ -42,7 +42,7 @@ func newDeployEnv(t *testing.T, goAnswer string) *certEnv {
     if [[ -f $d/prereqexit ]]; then exit "$(<"$d/prereqexit")"; fi
     exit 0 ;;
 esac`)
-	addStub(t, e.stub, "vmtool", `if [[ "$1 $2" == "config host" ]]; then echo "10.0.0.5 jared"; fi`)
+	addStub(t, e.stub, "vmtool", `if [[ "$1 $2" == "config host" ]]; then echo "10.0.0.5 jared 9473"; fi`)
 	addStub(t, e.stub, "git", `printf 'cmd/vmtool/main.go\0go.mod\0'`)
 	addStub(t, e.stub, "tar", `cat > "$d/tar.stdin"`)
 	addStub(t, e.stub, "curl", `cat > "$d/curl.stdin"; echo '{"version":"x"}'`)
@@ -221,7 +221,7 @@ func TestDeployFlow(t *testing.T) {
 		findCall(t, calls, "go build -o "+stage+`/vmtool" ./cmd/vmtool`),
 		findCall(t, calls, `mkdir -p `+stage+`/tls"`),
 		findCall(t, calls, "config write --token-stdin --role hypervisor --name veritech01 --listen 0.0.0.0:9473 --tls-cert tls/veritech01.labtwo.crt --tls-key tls/veritech01.labtwo.key"),
-		findCall(t, calls, `cat > `+stage+`/vmtool.service"`),
+		findCall(t, calls, `cat > `+stage+`/vmtool-daemon.service"`),
 		findCall(t, calls, "sudo sh -c"),
 	}
 	for i := 1; i < len(order); i++ {
@@ -282,9 +282,9 @@ func TestDeployFlow(t *testing.T) {
 		"install -o vmtool -g vmtool -m 0600 \"$1/config.yml\" /opt/vmtool/config.yml",
 		"install -o vmtool -g vmtool -m 0644 \"$1/tls/veritech01.labtwo.crt\" /opt/vmtool/tls/veritech01.labtwo.crt",
 		"install -o vmtool -g vmtool -m 0600 \"$1/tls/veritech01.labtwo.key\" /opt/vmtool/tls/veritech01.labtwo.key",
-		"install -m 0644 \"$1/vmtool.service\" /etc/systemd/system/vmtool.service",
+		"install -m 0644 \"$1/vmtool-daemon.service\" /etc/systemd/system/vmtool-daemon.service",
 		`rm -f "$s/config.yml" "$s/tls/veritech01.labtwo.key"`,
-		"systemctl daemon-reload; systemctl enable --now vmtool; systemctl restart vmtool",
+		"systemctl daemon-reload; systemctl enable --now vmtool-daemon; systemctl restart vmtool-daemon",
 	} {
 		if !strings.Contains(inst.argv, w) {
 			t.Errorf("install call lacks %q: %q", w, inst.argv)
@@ -355,7 +355,7 @@ func TestDeployTokenFromDotEnvAndHVDir(t *testing.T) {
 			t.Errorf("install still targets /opt/vmtool: %q", calls[i].argv)
 		}
 	}
-	if i := findCall(t, calls, "vmtool.service\""); i >= 0 && !strings.Contains(calls[i].stdin, "WorkingDirectory=/srv/vmtool") {
+	if i := findCall(t, calls, "vmtool-daemon.service\""); i >= 0 && !strings.Contains(calls[i].stdin, "WorkingDirectory=/srv/vmtool") {
 		t.Error("unit ignores HV_DIR")
 	}
 	if strings.Contains(readOr(t, filepath.Join(e.stub, "ssh.argv"))+readOr(t, filepath.Join(e.stub, "scp.argv")), "/elsewhere") {
@@ -524,8 +524,13 @@ dst=${files[-1]}; unset 'files[-1]'; dst=${dst#*:}
 [[ $dst == /* ]] || dst="$(<"$d/remotehome")/$dst"
 cp -p "${files[@]}" "$dst"`)
 	addStub(t, e.stub, "sudo", `exec "$@"`)
-	addStub(t, e.stub, "systemctl", "exit 0")
-	addStub(t, e.stub, "id", `[[ $1 == vmtool ]]`)
+	// `systemctl show -p MainPID --value <unit>` answers from mainpid.<unit>.
+	addStub(t, e.stub, "systemctl", `if [[ $1 == show ]]; then f="$d/mainpid.${*: -1}"; [[ -f $f ]] && cat "$f"; exit 0; fi
+exit 0`)
+	// `ss` answers from ss.out (empty: nothing listens).
+	addStub(t, e.stub, "ss", `[[ -f $d/ss.out ]] && cat "$d/ss.out"; exit 0`)
+	addStub(t, e.stub, "id", `if [[ $1 == -un ]]; then echo tester; exit 0; fi
+[[ $1 == vmtool ]]`)
 	addStub(t, e.stub, "go", `if [[ "$1 $2" == "env GOVERSION" ]]; then echo go1.22.2; exit 0; fi
 if [[ $1 == build && $2 == -o ]]; then
   cat > "$3" <<EOF
@@ -549,8 +554,18 @@ done
 mkdir -p "$d/installed"
 cp "${args[0]}" "$d/installed/$(basename "${args[1]}")"
 echo "${args[1]} $mode" >> "$d/installed.list"`)
-	e.env = append(e.env, "HV_DIR="+hv)
+	e.env = append(e.env, "HV_DIR="+hv, "UNIT_DIR="+t.TempDir(), "GO_BIN_DIR="+filepath.Join(e.stub, "nogo"))
 	return e, rhome, hv
+}
+
+// get returns the value of an environment entry set for the script.
+func (e *certEnv) get(key string) string {
+	for _, v := range e.env {
+		if strings.HasPrefix(v, key+"=") {
+			return strings.TrimPrefix(v, key+"=")
+		}
+	}
+	return ""
 }
 
 func fileMode(t *testing.T, p string) os.FileMode {
@@ -564,6 +579,7 @@ func fileMode(t *testing.T, p string) os.FileMode {
 
 func TestDeployRemoteCommandsRun(t *testing.T) {
 	e, rhome, hv := newRemoteEnv(t)
+	ud := e.get("UNIT_DIR")
 	r := e.deploy(t, nil, "veritech01")
 	if r.code != 0 {
 		t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
@@ -574,7 +590,7 @@ func TestDeployRemoteCommandsRun(t *testing.T) {
 	list := readOr(t, filepath.Join(e.stub, "installed.list"))
 	want := hv + "/vmtool 0755\n" + hv + "/config.yml 0600\n" +
 		hv + "/tls/veritech01.labtwo.crt 0644\n" + hv + "/tls/veritech01.labtwo.key 0600\n" +
-		"/etc/systemd/system/vmtool.service 0644\n"
+		ud + "/vmtool-daemon.service 0644\n"
 	if list != want {
 		t.Errorf("installed:\n%s\nwant:\n%s", list, want)
 	}
@@ -588,7 +604,7 @@ func TestDeployRemoteCommandsRun(t *testing.T) {
 	if !strings.Contains(readOr(t, filepath.Join(e.stub, "installed", "veritech01.labtwo.key")), "PRIVATE KEY") {
 		t.Error("installed key is not a key")
 	}
-	u := readOr(t, filepath.Join(e.stub, "installed", "vmtool.service"))
+	u := readOr(t, filepath.Join(e.stub, "installed", "vmtool-daemon.service"))
 	for _, w := range []string{"User=vmtool", "WorkingDirectory=" + hv, "ExecStart=" + hv + "/vmtool server"} {
 		if !strings.Contains(u, w) {
 			t.Errorf("unit lacks %q:\n%s", w, u)
@@ -598,7 +614,7 @@ func TestDeployRemoteCommandsRun(t *testing.T) {
 	if argv := readOr(t, filepath.Join(e.stub, "remote-vmtool.argv")); !strings.Contains(argv, "config write --token-stdin") {
 		t.Errorf("remote vmtool argv %q", argv)
 	}
-	if got := strings.ReplaceAll(strings.TrimSpace(readOr(t, filepath.Join(e.stub, "systemctl.argv"))), "\n", ";"); got != "daemon-reload;enable --now vmtool;restart vmtool" {
+	if got := strings.ReplaceAll(strings.TrimSpace(readOr(t, filepath.Join(e.stub, "systemctl.argv"))), "\n", ";"); got != "show -p MainPID --value vmtool-daemon;daemon-reload;enable --now vmtool-daemon;restart vmtool-daemon" {
 		t.Errorf("systemctl calls %q", got)
 	}
 	if n := strings.Count(readOr(t, filepath.Join(e.stub, "sudo.argv")), "\n"); n != 1 {
@@ -714,5 +730,296 @@ func TestSetupHostDaemonPort(t *testing.T) {
 	cmd.Env = append(os.Environ(), "ANSIBLE_LOCAL_TEMP="+t.TempDir(), "ANSIBLE_HOME="+t.TempDir())
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Errorf("syntax-check: %v\n%s", err, out)
+	}
+}
+
+// A listed host's port is the one the daemon listens on, the one curl asks,
+// and the one the firewall rule gets (see TestPrereqsHostPort).
+func TestDeployListedPort(t *testing.T) {
+	e := newDeployEnv(t, "go1.22.2\n")
+	addStub(t, e.stub, "vmtool", `if [[ "$1 $2" == "config host" ]]; then echo "10.0.0.5 jared 9474"; fi`)
+	r := e.deploy(t, nil, "PLACEHOLDER-HOST")
+	if r.code != 0 {
+		t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
+	}
+	calls := sshCalls(t, e.stub)
+	findCall(t, calls, "--listen 0.0.0.0:9474 --tls-cert tls/PLACEHOLDER-HOST.labtwo.crt")
+	if curl := readOr(t, filepath.Join(e.stub, "curl.argv")); !strings.Contains(curl, "https://PLACEHOLDER-HOST.labtwo:9474/version") ||
+		!strings.Contains(curl, "--resolve PLACEHOLDER-HOST.labtwo:9474:10.0.0.5") {
+		t.Errorf("curl argv %q", curl)
+	}
+}
+
+// newLocalEnv: deploy.sh run for this machine, which the `hostname` stub names
+// PLACEHOLDER-HOST (config.yml has no name:). Every command in the local path
+// is a stub or a harmless coreutil; any ssh call records ssh.argv and fails.
+// listed is the `config host` answer, or "" for an unlisted entry (the stub
+// vmtool then fails with "unknown host", as the real one does).
+func newLocalEnv(t *testing.T, listed string) (e *certEnv, hv, ud string) {
+	t.Helper()
+	e, _, hv = newRemoteEnv(t)
+	ud = e.get("UNIT_DIR")
+	if err := os.WriteFile(filepath.Join(e.wd, "config.yml"), []byte("role: workstation\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	addStub(t, e.stub, "hostname", "echo PLACEHOLDER-HOST")
+	addStub(t, e.stub, "ssh", "exit 99")
+	addStub(t, e.stub, "scp", "exit 99")
+	if listed != "" {
+		if err := os.WriteFile(filepath.Join(e.stub, "listed"), []byte(listed+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	addStub(t, e.stub, "vmtool", `echo "vmtool $*" >> "$d/order"
+if [[ "$1 $2" == "config host" ]]; then
+  if [[ -f $d/listed ]]; then cat "$d/listed"; exit 0; fi
+  echo 'Error: unknown host "PLACEHOLDER-HOST" in config.yml' >&2; exit 1
+fi`)
+	addStub(t, e.stub, "curl", `cat > "$d/curl.stdin"; echo curl >> "$d/order"; [[ -f $d/curlfail ]] && exit 22; echo '{"version":"x"}'`)
+	return e, hv, ud
+}
+
+func (e *certEnv) systemctlCalls(t *testing.T) string {
+	return strings.ReplaceAll(strings.TrimSpace(readOr(t, filepath.Join(e.stub, "systemctl.argv"))), "\n", ";")
+}
+
+func TestDeployLocalNoSSHOneSudo(t *testing.T) {
+	e, hv, ud := newLocalEnv(t, "10.0.0.9 ops 9475")
+	r := e.deploy(t, nil, "PLACEHOLDER-HOST")
+	if r.code != 0 {
+		t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
+	}
+	for _, f := range []string{"ssh.argv", "scp.argv"} {
+		if _, err := os.Stat(filepath.Join(e.stub, f)); err == nil {
+			t.Errorf("%s called for this machine", f)
+		}
+	}
+	if n := strings.Count(readOr(t, filepath.Join(e.stub, "sudo.argv")), "\n"); n != 1 {
+		t.Errorf("sudo ran %d times, want 1", n)
+	}
+	if errs := readOr(t, filepath.Join(e.stub, "errors")); errs != "" {
+		t.Error(errs)
+	}
+	// Listed: the entry's port, listen on all interfaces, curl there.
+	if argv := readOr(t, filepath.Join(e.stub, "remote-vmtool.argv")); !strings.Contains(argv, "config write --token-stdin --role hypervisor --name PLACEHOLDER-HOST --listen 0.0.0.0:9475 --tls-cert tls/PLACEHOLDER-HOST.labtwo.crt") {
+		t.Errorf("config write argv %q", argv)
+	}
+	curl := readOr(t, filepath.Join(e.stub, "curl.argv"))
+	if !strings.Contains(curl, "https://PLACEHOLDER-HOST.labtwo:9475/version") || !strings.Contains(curl, "--resolve PLACEHOLDER-HOST.labtwo:9475:10.0.0.9") {
+		t.Errorf("curl argv %q", curl)
+	}
+	// ss was asked about that port.
+	if ss := readOr(t, filepath.Join(e.stub, "ss.argv")); !strings.Contains(ss, "sport = :9475") {
+		t.Errorf("ss argv %q", ss)
+	}
+	want := hv + "/vmtool 0755\n" + hv + "/config.yml 0600\n" +
+		hv + "/tls/PLACEHOLDER-HOST.labtwo.crt 0644\n" + hv + "/tls/PLACEHOLDER-HOST.labtwo.key 0600\n" +
+		ud + "/vmtool-daemon.service 0644\n"
+	if got := readOr(t, filepath.Join(e.stub, "installed.list")); got != want {
+		t.Errorf("installed:\n%s\nwant:\n%s", got, want)
+	}
+	if got := e.systemctlCalls(t); got != "show -p MainPID --value vmtool-daemon;daemon-reload;enable --now vmtool-daemon;restart vmtool-daemon" {
+		t.Errorf("systemctl calls %q", got)
+	}
+	// The checkout's own tls/ pair stays (the loopback unit uses it); the
+	// staged key is gone.
+	if _, err := os.Stat(filepath.Join(e.wd, "tls", "PLACEHOLDER-HOST.labtwo.key")); err != nil {
+		t.Errorf("checkout key removed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(e.wd, ".cache", "vmtool-deploy", "stage", "tls", "PLACEHOLDER-HOST.labtwo.key")); err == nil {
+		t.Error("staged key kept")
+	}
+	if !strings.Contains(readOr(t, filepath.Join(e.stub, "installed", "PLACEHOLDER-HOST.labtwo.key")), "PRIVATE KEY") {
+		t.Error("installed key is not a key")
+	}
+	// A listed entry is never rewritten.
+	if strings.Contains(readOr(t, filepath.Join(e.stub, "vmtool.argv")), "set-host") {
+		t.Error("set-host run for a listed entry")
+	}
+	tokenNowhereBut(t, 0, e.stub, e.wd, hv)
+}
+
+func TestDeployLocalUnlistedSetsHost(t *testing.T) {
+	e, _, _ := newLocalEnv(t, "")
+	r := e.deploy(t, nil, "PLACEHOLDER-HOST")
+	if r.code != 0 {
+		t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
+	}
+	if _, err := os.Stat(filepath.Join(e.stub, "ssh.argv")); err == nil {
+		t.Error("ssh called")
+	}
+	if curl := readOr(t, filepath.Join(e.stub, "curl.argv")); !strings.Contains(curl, "https://PLACEHOLDER-HOST.labtwo:9474/version") || strings.Contains(curl, "--resolve") {
+		t.Errorf("curl argv %q", curl)
+	}
+	if argv := readOr(t, filepath.Join(e.stub, "remote-vmtool.argv")); !strings.Contains(argv, "--listen 0.0.0.0:9474 ") {
+		t.Errorf("config write argv %q", argv)
+	}
+	// set-host comes after the good /version, with the defaults.
+	lines := strings.Split(strings.TrimSpace(readOr(t, filepath.Join(e.stub, "order"))), "\n")
+	last := lines[len(lines)-1]
+	if last != "vmtool config set-host PLACEHOLDER-HOST --address PLACEHOLDER-HOST.labtwo --ssh-user tester --port 9474" || lines[len(lines)-2] != "curl" {
+		t.Errorf("order %q", lines)
+	}
+	if n := strings.Count(strings.Join(lines, "\n"), "set-host"); n != 1 {
+		t.Errorf("set-host ran %d times", n)
+	}
+}
+
+func TestDeployLocalUnlistedSelfOverrides(t *testing.T) {
+	e, _, _ := newLocalEnv(t, "")
+	r := e.deploy(t, []string{"VMTOOL_SELF_ADDRESS=10.0.0.7", "VMTOOL_SELF_PORT=9480"}, "PLACEHOLDER-HOST")
+	if r.code != 0 {
+		t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
+	}
+	if curl := readOr(t, filepath.Join(e.stub, "curl.argv")); !strings.Contains(curl, "--resolve PLACEHOLDER-HOST.labtwo:9480:10.0.0.7") {
+		t.Errorf("curl argv %q", curl)
+	}
+	if got := readOr(t, filepath.Join(e.stub, "vmtool.argv")); !strings.Contains(got, "config set-host PLACEHOLDER-HOST --address 10.0.0.7 --ssh-user tester --port 9480") {
+		t.Errorf("vmtool argv %q", got)
+	}
+}
+
+// A /version that never answers: the daemon is installed but the entry is
+// not written.
+func TestDeployLocalFailedVersionNoSetHost(t *testing.T) {
+	e, _, _ := newLocalEnv(t, "")
+	os.WriteFile(filepath.Join(e.stub, "curlfail"), nil, 0o644)
+	r := e.deploy(t, nil, "PLACEHOLDER-HOST")
+	if r.code == 0 || !strings.Contains(r.stderr, "systemctl status vmtool-daemon") {
+		t.Fatalf("exit %d: %q", r.code, r.stderr)
+	}
+	if strings.Contains(readOr(t, filepath.Join(e.stub, "vmtool.argv")), "set-host") {
+		t.Error("set-host run after a failed /version")
+	}
+}
+
+// Any `config host` failure other than the own name being unlisted is fatal,
+// and a name that is not this machine's never takes the unlisted path.
+func TestDeployConfigHostFailureIsFatal(t *testing.T) {
+	e, _, _ := newLocalEnv(t, "")
+	addStub(t, e.stub, "vmtool", `echo "Error: boom" >&2; exit 1`)
+	if r := e.deploy(t, nil, "PLACEHOLDER-HOST"); r.code == 0 || !strings.Contains(r.stderr, "boom") {
+		t.Errorf("local, other failure: exit %d %q", r.code, r.stderr)
+	}
+	e, _, _ = newLocalEnv(t, "")
+	if r := e.deploy(t, nil, "hv1"); r.code == 0 || !strings.Contains(r.stderr, "unknown host") {
+		t.Errorf("remote, unlisted: exit %d %q", r.code, r.stderr)
+	}
+	if _, err := os.Stat(filepath.Join(e.stub, "ssh.argv")); err == nil {
+		t.Error("ssh called for an unlisted remote host")
+	}
+}
+
+const (
+	foreignListener = `LISTEN 0 4096 0.0.0.0:9474 0.0.0.0:* users:(("nginx",pid=4242,fd=6))` + "\n"
+	ourListener     = `LISTEN 0 4096 0.0.0.0:9474 0.0.0.0:* users:(("vmtool",pid=777,fd=7))` + "\n"
+)
+
+func writeStub(t *testing.T, e *certEnv, name, body string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(e.stub, name), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The unit is vmtool-daemon.service. An older vmtool.service run from HV_DIR
+// is disabled, stopped and removed in the same sudo script; one run from
+// anywhere else is left alone.
+func TestDeployUnitOldVmtoolServiceRemoved(t *testing.T) {
+	e, hv, ud := newLocalEnv(t, "10.0.0.9 ops 9474")
+	old := filepath.Join(ud, "vmtool.service")
+	os.WriteFile(old, []byte("[Service]\nWorkingDirectory="+hv+"\nExecStart="+hv+"/vmtool server\n"), 0o644)
+	r := e.deploy(t, nil, "PLACEHOLDER-HOST")
+	if r.code != 0 {
+		t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
+	}
+	if _, err := os.Stat(old); err == nil {
+		t.Error("old vmtool.service not removed")
+	}
+	got := e.systemctlCalls(t)
+	if !strings.Contains(got, "disable --now vmtool;daemon-reload;enable --now vmtool-daemon;restart vmtool-daemon") {
+		t.Errorf("systemctl calls %q", got)
+	}
+	if n := strings.Count(readOr(t, filepath.Join(e.stub, "sudo.argv")), "\n"); n != 1 {
+		t.Errorf("sudo ran %d times, want 1", n)
+	}
+}
+
+func TestDeployUnitOtherVmtoolServiceLeftAlone(t *testing.T) {
+	e, _, ud := newLocalEnv(t, "10.0.0.9 ops 9474")
+	other := filepath.Join(ud, "vmtool.service")
+	os.WriteFile(other, []byte("[Service]\nWorkingDirectory=/home/someone/vmtool\n"), 0o644)
+	r := e.deploy(t, nil, "PLACEHOLDER-HOST")
+	if r.code != 0 {
+		t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
+	}
+	if _, err := os.Stat(other); err != nil {
+		t.Errorf("other vmtool.service removed: %v", err)
+	}
+	if got := e.systemctlCalls(t); strings.Contains(got, "disable") || strings.Contains(got, "--now vmtool;") {
+		t.Errorf("systemctl calls %q", got)
+	}
+}
+
+// A port held by anything but our daemon stops the install before any
+// change: nothing installed, no systemctl change, the old unit still there.
+func TestDeployRefusesForeignListener(t *testing.T) {
+	e, hv, ud := newLocalEnv(t, "10.0.0.9 ops 9474")
+	old := filepath.Join(ud, "vmtool.service")
+	os.WriteFile(old, []byte("WorkingDirectory="+hv+"\n"), 0o644)
+	writeStub(t, e, "ss.out", foreignListener)
+	writeStub(t, e, "mainpid.vmtool-daemon", "777\n")
+	r := e.deploy(t, nil, "PLACEHOLDER-HOST")
+	if r.code == 0 || !strings.Contains(r.stderr, "9474") || !strings.Contains(r.stderr, "4242") {
+		t.Fatalf("want a refusal naming the port and pid, got %d %q", r.code, r.stderr)
+	}
+	if _, err := os.Stat(filepath.Join(e.stub, "installed.list")); err == nil {
+		t.Error("files installed despite the refusal")
+	}
+	if got := e.systemctlCalls(t); strings.Contains(got, "daemon-reload") || strings.Contains(got, "enable") || strings.Contains(got, "disable") {
+		t.Errorf("systemctl changed something: %q", got)
+	}
+	if _, err := os.Stat(old); err != nil {
+		t.Error("old unit removed despite the refusal")
+	}
+	if _, err := os.Stat(filepath.Join(e.stub, "curl.argv")); err == nil {
+		t.Error("curl after a refused install")
+	}
+	// An unidentifiable holder is refused too.
+	writeStub(t, e, "ss.out", "LISTEN 0 4096 0.0.0.0:9474 0.0.0.0:*\n")
+	if r := e.deploy(t, nil, "PLACEHOLDER-HOST"); r.code == 0 {
+		t.Error("unidentified listener accepted")
+	}
+}
+
+func TestDeployAcceptsOurOwnListener(t *testing.T) {
+	e, _, _ := newLocalEnv(t, "10.0.0.9 ops 9474")
+	writeStub(t, e, "ss.out", ourListener)
+	writeStub(t, e, "mainpid.vmtool-daemon", "777\n")
+	if r := e.deploy(t, nil, "PLACEHOLDER-HOST"); r.code != 0 {
+		t.Fatalf("our own daemon refused: exit %d: %s%s", r.code, r.stdout, r.stderr)
+	}
+	if !strings.Contains(e.systemctlCalls(t), "restart vmtool-daemon") {
+		t.Errorf("not restarted: %q", e.systemctlCalls(t))
+	}
+}
+
+// The older vmtool.service from HV_DIR is ours as well: its MainPID may hold
+// the port while it is replaced.
+func TestDeployAcceptsOldUnitListener(t *testing.T) {
+	e, hv, ud := newLocalEnv(t, "10.0.0.9 ops 9474")
+	os.WriteFile(filepath.Join(ud, "vmtool.service"), []byte("WorkingDirectory="+hv+"\n"), 0o644)
+	writeStub(t, e, "ss.out", `LISTEN 0 4096 0.0.0.0:9474 0.0.0.0:* users:(("vmtool",pid=555,fd=7))`+"\n")
+	writeStub(t, e, "mainpid.vmtool", "555\n")
+	if r := e.deploy(t, nil, "PLACEHOLDER-HOST"); r.code != 0 {
+		t.Fatalf("old unit's daemon refused: exit %d: %s%s", r.code, r.stdout, r.stderr)
+	}
+	// ... but a vmtool.service from another directory is not.
+	e, _, ud = newLocalEnv(t, "10.0.0.9 ops 9474")
+	os.WriteFile(filepath.Join(ud, "vmtool.service"), []byte("WorkingDirectory=/home/someone/vmtool\n"), 0o644)
+	writeStub(t, e, "ss.out", `LISTEN 0 4096 0.0.0.0:9474 0.0.0.0:* users:(("vmtool",pid=555,fd=7))`+"\n")
+	writeStub(t, e, "mainpid.vmtool", "555\n")
+	if r := e.deploy(t, nil, "PLACEHOLDER-HOST"); r.code == 0 {
+		t.Error("a foreign vmtool.service's daemon was treated as ours")
 	}
 }

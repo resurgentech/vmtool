@@ -6,7 +6,9 @@
 #                                dir ~/.cache/vmtool-deploy/stage/tls, drop the
 #                                local key, then (one `ssh -t`, one sudo)
 #                                install them into HV_DIR/tls owned by vmtool,
-#                                remove the staged key and try-restart vmtool
+#                                remove the staged key and try-restart
+#                                vmtool-daemon (and an older vmtool unit, if
+#                                the host still has one)
 #   scripts/cert.sh --local-name print this machine's host name (name: in
 #                                config.yml, else `hostname -s`)
 #
@@ -75,7 +77,8 @@ remote=no
 if [[ $host != "$(local_name)" ]]; then
   remote=yes
   [[ -x $vmtool_bin ]] || die "$vmtool_bin not found; run 'just build' first."
-  read -r addr ssh_user < <(cd "$root" && "$vmtool_bin" config host "$host") \
+  # "address ssh_user port"; the port is not needed here.
+  read -r addr ssh_user _ < <(cd "$root" && "$vmtool_bin" config host "$host") \
     || die "'vmtool config host $host' failed; is $host in config.yml?"
   [[ -n ${addr:-} && -n ${ssh_user:-} ]] || die "no address/ssh_user for host $host in config.yml."
   # Both form ssh's destination argument: nothing ssh could read as an option.
@@ -138,7 +141,8 @@ if [[ $remote == yes ]]; then
   script+="; install -d -o vmtool -g vmtool -m 0700 $hv/tls"
   script+="; $own -m 0644 \"\$1/tls/$fqdn.crt\" $hv/tls/$fqdn.crt"
   script+="; $own -m 0600 \"\$1/tls/$fqdn.key\" $hv/tls/$fqdn.key"
-  script+="; systemctl try-restart vmtool"
+  # Restart the daemon, vmtool-daemon, or the older vmtool, whichever exists.
+  script+="; for u in vmtool-daemon vmtool; do if systemctl cat \$u >/dev/null 2>&1; then systemctl try-restart \$u; fi; done"
   ssh -t "$target" "s=\"$stage\"; sudo sh -c '$script' sh \"\$s\"; rc=\$?; rm -f \"\$s/tls/$fqdn.key\"; exit \$rc" \
     || die "installing the certificate into $hv/tls on $host failed; the staged key was removed. Re-run 'just cert $host'."
   echo "Installed into $host:$hv/tls (owner vmtool); vmtool restarted if it was running."
