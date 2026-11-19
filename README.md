@@ -102,21 +102,127 @@ old or if `just prereqs <host>` has not run (no `vmtool` user or no
 `config.yml` (role `hypervisor`, the token's hash only; the token goes over
 ssh stdin, never in an argument and never through a sudo prompt) and then
 installs everything with a single `sudo`, which may ask for your password
-once. The service runs as `vmtool`, never as your user:
+once. The service runs as `vmtool`, never as your user. Its unit is
+`vmtool-daemon.service` and it listens on the host's `port` (default 9473;
+see [One daemon per host](#one-daemon-per-host)):
 
 ```
 /opt/vmtool/                 vmtool:vmtool 0750  working directory and HOME
   vmtool                     0755  the daemon
-  config.yml                 0600  role: hypervisor, listen 0.0.0.0:9473, token hash
+  config.yml                 0600  role: hypervisor, listen 0.0.0.0:<port>, token hash
   tls/<host>.labtwo.crt      0644
   tls/<host>.labtwo.key      0600
   image-manifest.yml         written by the daemon
-/etc/systemd/system/vmtool.service   User=vmtool, ExecStart=/opt/vmtool/vmtool server
+/etc/systemd/system/vmtool-daemon.service   User=vmtool, ExecStart=/opt/vmtool/vmtool server
 ```
 
 The staged `config.yml` and key are removed after the install. `just cert
 <host>` on its own renews the certificate the same way (into
-`/opt/vmtool/tls`, owner `vmtool`) and restarts the service if it is running.
+`/opt/vmtool/tls`, owner `vmtool`) and restarts the daemon if it is running.
+
+Before it installs, deploy checks that nothing but its own daemon holds the
+port, and refuses if something else does. It also stops, disables and removes
+an older `vmtool.service` that ran from `/opt/vmtool` (the daemon's name
+before `vmtool-daemon.service`); a `vmtool.service` that runs from anywhere
+else is left alone.
+
+### One daemon per host
+
+Every host in `hosts:` is reached through its daemon. Per host:
+
+- **The unit** is `vmtool-daemon.service`, on every host, this machine
+  included.
+- **The port** is the host's `port` in `config.yml`, default 9473. `just
+  prereqs` (the firewall rule) and `just deploy` (the listen address and
+  the `/version` check) read it from there: `vmtool config host <host>`
+  prints `address ssh_user port`.
+- **The loopback server** is another thing: `just install` runs
+  `vmtool.service` on `127.0.0.1:9473` for this machine's own REST and TUI,
+  and it stays beside a daemon's unit. `just install` refuses on a host
+  whose `vmtool.service` is a daemon's (an older unit run from
+  `/opt/vmtool`): run `just deploy <host>` first, which replaces it. Any
+  other `vmtool.service` is replaced as before. Install keeps every `hosts:`
+  entry and `image_dir` in `config.yml`.
+
+### This machine, with or without a daemon
+
+A machine's own name is `name:` in `config.yml`, else `hostname -s`. A
+workstation may list its own name under `hosts:`, and so give itself a daemon,
+reached like any other host. The three cases:
+
+| `hosts:` lists the own name? | Local libvirt? | What happens |
+|---|---|---|
+| yes | not used | Every operation on the own name goes to that daemon. Local libvirt is never opened. |
+| no | yes | Operations on the own name use local libvirt, opened only when an operation names the own name (never at start-up, never for a command on another host). |
+| no | no (a laptop) | Listed hosts work. `vmtool hosts` shows the own name as unreachable. `vmtool list` leaves it out with one `note:` line on stderr. A command that names it fails with `no daemon listed for <name> and no local libvirt`. |
+
+A hypervisor's own `config.yml` may not list itself: it fails to load. The
+binary still links libvirt's client library, even where it never opens it.
+
+To give this machine a daemon:
+
+```bash
+just prereqs ws1     # ws1 is this machine's name: runs locally, no ssh
+just deploy ws1      # builds here, one sudo, installs vmtool-daemon.service
+```
+
+For the own name both run locally: no ssh, and deploy does every step in a
+local shell with a single `sudo`. If `config.yml` has no `hosts:` entry for
+it, the address is `VMTOOL_SELF_ADDRESS` (default `<host>.<domain>`) and the
+port is `VMTOOL_SELF_PORT` (default **9474**, clear of `just install`'s 9473).
+After the daemon answers `GET /version`, deploy runs `vmtool config
+set-host`, which writes the entry. An entry you listed yourself is used as it
+stands and is never rewritten. `just prereqs` for the own name takes its port
+the same way.
+
+```bash
+VMTOOL_SELF_PORT=9480 just deploy ws1    # not yet listed: daemon on 9480
+```
+
+### Base images (`image_dir`)
+
+`image_dir` in `config.yml` is a folder of base images on the machine that
+runs the command. A relative path is taken from the directory holding
+`config.yml`; an absolute one is used as given.
+
+```yaml
+image_dir: images       # <config dir>/images
+```
+
+`create <host>/<vm> <image>` looks the image up in this order:
+
+1. the local libvirt pools, only when local libvirt is in use (the own name
+   has no daemon);
+2. `image_dir`: a regular file named `<image>`, then `<image>.qcow2`. A
+   symlink to a regular file counts; a directory does not.
+
+The file is then sent to the host's daemon and cached there (see
+[`spec/README.md`](spec/README.md#image-cache)). `just generate <template>`
+in `packer_images` copies its image to `$VMTOOL_IMAGE_DIR` (default
+`<repo>/images/`, gitignored; no sudo), so set `image_dir` to that folder.
+
+### A new machine
+
+To run `vmtool` from another machine (a laptop, a second workstation) it
+needs:
+
+- a checkout of this repository, built (`go build -o vmtool ./cmd/vmtool`);
+- a `config.yml` with a `hosts:` section naming the daemons it will talk to
+  (`just install` writes one and keeps `hosts:` on re-runs);
+- a `.env` with `VMTOOL_TOKEN`, the token whose hash is each daemon's
+  `token_sha256` (`just token-fetch` gets it from OpenBao);
+- the `hulbert.local` CA in the system trust store, so TLS to the daemons
+  verifies;
+- libvirt's client library (`libvirt-dev` on Debian/Ubuntu, `libvirt` on
+  Arch), which the binary links even if no libvirt daemon runs here;
+- `ssh` and `ansible`, for `exec`, `ssh`, `playbook` and the guest setup
+  that `create` runs (both run on the machine that runs the command);
+- the `.machines/` folders of the VMs it will log in to. They hold each VM's
+  key and password and are never in git: copy them from the machine that
+  created the VMs, keeping their permissions.
+
+With these, the listed hosts work and the own name is one of the three cases
+above.
 
 ### Ubuntu / Debian (manual)
 

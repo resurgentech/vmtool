@@ -302,6 +302,34 @@ The cleaned path is what reaches libvirt. Names in bodies (`new_name`, volume
 check is point-in-time; it is defence in depth for a loopback, token-guarded
 API, not a sandbox.
 
+## Daemon address, unit and the own name
+
+A daemon is one `vmtool server` with `role: hypervisor`, run as the unit
+`vmtool-daemon.service` on the host's `port` in the workstation's
+`config.yml` (`hosts.<h>.port`, default 9473; 0 or absent is the default,
+otherwise 1 to 65535). `just deploy <host>` listens on `0.0.0.0:<port>`;
+`vmtool config host <host>` prints `address ssh_user port`. The workstation's
+loopback server from `just install` is a different unit, `vmtool.service`
+on `127.0.0.1:9473`, and can sit beside a daemon on the same machine.
+A machine whose own name is not in `hosts:` and is deployed with `just deploy
+<own name>` gets port 9474 unless `VMTOOL_SELF_PORT` says otherwise, and the
+entry is written afterwards.
+
+From an API client's side, `{host}` is the same for every served name. A
+workstation that lists its own name under `hosts:` serves it like any other
+host, through that daemon: `GET /v1/hosts` shows it as a hypervisor row (not
+`local`), `GET /v1/hosts/{own}/...` is proxied to the daemon, and the server
+never opens its own libvirt for it. When the own name is not listed it is the
+local host, served by local libvirt, opened only when a request names it. A
+machine with neither a listing nor libvirt answers requests for its own
+name with an error whose text starts `no daemon listed for <name> and no
+local libvirt`; other hosts are unaffected. Only a workstation may list its
+own name; a hypervisor's `config.yml` that does is refused at load.
+
+Base images that `createVM` uploads come from the workstation's local libvirt
+pools (only when local libvirt is in use) and then from `image_dir` in its
+`config.yml` (a plain file `<image>`, then `<image>.qcow2`).
+
 ## Image cache
 
 Hypervisors cache base images in their `vmtool` libvirt pool

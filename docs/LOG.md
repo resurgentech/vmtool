@@ -832,3 +832,24 @@ are appended, never edited in; a hook refuses rewrites.
 - `TestInstallRefusesDaemonUnit`: red before, green after;
   `TestInstallReplacesLoopbackUnit` green; `just check` green.
 - Commits: the W7 commit on `clone-identity`.
+
+## 2026-11-18 — W8 Docs for group 1 (a daemon on every VM host)
+
+- README.md: the hypervisor layout now names `vmtool-daemon.service` and
+  `0.0.0.0:<port>`; the port guard and the old-unit removal; new sections
+  "One daemon per host" (unit, per-host port, the loopback
+  `vmtool.service` beside it, install's refusal), "This machine, with or
+  without a daemon" (the three cases; `just prereqs`/`just deploy` for
+  the own name, VMTOOL_SELF_ADDRESS/VMTOOL_SELF_PORT 9474, set-host after
+  `/version`), "Base images (`image_dir`)" (lookup order, packer's
+  `VMTOOL_IMAGE_DIR`), "A new machine" (checkout, `config.yml` with
+  `hosts:`, `.env`, the CA, libvirt's client library, ssh, ansible,
+  `.machines/`).
+- spec/README.md: "Daemon address, unit and the own name" (per-host port,
+  unit, own-name routing as an API client sees it, where createVM's
+  images come from).
+- Placeholder host names only in the new text. Docs only; `just check`
+  green.
+- Group 1 of tranche 10 (W1–W8) is built. Phase A and B of the rollout
+  are the user's and XO's.
+- Commits: the W8 commit on `clone-identity`.
