@@ -1187,3 +1187,24 @@ are appended, never edited in; a hook refuses rewrites.
   20, one at a time) and one of deploy's visudo gate each fail a test.
   `just check` green. Never run on a host.
 - Commits: the T2 commit on `clone-identity`.
+
+## 2026-11-18 — T3 `pkg/vmtool` thin primitives: helper client and pure decisions
+
+- `pkg/vmtool/thin.go`: `Thin{Helper}` runs `sudo -n <helper> <verb> …`
+  through `command()` (typed methods per verb, arguments checked with the
+  helper's own rules before sudo; the helper's stderr is the error text).
+  `ParseThinReport` (pools: `t…` attr and the exact `vmtool_thinpool` tag;
+  volumes: `V…` in such a pool with a kind tag, building > template > vol;
+  `VirtualBytes` counts every thin LV in the pool); `TemplateTags` /
+  `TemplateFromVolume` / `ThinTemplates`; `TemplateLVName`;
+  `CheckThinRoom` (80 % data or metadata, 4x promised; `*ThinRoomError`
+  matching `ErrThinNoRoom`, text with the numbers); `StaleTemplates`
+  (with `ImageSHAs` from the manifest); `FindTemplate`. Nothing calls it
+  yet (T4).
+- Tests (`pkg/vmtool/thin_test.go`, `testexec.Stub` for `sudo`): argv of
+  every verb, helper refusal and malformed report errors, report fixtures
+  (two VGs, foreign, thick and hidden LVs, empty), the limits at and
+  around 80 % and 4x, stale and find tables, tag round trip. Red: build
+  failure before `thin.go`, then mutations (limits, clone count; FOREMAN:
+  `sudo` without `-n`) each failing. `just check` green.
+- Commits: the T3 commit on `clone-identity`.
