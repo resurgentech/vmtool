@@ -115,8 +115,8 @@ func TestListHosts(t *testing.T) {
 	var mu sync.Mutex
 	var tokens []string
 	res := hosts.NewWith("ws", config.RoleWorkstation, []string{"hv2", "hv1"}, func() (app.Manager, func(), error) {
-		t.Error("libvirt connector called")
-		return nil, nil, errors.New("must not connect")
+		// The local row learns libvirt opens by opening it once (hosts.Status).
+		return nil, func() {}, nil
 	}).WithRemote(func(host, token string) (app.Manager, func(), error) {
 		mu.Lock()
 		tokens = append(tokens, host+" "+token)

@@ -717,3 +717,22 @@ are appended, never edited in; a hook refuses rewrites.
   `TestImageDir`, `TestSetHostRoundTrip`, `TestSetHostOnMissingFileAndInvalid`,
   `TestConfigSetHost`: red before, green after; `just check` green.
 - Commits: the W1 commit on `clone-identity`.
+
+## 2026-11-18 — W2 Resolver: own name through its daemon when listed; local libvirt lazy
+
+- `hosts.NewWith` drops a listed own name from the remote list and
+  records it; `Resolver.OwnListed()` says whether the own name has a
+  daemon. Listed: `Resolve(<own>)` is the remote connector with that
+  entry's `default_pool`; `List`/`Status` show it once, first, as a
+  probed hypervisor row; local libvirt is never opened.
+- Not listed: libvirt still opens only inside `Resolve(<own>)`; a failed
+  open (not on a hypervisor) reads "no daemon listed for <name> and no
+  local libvirt: <cause>". `Status`'s own row opens and releases the
+  local connector once and is unreachable with that sentence on failure.
+- `defaultPools` forwards `Probe`: a host with `default_pool` used to show
+  "cannot be probed" in `vmtool hosts`.
+- Tests in `internal/hosts/own_test.go` for the three machines (daemon
+  listed; local libvirt; neither, with two listed remotes): red before,
+  green after; `just check` green. Two status fixtures and the server's
+  `TestListHosts` connector now allow the one local open.
+- Commits: the W2 commit on `clone-identity`.

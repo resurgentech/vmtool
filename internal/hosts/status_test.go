@@ -49,7 +49,7 @@ func writeCert(t *testing.T, notAfter time.Time) string {
 func TestStatus(t *testing.T) {
 	notAfter := time.Now().Add(20 * 24 * time.Hour).UTC().Truncate(time.Second)
 	cert := writeCert(t, notAfter)
-	r := NewWith("ws", config.RoleWorkstation, []string{"hv2", "hv1"}, failing(t)).
+	r := NewWith("ws", config.RoleWorkstation, []string{"hv2", "hv1"}, okLocal).
 		WithRemote(func(host, token string) (app.Manager, func(), error) {
 			if token != "tok" {
 				t.Errorf("host %s got token %q", host, token)
@@ -77,7 +77,7 @@ func TestStatus(t *testing.T) {
 }
 
 func TestStatusNoCertAndBadCert(t *testing.T) {
-	r := NewWith("ws", config.RoleWorkstation, nil, failing(t))
+	r := NewWith("ws", config.RoleWorkstation, nil, okLocal)
 	got := r.Status(context.Background(), time.Second)
 	if len(got) != 1 || !got[0].CertNotAfter.IsZero() || got[0].Err != nil {
 		t.Fatalf("no cert: %+v", got)

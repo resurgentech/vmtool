@@ -58,7 +58,8 @@ type Host struct {
 type Resolver struct {
 	name, role string
 	local      Connector
-	configured []string // sorted names of the configured remote hosts
+	configured []string // sorted names of the configured remote hosts, never the own name
+	ownListed  bool     // the own name is listed under hosts: (it has a daemon)
 	remote     RemoteConnector
 	token      string
 	localCert  string // the local daemon certificate file, for Status
@@ -123,9 +124,17 @@ func BaseURL(h config.Host) string {
 // prove an unknown host never reaches libvirt. Configured hosts are listed but
 // not served until WithRemote supplies their connector.
 func NewWith(name, role string, configured []string, local Connector) *Resolver {
-	c := append([]string(nil), configured...)
+	var c []string
+	listed := false
+	for _, n := range configured {
+		if n == name {
+			listed = true
+			continue
+		}
+		c = append(c, n)
+	}
 	sort.Strings(c)
-	return &Resolver{name: name, role: role, local: local, configured: c}
+	return &Resolver{name: name, role: role, local: local, configured: c, ownListed: listed}
 }
 
 // WithRemote returns a copy of r that serves its configured hosts with rc.
@@ -170,6 +179,13 @@ func (r *Resolver) WithDefaultPools(local string, remote map[string]string) *Res
 // Local is the name this server calls itself.
 func (r *Resolver) Local() string { return r.name }
 
+// OwnListed reports whether the own name is listed under hosts: in config.yml,
+// that is, whether this machine has a daemon. When true every operation on the
+// own name goes to that daemon and local libvirt is never opened; when false
+// local libvirt is the own name's backend, opened lazily by Resolve(Local()).
+// It reads configuration only: nothing is opened or probed.
+func (r *Resolver) OwnListed() bool { return r.ownListed }
+
 // Names lists the hosts Resolve serves: the local host, then the configured
 // hosts in name order when a remote connector serves them.
 func (r *Resolver) Names() []string {
@@ -181,14 +197,16 @@ func (r *Resolver) Names() []string {
 
 // AllNames is the local host followed by the configured hosts in name order:
 // every name that owns a .machines/<host>/ directory (app.Service.HostNames).
+// A listed own name appears once, in the first place.
 func (r *Resolver) AllNames() []string {
 	return append([]string{r.name}, r.configured...)
 }
 
-// IsRemote reports whether host is one of the configured remote hosts.
+// IsRemote reports whether host is served by a remote daemon: one of the
+// configured hosts, or the own name when it is listed.
 func (r *Resolver) IsRemote(host string) bool {
 	if host == r.name {
-		return false
+		return r.ownListed
 	}
 	i := sort.SearchStrings(r.configured, host)
 	return i < len(r.configured) && r.configured[i] == host
@@ -200,9 +218,13 @@ func (r *Resolver) ParseVM(s string) (app.VMRef, error) {
 	return app.ParseVMRef(s, r.name)
 }
 
-// List is the local host followed by the configured hosts in name order.
+// List is the own name followed by the configured hosts in name order. A
+// listed own name is a hypervisor row, not a local one.
 func (r *Resolver) List() []Host {
 	out := []Host{{Name: r.name, Role: r.role, Local: true}}
+	if r.ownListed {
+		out[0] = Host{Name: r.name, Role: config.RoleHypervisor}
+	}
 	for _, n := range r.configured {
 		out = append(out, Host{Name: n, Role: config.RoleHypervisor})
 	}
@@ -218,8 +240,11 @@ func (r *Resolver) Resolve(host string) (app.Manager, func(), error) {
 	if err := r.Check(host); err != nil {
 		return nil, nil, err
 	}
-	if host == r.name {
+	if host == r.name && !r.ownListed {
 		m, done, err := r.local()
+		if err != nil && r.role != config.RoleHypervisor {
+			err = fmt.Errorf("no daemon listed for %s and no local libvirt: %w", r.name, err)
+		}
 		if err == nil && m != nil && r.role == config.RoleHypervisor {
 			m = hypervisorPools{m}
 		}
@@ -241,7 +266,7 @@ func (r *Resolver) Resolve(host string) (app.Manager, func(), error) {
 // Check reports whether Resolve serves host, without building a Manager: an
 // error wrapping ErrUnknownHost for a host this resolver does not serve.
 func (r *Resolver) Check(host string) error {
-	if host == r.name {
+	if host == r.name && !r.ownListed {
 		return nil
 	}
 	if !r.IsRemote(host) {
@@ -271,8 +296,14 @@ func (r *Resolver) WithLocalCert(path string) *Resolver {
 // configured hosts as unreachable with the reason; nothing is stored or
 // logged.
 func (r *Resolver) Status(ctx context.Context, timeout time.Duration) []app.HostStatus {
-	out := []app.HostStatus{r.localStatus()}
-	probed := app.ProbeAll(ctx, r.configured, r.Resolve, timeout)
+	names := r.configured
+	var out []app.HostStatus
+	if r.ownListed {
+		names = append([]string{r.name}, names...)
+	} else {
+		out = append(out, r.localStatus())
+	}
+	probed := app.ProbeAll(ctx, names, r.Resolve, timeout)
 	for i := range probed {
 		probed[i].Role = config.RoleHypervisor
 	}
@@ -281,6 +312,20 @@ func (r *Resolver) Status(ctx context.Context, timeout time.Duration) []app.Host
 
 func (r *Resolver) localStatus() app.HostStatus {
 	st := app.HostStatus{Host: r.name, Role: r.role, Local: true, Address: "local", Reachable: true}
+	// Not listed: local libvirt is the own name's backend, so the row learns
+	// whether it opens by opening it once and releasing it at once. A
+	// hypervisor daemon's row stays unconditional, as before.
+	if r.role != config.RoleHypervisor {
+		_, done, err := r.local()
+		if err != nil {
+			st.Reachable = false
+			st.Err = fmt.Errorf("no daemon listed for %s and no local libvirt: %w", r.name, err)
+			return st
+		}
+		if done != nil {
+			done()
+		}
+	}
 	v, err := remote.OurVersion()
 	if err != nil {
 		st.Err = err
@@ -421,4 +466,14 @@ func (d defaultPools) RefreshPool(pool string) error {
 		return r.RefreshPool(pool)
 	}
 	return nil
+}
+
+// Probe keeps app.Prober visible through the wrapper, so a remote host with a
+// default_pool is still probed by Status and `vmtool hosts`. A Manager that
+// cannot probe reports so, as app.ProbeAll does.
+func (d defaultPools) Probe(ctx context.Context) app.HostStatus {
+	if p, ok := d.Manager.(app.Prober); ok {
+		return p.Probe(ctx)
+	}
+	return app.HostStatus{Err: errors.New("host cannot be probed")}
 }
