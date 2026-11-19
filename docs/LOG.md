@@ -893,3 +893,23 @@ are appended, never edited in; a hook refuses rewrites.
 - Red: build failures (undefined `Config`, `Load`, `NewServer`; no Go
   files in `cmd/vmtool-store`); green after. `just check` green.
 - Commits: the S2 commit on `clone-identity`.
+
+## 2026-11-18 — S3 `BlobStore`: S3 implementation and test double
+
+- `internal/store/blob`: the `BlobStore` interface (`Put(ctx, key, r,
+  size)`, `Get`, `Stat`, `Delete`, `EnsureBucket`), sentinels
+  `ErrNotFound` and `ErrShortBody`, and one size-bounded reader that checks
+  the context before each read and turns an early EOF into `ErrShortBody`.
+- `NewMemory()`: the concurrency-safe double; an object is stored only
+  when its whole body arrived (a short or cancelled put keeps the old one).
+- `NewS3`: thin glue on `github.com/minio/minio-go/v7` v7.0.95 (the newest
+  cached version that keeps go.mod at `go 1.24.0`); a bare `host:port`
+  endpoint is plain HTTP, `https://` turns TLS on; minio's not-found
+  answers map to `ErrNotFound`; Delete of a missing key is nil in both.
+- Tests: a contract suite over the double (5 MiB round trip, not found,
+  short body, cancel mid-stream, concurrency) and offline tests of the S3
+  glue (validation, endpoint parsing, error mapping); no S3 server is ever
+  contacted. Red: build failure (undefined `BlobStore`, `NewMemory`, ...);
+  green after. `go list -deps ./cmd/vmtool` has no minio. `just check`
+  green.
+- Commits: the S3 commit on `clone-identity`.
