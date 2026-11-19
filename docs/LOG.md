@@ -1298,3 +1298,26 @@ are appended, never edited in; a hook refuses rewrites.
   existing test changed. Red: build failures and app behaviour, plus
   mutations; green; `just check` green.
 - Commits: the T5 commit on `clone-identity`.
+
+## 2026-11-18 — S14 ansible_labtwo role `vmtool_store` and playbook
+
+- In `/home/jared/repos/resurgentech/ansible_labtwo`, branch `simplify`
+  (clean at start and before staging), commit `3d0f09b`, not pushed:
+  `roles/vmtool_store/` (tasks, vars, compose/config/tokens templates,
+  `make_secrets.sh tokens|enckey [--force]`, README),
+  `playbooks/sdf1_vmtool_store.yml`, and two OpenBao path names in
+  `inventories/group_vars/all`.
+- Secrets fetched on the control machine with `no_log`; tokens rendered as
+  SHA-256 only; compose root 0600 (S3 keys, no published port);
+  `etc/{config.yaml,tokens.yaml,enc.key}` and `data/` owned 65532:65532
+  (files 0600, dirs 0700), `etc/` mounted read-only; recreate only when a
+  file changed. Caddy route `vmtool-store.labtwo` →
+  `vmtool-store-vmtool-store-1:8095`, `flush_interval: -1`, no body limit,
+  no Authelia; sdf1 `/etc/hosts` line.
+- Checks: `bash -n` rc 0; `ansible-playbook --syntax-check` rc 0; the
+  tokens template renders only `hash('sha256')`; every secret task has
+  `no_log: true`. Nothing run against sdf1, OpenBao or docker.
+- Found: the store's backups (daily `VACUUM INTO`, `vmtool-store backup`)
+  were never built; the README documents a manual backup and restore.
+- vmtool: no code change; `just check` green. Commits: `3d0f09b`
+  (ansible_labtwo), the S14 commit on `clone-identity`.
