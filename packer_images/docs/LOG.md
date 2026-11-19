@@ -305,3 +305,17 @@ rewrites.
   the new `ubuntu2604.qcow2` on first create (2026-11-18); veritech01 and
   veritech02 still hold the earlier builds until their next create from
   each image.
+
+## 2026-11-18 — W6 Packer images go to `image_dir`
+
+- `packer_images/justfile` `generate` copies the built image to
+  `${VMTOOL_IMAGE_DIR:-<repo>/images}/<template>.qcow2` (folder created if
+  missing; temp name then `mv`); no `sudo`, no `pool-refresh`.
+- `.gitignore` lists `images/`.
+- Shape check `check_generate_image_dir` in the image gate: red on the old
+  recipe (copy target, sudo, pool-refresh, .gitignore), green after;
+  `just -f packer_images/justfile check` and `just check` green.
+- packer_images CLAUDE.md and README say where the image goes and that
+  `image_dir` must name the same folder. `./run generate` and `update`
+  are unchanged (outside the step).
+- Commits: the W6 commit on `clone-identity`.

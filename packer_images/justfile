@@ -21,15 +21,15 @@ default:
 templates:
     @ls -1 "{{ images }}"
 
-# Render user-data, packer build, install qcow2 into libvirt
+# Render user-data, packer build, copy qcow2 to $VMTOOL_IMAGE_DIR (default <repo>/images/)
 generate template=default_template: (_check-template template)
     rm -rf "{{ output / template }}"
     cd "{{ images / template / "http" }}" && PKR_VAR_distro="{{ template }}" PKR_VAR_hashedpassword="$(openssl passwd -6 "$PKR_VAR_password")" envsubst < user-data.tpl > user-data
     cd "{{ images / template }}" && packer init .
     cd "{{ images / template }}" && PKR_VAR_distro="{{ template }}" PKR_VAR_output_directory="{{ output / template }}" packer build .
-    sudo cp "{{ output / template / template }}" "/var/lib/libvirt/images/{{ template }}.qcow2"
-    # vmtool uses qemu:///system; bare virsh is qemu:///session unless $USER is in libvirt.
-    virsh -c qemu:///system pool-refresh default
+    # vmtool finds base images in image_dir (config.yml); set that to this folder.
+    # Copy under a temp name, then mv, so a reader never sees a half file.
+    dir="${VMTOOL_IMAGE_DIR:-{{ root }}/../images}" && mkdir -p "$dir" && cp "{{ output / template / template }}" "$dir/.{{ template }}.qcow2.tmp" && mv -f "$dir/.{{ template }}.qcow2.tmp" "$dir/{{ template }}.qcow2" && echo "installed $dir/{{ template }}.qcow2"
 
 # Render user-data, packer init + validate (offline; no build, no sudo, output/ untouched)
 validate template=default_template: (_check-template template)
@@ -198,6 +198,24 @@ check:
     else
         shape_failures+=("files/99-wildcard.yaml is missing")
     fi
+
+    # W6: generate puts the image in vmtool's image_dir: ${VMTOOL_IMAGE_DIR:-<repo>/images}
+    # as <template>.qcow2, with no sudo and no pool-refresh; the repo's
+    # .gitignore lists images/. Runs once, not per template.
+    check_generate_image_dir() {
+        local body
+        body="$(awk '/^generate / { on = 1; next } on && /^[^[:space:]]/ { on = 0 } on' "{{ justfile() }}")"
+        # the source says ${VMTOOL_IMAGE_DIR:-<root>/../images}; <root> is a just interpolation
+        [[ "$body" == *'VMTOOL_IMAGE_DIR:-'*'/../images}'* ]] \
+            || shape_failures+=("generate does not copy into \${VMTOOL_IMAGE_DIR:-<repo>/images}")
+        [[ "$body" != *sudo* ]] \
+            || shape_failures+=("generate still uses sudo")
+        [[ "$body" != *pool-refresh* ]] \
+            || shape_failures+=("generate still runs pool-refresh")
+        grep -Eq '^/?images/?$' "{{ root }}/../.gitignore" \
+            || shape_failures+=(".gitignore does not list images/")
+    }
+    check_generate_image_dir
 
     shape_checks=(check_efi_boot check_fallback_loader check_clean_for_cloud_init check_no_installer_hosts_line check_vmtool_cfg check_cloud_init_not_disabled check_netplan_shared check_rolling_url_checksum check_tmp_on_disk)
 

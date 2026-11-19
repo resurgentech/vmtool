@@ -69,7 +69,7 @@ Every image ends clean for cloud-init, so each clone takes its identity at first
 `justfile` is the main entry point; `./run` is the older equivalent. Both take a template dir name (default `ubuntu2404`).
 
 ```bash
-just generate <template>       # render user-data, packer build, install to libvirt (sudo, KVM, ISO download)
+just generate <template>       # render user-data, packer build, copy to $VMTOOL_IMAGE_DIR (default <repo>/images/); KVM, ISO download, no sudo
 just validate <template>       # render user-data, packer init + validate; offline, no build, no sudo
 just check                     # bash -n run + shape checks (UEFI, clean first boot, netplan, checksums, /tmp on disk) + validate every template (the gate for this directory)
 just clean <template>          # delete output for one template
@@ -83,8 +83,9 @@ just distclean                 # delete all output
 `generate` does the full pipeline:
 1. `envsubst` renders `http/user-data.tpl` → `http/user-data` (cloud-init autoinstall config)
 2. `packer init .` + `packer build .` in `qemu_images/<template>/`
-3. Copies built qcow2 to `/var/lib/libvirt/images/<template>.qcow2` (requires sudo)
-4. `virsh -c qemu:///system pool-refresh default`
+3. Copies the built qcow2 to `$VMTOOL_IMAGE_DIR/<template>.qcow2` (default `<repo>/images/`, created if missing; no sudo). It copies to a temp name in that folder and `mv`s it into place, so a reader never sees a half file. No `pool-refresh`.
+
+vmtool finds the image through `image_dir` in `config.yml`: set `image_dir` to the same folder (`<repo>/images/` unless you set `VMTOOL_IMAGE_DIR`). `images/` is gitignored. `just check` (`check_generate_image_dir`) fails if `generate` stops copying into `${VMTOOL_IMAGE_DIR:-<repo>/images}`, uses `sudo` or `pool-refresh`, or the repo `.gitignore` lacks `images/`. The older `./run generate` and the `update` recipe still use the libvirt pool path.
 
 ## Architecture
 
