@@ -53,6 +53,8 @@ type StoreSession struct {
 	// caller is the name whoami answered; notice is the one line printed or
 	// returned when the mode fell back to local.
 	caller, notice string
+	// noted is the lines Notify has delivered: each distinct line goes out once.
+	noted map[string]bool
 }
 
 // OpenStoreSession is the session for a configured store at rawURL, or nil
@@ -123,6 +125,40 @@ func (s *StoreSession) Mode(ctx context.Context) Mode {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.mode
+}
+
+// Host is the store URL's host (no port, nothing else of the URL), for
+// messages.
+func (s *StoreSession) Host() string {
+	if s == nil {
+		return ""
+	}
+	return s.host
+}
+
+// Notify delivers one line to the command's user through the session's notify
+// (stderr for the CLI, the warnings header for the loopback service), once: a
+// line already delivered is dropped. It reports whether the line went out, so
+// a caller with a second channel (create's progress stream) can follow it.
+// The line must carry no credential. Safe for concurrent use.
+func (s *StoreSession) Notify(line string) bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	if s.noted[line] {
+		s.mu.Unlock()
+		return false
+	}
+	if s.noted == nil {
+		s.noted = map[string]bool{}
+	}
+	s.noted[line] = true
+	s.mu.Unlock()
+	if s.notify != nil {
+		s.notify(line)
+	}
+	return true
 }
 
 // Caller is the name the store gave this command's token, or "" in local mode

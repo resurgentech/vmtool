@@ -1016,3 +1016,34 @@ are appended, never edited in; a hook refuses rewrites.
   for any path ending in `/version` (an image named `version`); fixed,
   `TestBearerOnEveryRouteButVersion` red then green. `just check` green.
 - Commits: the S7 commit on `clone-identity`.
+
+## 2026-11-18 — S8 Client credentials in store mode; fallback and reconciliation
+
+- `pkg/vmtool/credcache.go`: the `.vmtool-source` marker (`store <uuid>`,
+  `pending <uuid>`; unreadable = none), atomic 0600 writes, 0700 folders,
+  `LookupVMAuth` (missing vs present), `MoveStale` to
+  `.machines/.stale/<folder>-<date>[-n]/` (never deletes).
+- `internal/app/credsync.go`: reconciliation before ssh, exec, playbook,
+  console, resize-disk and a `--noclone` create (the six cases of the
+  design, plus `store <other uuid>` and an other-UUID record treated as
+  stale); hand-off after every playbook run when the folder changed,
+  success or failure; a failed PUT marks `pending <uuid>` and prints one
+  line naming the store ("... are only on this machine"); exec refetches
+  once on exit 255 and reruns only if the cache changed; `vmtool delete`
+  and create's replace remove the record and the cache. Pre-2.3.0 daemon
+  (no uuid): no push, notice "redeploy <host>".
+- `internal/app/machinecache.go`: metal/alien records through the store in
+  store mode (`.machines/<name>/` as a marked cache); local mode unchanged.
+- CLI `vmtool creds fetch|forget host/vm` (forget removes only the cache
+  and refuses a pending or unmarked folder); `vmtool tunnel` fetches a
+  missing cache folder before piping (stdout stays the byte stream).
+- The loopback service carries mid-request notices in `X-Vmtool-Warnings`;
+  create also emits them as progress events `credentials/notice`.
+- ssh, sshpass and ansible children no longer inherit
+  `VMTOOL_SERVER_TOKEN` (S7 A7).
+- Tests: ~45 new in pkg/vmtool, app and cli with a fake store over
+  `httptest` and `testexec` stubs, stub argv, progress events, errors and
+  notices searched for the placeholders. Red: build failure, then a
+  mutation (`pushFolder` returning before the PUT; the env strip removed)
+  failing 9 tests. `just check` green.
+- Commits: the S8 commit on `clone-identity`.

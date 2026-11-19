@@ -40,6 +40,21 @@ var (
 		}
 		return info.IP, nil
 	}
+	// tunnelVMUUID is the domain UUID of a VM, from its host, for the tunnel's
+	// credentials fetch. "" is a daemon older than 2.3.0.
+	tunnelVMUUID = func(ctx context.Context, e *env, ref app.VMRef) (string, error) {
+		r := e.resolver()
+		m, release, err := r.Resolve(ref.Host)
+		if err != nil {
+			return "", err
+		}
+		defer release()
+		info, err := e.service("").GetVM(ctx, m, ref.Name)
+		if err != nil {
+			return "", err
+		}
+		return info.UUID, nil
+	}
 	// tunnelDial connects to a local guest's port 22.
 	tunnelDial = func(ctx context.Context, addr string) (net.Conn, error) {
 		d := net.Dialer{Timeout: tunnelDialTimeout}
@@ -60,6 +75,11 @@ ProxyCommand. stdout carries only the SSH byte stream; errors go to stderr.
 On the local host it asks libvirt for the VM's IP and connects directly. For
 a host in config.yml's hosts: it opens an authenticated tunnel through that
 host's vmtool daemon (HTTPS, HTTP/1.1 Upgrade), using VMTOOL_TOKEN.
+
+In store mode, when the VM's credentials folder .machines/<vm>.<host>.vmtool/
+is missing, it is first fetched from the store, so the IdentityFile of the
+ssh-config block exists. With the folder there the store is not contacted.
+Anything it has to say goes to stderr.
 
 The VM is host/vm, or its SSH name <vm>.<host>.vmtool (what the block from
 'vmtool ssh-config' passes). The host name has no dots; the VM name may.
@@ -105,6 +125,14 @@ func openTunnel(ctx context.Context, e *env, arg string) (io.ReadWriteCloser, er
 	}
 	setup, cancel := context.WithTimeout(ctx, tunnelSetupTimeout)
 	defer cancel()
+
+	// Store mode, and the credentials folder that ssh-config's IdentityFile
+	// names is missing: fetch it before ssh needs it. With the folder present
+	// nothing here touches the store. Notices go to stderr; stdout stays the
+	// SSH byte stream.
+	e.service("").FetchMissingVMCreds(setup, ref, func(ctx context.Context) (string, error) {
+		return tunnelVMUUID(ctx, e, ref)
+	})
 
 	if ref.Host == r.Local() && !r.OwnListed() {
 		ip, err := tunnelVMIP(e, ref)

@@ -114,13 +114,11 @@ func readCredDir(dir string) (c VMCredential, ok bool, err error) {
 	return c, ok, nil
 }
 
-// writeCredDir writes c's files into dir (0700, files 0600) and removes the
-// ones c has no value for, so the folder is exactly the record.
+// writeCredDir writes c's files into dir (0700, files 0600, each written
+// atomically) and removes the ones c has no value for, so the folder is
+// exactly the record. The .vmtool-source marker is not touched.
 func writeCredDir(dir string, c VMCredential) error {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	if err := os.Chmod(dir, 0o700); err != nil {
+	if err := vmtool.EnsureCredsDir(dir); err != nil {
 		return err
 	}
 	pw, err := yaml.Marshal(passwordYML{Username: c.Username, Password: c.Password})
@@ -139,10 +137,7 @@ func writeCredDir(dir string, c VMCredential) error {
 			}
 			continue
 		}
-		if err := os.WriteFile(p, []byte(f.data), 0o600); err != nil {
-			return err
-		}
-		if err := os.Chmod(p, 0o600); err != nil {
+		if err := vmtool.WriteFileAtomic(p, []byte(f.data), 0o600); err != nil {
 			return err
 		}
 	}

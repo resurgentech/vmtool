@@ -33,11 +33,21 @@ type fakeStoreServer struct {
 	slow   chan struct{}
 	mu     sync.Mutex
 	creds  map[string]map[string]any // "host/name" -> record
+	// machines are the metal records by name.
+	machines map[string]map[string]any
+	// failCreds makes every credential and machine route answer 503 while
+	// whoami still answers: a store that fails after the mode was decided.
+	failCreds atomic.Bool
+	// puts, gets and dels count VM credential calls.
+	puts, gets, dels atomic.Int32
+	// onGet, if set, runs after each VM credential GET with the 1-based count
+	// (tests change the record between two fetches here).
+	onGet func(n int32)
 }
 
 func newFakeStoreServer(t *testing.T) *fakeStoreServer {
 	t.Helper()
-	f := &fakeStoreServer{slow: make(chan struct{}), creds: map[string]map[string]any{}}
+	f := &fakeStoreServer{slow: make(chan struct{}), creds: map[string]map[string]any{}, machines: map[string]map[string]any{}}
 	f.ts = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if f.down.Load() {
 			http.Error(w, `{"error":"down"}`, 503)
@@ -65,18 +75,39 @@ func newFakeStoreServer(t *testing.T) *fakeStoreServer {
 				return
 			}
 			out(200, map[string]string{"name": "jared"})
+		case strings.HasPrefix(r.URL.Path, "/v1/credentials/machines"):
+			if f.failCreds.Load() {
+				out(503, map[string]string{"error": "down"})
+				return
+			}
+			f.serveMachines(w, r, out)
 		case strings.HasPrefix(r.URL.Path, "/v1/credentials/vms/"):
+			if f.failCreds.Load() {
+				out(503, map[string]string{"error": "down"})
+				return
+			}
 			key := strings.TrimPrefix(r.URL.Path, "/v1/credentials/vms/")
+			var post func() // runs after the lock is released
+			defer func() {
+				if post != nil {
+					post()
+				}
+			}()
 			f.mu.Lock()
 			defer f.mu.Unlock()
 			switch r.Method {
 			case http.MethodPut:
+				f.puts.Add(1)
 				var in map[string]any
 				_ = json.NewDecoder(r.Body).Decode(&in)
 				in["updated"] = time.Now()
 				f.creds[key] = in
 				out(200, map[string]any{"uuid": in["uuid"], "updated": time.Now(), "host": "h", "name": "n"})
 			case http.MethodGet:
+				n := f.gets.Add(1)
+				if f.onGet != nil {
+					post = func() { f.onGet(n) }
+				}
 				rec, ok := f.creds[key]
 				switch {
 				case !ok:
@@ -94,6 +125,7 @@ func newFakeStoreServer(t *testing.T) *fakeStoreServer {
 					out(200, full)
 				}
 			case http.MethodDelete:
+				f.dels.Add(1)
 				if _, ok := f.creds[key]; !ok {
 					out(404, map[string]any{"error": "not found"})
 					return
@@ -397,5 +429,44 @@ func assertMode(t *testing.T, path string, want os.FileMode) {
 	}
 	if got := st.Mode().Perm(); got != want {
 		t.Errorf("%s: mode %o, want %o", path, got, want)
+	}
+}
+
+// serveMachines answers /v1/credentials/machines[/{name}].
+func (f *fakeStoreServer) serveMachines(w http.ResponseWriter, r *http.Request, out func(int, any)) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	name := strings.TrimPrefix(strings.TrimPrefix(r.URL.Path, "/v1/credentials/machines"), "/")
+	if name == "" {
+		list := []map[string]any{}
+		for n, m := range f.machines {
+			list = append(list, map[string]any{"name": n, "kind": m["kind"]})
+		}
+		out(200, map[string]any{"machines": list})
+		return
+	}
+	switch r.Method {
+	case http.MethodPut:
+		var in map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&in)
+		f.machines[name] = in
+		out(200, map[string]any{"name": name, "kind": in["kind"], "updated": time.Now()})
+	case http.MethodGet:
+		rec, ok := f.machines[name]
+		if !ok {
+			out(404, map[string]any{"error": "not found"})
+			return
+		}
+		full := map[string]any{"name": name, "kind": rec["kind"], "address": rec["address"], "username": rec["username"],
+			"password": "", "private_key": "", "public_key": "", "updated": time.Now()}
+		for _, k := range []string{"password", "private_key", "public_key"} {
+			if v, ok := rec[k]; ok {
+				full[k] = v
+			}
+		}
+		out(200, full)
+	case http.MethodDelete:
+		delete(f.machines, name)
+		w.WriteHeader(204)
 	}
 }

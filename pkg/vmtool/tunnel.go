@@ -12,6 +12,11 @@ import (
 // child process. The token never goes in argv, an inventory or any file.
 const TokenEnv = "VMTOOL_TOKEN"
 
+// ServerTokenEnv is the environment variable that carries the client's store
+// token (config.ServerTokenEnv). No child vmtool builds for ssh, sshpass or
+// ansible gets it: those tools need nothing from the store.
+const ServerTokenEnv = "VMTOOL_SERVER_TOKEN"
+
 // Tunnel is how to reach guests: ssh runs `<Exe> tunnel host/vm` as its
 // ProxyCommand, and the child needs Token in its environment to pass vmtool's
 // token gate.
@@ -54,18 +59,26 @@ func (t Tunnel) ProxyCommand(host, name string) string {
 }
 
 // Environ is base with VMTOOL_TOKEN set to the token, replacing any existing
-// entry. It returns base unchanged when there is no token.
+// entry, and VMTOOL_SERVER_TOKEN (the store token) removed. With no token the
+// host token is left as it was.
 func (t Tunnel) Environ(base []string) []string {
-	if t.Token == "" {
-		return base
-	}
 	out := make([]string, 0, len(base)+1)
 	for _, kv := range base {
-		if !strings.HasPrefix(kv, TokenEnv+"=") {
-			out = append(out, kv)
+		if strings.HasPrefix(kv, ServerTokenEnv+"=") || (t.Token != "" && strings.HasPrefix(kv, TokenEnv+"=")) {
+			continue
 		}
+		out = append(out, kv)
 	}
-	return append(out, TokenEnv+"="+t.Token)
+	if t.Token != "" {
+		out = append(out, TokenEnv+"="+t.Token)
+	}
+	return out
+}
+
+// childEnviron is this process's environment for an ssh or sshpass child, less
+// the store token.
+func childEnviron() []string {
+	return Tunnel{}.Environ(os.Environ())
 }
 
 func (t Tunnel) check() error {

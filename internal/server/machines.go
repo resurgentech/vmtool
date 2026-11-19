@@ -27,7 +27,7 @@ func toAPIMachine(info *app.MachineInfo) api.MachineInfo {
 }
 
 func (h *handlers) ListMachines(ctx context.Context, _ api.ListMachinesRequestObject) (api.ListMachinesResponseObject, error) {
-	ms, err := h.svc.ListMachines(ctx)
+	ms, err := h.svcFor(ctx).ListMachines(ctx)
 	if err != nil {
 		return api.ListMachines500JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
 	}
@@ -68,7 +68,7 @@ func (h *handlers) AddMachine(ctx context.Context, req api.AddMachineRequestObje
 	// machines do not otherwise need it.
 	vms, release := h.libvirtNameCheck()
 	defer release()
-	info, err := h.svc.AddMachine(ctx, vms, in)
+	info, err := h.svcFor(ctx).AddMachine(ctx, vms, in)
 	if err != nil {
 		switch kindOf(err) {
 		case app.KindInvalid:
@@ -85,7 +85,7 @@ func (h *handlers) AddMachine(ctx context.Context, req api.AddMachineRequestObje
 }
 
 func (h *handlers) GetMachine(ctx context.Context, req api.GetMachineRequestObject) (api.GetMachineResponseObject, error) {
-	info, err := h.svc.GetMachine(ctx, req.Name)
+	info, err := h.svcFor(ctx).GetMachine(ctx, req.Name)
 	if err != nil {
 		if kindOf(err) == app.KindNotFound {
 			return api.GetMachine404JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
@@ -96,7 +96,7 @@ func (h *handlers) GetMachine(ctx context.Context, req api.GetMachineRequestObje
 }
 
 func (h *handlers) RemoveMachine(ctx context.Context, req api.RemoveMachineRequestObject) (api.RemoveMachineResponseObject, error) {
-	if err := h.svc.RemoveMachine(ctx, req.Name); err != nil {
+	if err := h.svcFor(ctx).RemoveMachine(ctx, req.Name); err != nil {
 		if kindOf(err) == app.KindNotFound {
 			return api.RemoveMachine404JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
 		}
@@ -106,7 +106,7 @@ func (h *handlers) RemoveMachine(ctx context.Context, req api.RemoveMachineReque
 }
 
 func (h *handlers) RebootMachine(ctx context.Context, req api.RebootMachineRequestObject) (api.RebootMachineResponseObject, error) {
-	info, err := h.svc.RebootMachine(ctx, req.Name)
+	info, err := h.svcFor(ctx).RebootMachine(ctx, req.Name)
 	if err != nil {
 		switch kindOf(err) {
 		case app.KindNotFound:
@@ -124,7 +124,7 @@ func (h *handlers) ExecMachine(ctx context.Context, req api.ExecMachineRequestOb
 	if req.Body == nil || len(req.Body.Command) == 0 {
 		return api.ExecMachine400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: "command is required"}}, nil
 	}
-	res, err := h.svc.ExecMachine(ctx, req.Name, req.Body.Command, stdinOf(req.Body.Stdin))
+	res, err := h.svcFor(ctx).ExecMachine(ctx, req.Name, req.Body.Command, stdinOf(req.Body.Stdin))
 	if err != nil {
 		switch kindOf(err) {
 		case app.KindInvalid:
@@ -148,7 +148,7 @@ func (h *handlers) RunMachinePlaybook(ctx context.Context, req api.RunMachinePla
 	if req.Body.ExtraVars != nil {
 		extra = map[string]string(*req.Body.ExtraVars)
 	}
-	res, err := h.svc.RunMachinePlaybook(ctx, req.Name, req.Body.Playbook, extra)
+	res, err := h.svcFor(ctx).RunMachinePlaybook(ctx, req.Name, req.Body.Playbook, extra)
 	out := ""
 	if res != nil {
 		out = res.Output

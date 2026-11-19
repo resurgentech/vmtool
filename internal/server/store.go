@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/jaredeh/vmtool/internal/api"
 	"github.com/jaredeh/vmtool/internal/app"
@@ -45,11 +46,38 @@ func (h *handlers) decideStore(f api.StrictHandlerFunc, operationID string) api.
 	return func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error) {
 		// A session per request: the mode is decided per request and not
 		// shared between concurrent ones.
-		sess := app.OpenStoreSession(h.storeURL, h.storeToken, h.storeOpts, nil)
+		// Every line the session delivers (the fallback line, and the notices of
+		// a store that fails mid-request) becomes a warnings header value. A
+		// line that comes after the response was written cannot be a header; the
+		// handler for create also puts it in the progress stream. notices
+		// closes when the handler returns, so a late goroutine never touches
+		// the header map.
+		hw := &headerNotes{w: w}
+		defer hw.close()
+		sess := app.OpenStoreSession(h.storeURL, h.storeToken, h.storeOpts, hw.add)
 		sess.Mode(ctx)
-		if n := sess.Notice(); n != "" {
-			w.Header().Add(warningsHeader, strings.Join(strings.Fields(n), " "))
-		}
 		return f(context.WithValue(ctx, storeKey, sess), w, r, request)
 	}
+}
+
+// headerNotes adds notice lines to a response's warnings header until the
+// handler returns.
+type headerNotes struct {
+	mu     sync.Mutex
+	w      http.ResponseWriter
+	closed bool
+}
+
+func (h *headerNotes) add(line string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if !h.closed {
+		h.w.Header().Add(warningsHeader, strings.Join(strings.Fields(line), " "))
+	}
+}
+
+func (h *headerNotes) close() {
+	h.mu.Lock()
+	h.closed = true
+	h.mu.Unlock()
 }

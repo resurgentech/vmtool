@@ -74,6 +74,15 @@ func (h *handlers) guestSvc(ctx context.Context) *app.Service {
 	return svc
 }
 
+// svcFor is h.svc with this request's store session, when the operation
+// decided one (store.go); otherwise h.svc itself.
+func (h *handlers) svcFor(ctx context.Context) *app.Service {
+	if sess := storeSessionOf(ctx); sess != nil {
+		return h.svc.WithStore(sess)
+	}
+	return h.svc
+}
+
 // requestToken is the bearer of the request ctx carries (requireBearer has
 // already checked it), or "" when there is none.
 func requestToken(ctx context.Context) string {
@@ -278,7 +287,7 @@ func (h *handlers) CreateVM(ctx context.Context, req api.CreateVMRequestObject) 
 func (h *handlers) DeleteVM(ctx context.Context, req api.DeleteVMRequestObject) (api.DeleteVMResponseObject, error) {
 	noclone := derefBool(req.Params.Noclone)
 	_, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
-		return nil, h.svc.DeleteVM(ctx, m, app.VMRef{Host: req.Host, Name: req.Name}, noclone)
+		return nil, h.svcFor(ctx).DeleteVM(ctx, m, app.VMRef{Host: req.Host, Name: req.Name}, noclone)
 	})
 	if err != nil {
 		if kindOf(err) == app.KindNotFound {

@@ -172,7 +172,28 @@ func loadMachine(op, name string) (*vmtool.Machine, error) {
 }
 
 // ListMachines returns registered machines, probed concurrently.
-func (s *Service) ListMachines(_ context.Context) ([]MachineInfo, error) {
+func (s *Service) ListMachines(ctx context.Context) ([]MachineInfo, error) {
+	if s.storeMode(ctx) {
+		// The store's machines and any only here: each folder is synced (cached,
+		// or pushed) before it is probed.
+		names := map[string]bool{}
+		if local, err := vmtool.ListMachines(); err == nil {
+			for _, m := range local {
+				names[m.Name] = true
+			}
+		}
+		cctx, cancel := s.credCtx(ctx)
+		if sums, err := s.Store.CredentialsFor(ctx).ListMachines(cctx); err == nil {
+			for _, m := range sums {
+				names[m.Name] = true
+			}
+		}
+		cancel()
+		note := s.noter(nil)
+		for n := range names {
+			s.syncMachine(ctx, n, note)
+		}
+	}
 	ms, err := vmtool.ListMachines()
 	if err != nil {
 		return nil, wrap("list_machines", err)
@@ -190,8 +211,8 @@ func (s *Service) ListMachines(_ context.Context) ([]MachineInfo, error) {
 	return out, nil
 }
 
-func (s *Service) GetMachine(_ context.Context, name string) (*MachineInfo, error) {
-	m, err := loadMachine("get_machine", name)
+func (s *Service) GetMachine(ctx context.Context, name string) (*MachineInfo, error) {
+	m, err := s.loadMachineFor(ctx, "get_machine", name)
 	if err != nil {
 		return nil, err
 	}
@@ -199,14 +220,28 @@ func (s *Service) GetMachine(_ context.Context, name string) (*MachineInfo, erro
 	return &info, nil
 }
 
-// RemoveMachine forgets the machine locally. The machine is not touched.
-func (s *Service) RemoveMachine(_ context.Context, name string) error {
-	return wrap("remove_machine", vmtool.RemoveMachine(name))
+// RemoveMachine forgets the machine: the store's record (store mode) and the
+// local folder. The machine is not touched. In store mode the store goes first,
+// and a store that cannot delete fails the command: the record would come back.
+func (s *Service) RemoveMachine(ctx context.Context, name string) error {
+	const op = "remove_machine"
+	if s.storeMode(ctx) {
+		s.syncMachine(ctx, name, s.noter(nil))
+		if _, err := vmtool.LoadMachine(name); err != nil {
+			return wrap(op, err)
+		}
+		cctx, cancel := s.credCtx(ctx)
+		defer cancel()
+		if err := s.Store.CredentialsFor(ctx).DeleteMachine(cctx, name); err != nil {
+			return wrap(op, err)
+		}
+	}
+	return wrap(op, vmtool.RemoveMachine(name))
 }
 
 // AddMachine registers and onboards a metal/alien machine. vms is used to
 // refuse names that are libvirt domains; nil skips that check.
-func (s *Service) AddMachine(_ context.Context, vms Manager, in AddMachineInput) (*MachineInfo, error) {
+func (s *Service) AddMachine(ctx context.Context, vms Manager, in AddMachineInput) (*MachineInfo, error) {
 	const op = "add_machine"
 	kind := vmtool.MachineKind(in.Kind)
 	if kind == "" {
@@ -236,6 +271,9 @@ func (s *Service) AddMachine(_ context.Context, vms Manager, in AddMachineInput)
 			return nil, wrap(op, err)
 		}
 	}
+	// An existing store record is cached first, so a rerun resumes it and a
+	// different one is refused like a local registration.
+	s.syncMachine(ctx, in.Name, s.noter(in.OnProgress))
 	m := vmtool.Machine{Name: in.Name, Kind: kind, Host: in.Host}
 	if existing, err := vmtool.LoadMachine(in.Name); err == nil {
 		if existing.Host != m.Host || existing.Kind != m.Kind {
@@ -271,11 +309,11 @@ func (s *Service) AddMachine(_ context.Context, vms Manager, in AddMachineInput)
 	}
 
 	if in.Commission {
-		if err := s.machinePlaybook(op, m, commissionPlaybook, nil, progress); err != nil {
+		if err := s.machinePlaybook(ctx, op, m, commissionPlaybook, nil, progress); err != nil {
 			return nil, err
 		}
 	}
-	if err := s.machinePlaybook(op, m, setupBotPlaybook, nil, progress); err != nil {
+	if err := s.machinePlaybook(ctx, op, m, setupBotPlaybook, nil, progress); err != nil {
 		return nil, err
 	}
 
@@ -287,7 +325,7 @@ func (s *Service) AddMachine(_ context.Context, vms Manager, in AddMachineInput)
 	return &info, nil
 }
 
-func (s *Service) machinePlaybook(op string, m vmtool.Machine, playbook string, extra map[string]string, progress ProgressFunc) error {
+func (s *Service) machinePlaybook(ctx context.Context, op string, m vmtool.Machine, playbook string, extra map[string]string, progress ProgressFunc) error {
 	pb, err := s.resolvePlaybook(playbook)
 	if err != nil {
 		return err
@@ -305,7 +343,11 @@ func (s *Service) machinePlaybook(op string, m vmtool.Machine, playbook string, 
 		return wrap(op, err)
 	}
 	defer cleanup()
+	before := machineSnapshot(ctx, m.Name)
 	out, err := vmtool.RunPlaybook(vmtool.Tunnel{}, invPath, pb, withMachineVars(m, extra))
+	// setup_bot.yml writes the folder: hand it to the store after a failed run
+	// as well as a successful one.
+	s.handOffMachine(ctx, m.Name, before, s.noter(progress))
 	if err != nil {
 		progress.emit("playbook", "error", err.Error(), out)
 		return &Error{Kind: KindInternal, Op: op, Err: err, Output: out}
@@ -323,7 +365,7 @@ func withMachineVars(m vmtool.Machine, extra map[string]string) map[string]strin
 	return out
 }
 
-func (s *Service) RunMachinePlaybook(_ context.Context, name, playbook string, extraVars map[string]string) (*PlaybookResult, error) {
+func (s *Service) RunMachinePlaybook(ctx context.Context, name, playbook string, extraVars map[string]string) (*PlaybookResult, error) {
 	const op = "machine_playbook"
 	if err := vmtool.CheckExtraVars(extraVars); err != nil {
 		return nil, invalid(op, err)
@@ -334,12 +376,12 @@ func (s *Service) RunMachinePlaybook(_ context.Context, name, playbook string, e
 	if _, err := s.resolvePlaybook(playbook); err != nil {
 		return nil, err
 	}
-	m, err := loadMachine(op, name)
+	m, err := s.loadMachineFor(ctx, op, name)
 	if err != nil {
 		return nil, err
 	}
 	var res PlaybookResult
-	err = s.machinePlaybook(op, *m, playbook, extraVars, func(ev ProgressEvent) {
+	err = s.machinePlaybook(ctx, op, *m, playbook, extraVars, func(ev ProgressEvent) {
 		if ev.Output != "" {
 			res.Output = ev.Output
 		}
@@ -350,12 +392,12 @@ func (s *Service) RunMachinePlaybook(_ context.Context, name, playbook string, e
 // ExecMachine runs argv, exactly, on machine name over SSH. stdin is
 // written to the command's standard input, then closed; it is never logged or
 // put in an error.
-func (s *Service) ExecMachine(_ context.Context, name string, argv []string, stdin string) (*ExecResult, error) {
+func (s *Service) ExecMachine(ctx context.Context, name string, argv []string, stdin string) (*ExecResult, error) {
 	const op = "machine_exec"
 	if len(argv) == 0 {
 		return nil, invalid(op, fmt.Errorf("command is required"))
 	}
-	m, err := loadMachine(op, name)
+	m, err := s.loadMachineFor(ctx, op, name)
 	if err != nil {
 		return nil, err
 	}
@@ -366,9 +408,9 @@ func (s *Service) ExecMachine(_ context.Context, name string, argv []string, std
 
 // RebootMachine schedules a reboot one second out so ssh returns cleanly
 // before the connection drops.
-func (s *Service) RebootMachine(_ context.Context, name string) (*MachineInfo, error) {
+func (s *Service) RebootMachine(ctx context.Context, name string) (*MachineInfo, error) {
 	const op = "machine_reboot"
-	m, err := loadMachine(op, name)
+	m, err := s.loadMachineFor(ctx, op, name)
 	if err != nil {
 		return nil, err
 	}
@@ -390,7 +432,7 @@ func (s *Service) RebootMachine(_ context.Context, name string) (*MachineInfo, e
 // (each argument quoted), on machine name. Stdio is left unset for the caller.
 // vmtool.WithTTY asks for a live terminal (ssh -tt).
 func (s *Service) MachineRemoteCmd(name string, argv []string, opts ...vmtool.SSHOption) (*exec.Cmd, error) {
-	m, err := loadMachine("machine_exec", name)
+	m, err := s.loadMachineFor(context.Background(), "machine_exec", name)
 	if err != nil {
 		return nil, err
 	}
@@ -404,7 +446,7 @@ func (s *Service) ConsoleMachine(name string) (*exec.Cmd, error) {
 	if !vmtool.ValidMachineName(name) {
 		return nil, invalid("console", fmt.Errorf("invalid machine name %q", name))
 	}
-	m, err := loadMachine("console", name)
+	m, err := s.loadMachineFor(context.Background(), "console", name)
 	if err != nil {
 		return nil, err
 	}
@@ -413,7 +455,7 @@ func (s *Service) ConsoleMachine(name string) (*exec.Cmd, error) {
 
 // MachineSSHCmd builds an interactive ssh command for CLI, TUI, and console.
 func (s *Service) MachineSSHCmd(name string, extraArgs ...string) (*exec.Cmd, error) {
-	m, err := loadMachine("machine_ssh", name)
+	m, err := s.loadMachineFor(context.Background(), "machine_ssh", name)
 	if err != nil {
 		return nil, err
 	}

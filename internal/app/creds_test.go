@@ -14,6 +14,7 @@ import (
 type createVMs struct {
 	Manager
 	ip      string
+	uuid    string // the domain UUID Info reports
 	deleted []string
 
 	// Clone and pool listing, for the cache default and the clone size.
@@ -38,7 +39,7 @@ func (f *createVMs) WaitForIP(string, time.Duration) (string, error) {
 	return f.ip, nil
 }
 func (f *createVMs) Info(name string) (*vmtool.VMInfo, error) {
-	return &vmtool.VMInfo{Name: name, IP: f.ip, State: vmtool.StateRunning}, nil
+	return &vmtool.VMInfo{Name: name, IP: f.ip, State: vmtool.StateRunning, UUID: f.uuid}, nil
 }
 func (f *createVMs) Delete(name string, _ bool) error {
 	f.deleted = append(f.deleted, name)

@@ -22,7 +22,7 @@ func (s *Service) MigrateDisk(_ context.Context, m Manager, name, pool string) (
 	return info, nil
 }
 
-func (s *Service) ResizeDisk(_ context.Context, m Manager, ref VMRef, sizeGB uint, auth vmtool.Auth) (*ResizeResult, error) {
+func (s *Service) ResizeDisk(ctx context.Context, m Manager, ref VMRef, sizeGB uint, auth vmtool.Auth) (*ResizeResult, error) {
 	if sizeGB == 0 {
 		return nil, invalid("resize_disk", fmt.Errorf("size must be > 0"))
 	}
@@ -45,6 +45,7 @@ func (s *Service) ResizeDisk(_ context.Context, m Manager, ref VMRef, sizeGB uin
 		res.GrowError = err.Error()
 		return res, nil
 	}
+	s.prepareCreds(ctx, ref, info.UUID, s.noter(nil))
 	resolved := vmtool.ResolveVMAuth(ref.Host, ref.Name, auth)
 	invPath, cleanup, err := vmtool.TempVMInventory(s.Tunnel, ref.Host, ref.Name, resolved, credsDir)
 	if err != nil {

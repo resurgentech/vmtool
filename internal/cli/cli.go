@@ -95,7 +95,7 @@ func (e *env) stderr() io.Writer {
 // pays for the probe.
 var storeCommands = map[string]bool{
 	"create": true, "delete": true, "ssh": true, "exec": true, "playbook": true,
-	"resize-disk": true, "i": true, "metal": true,
+	"resize-disk": true, "i": true, "metal": true, "creds": true,
 }
 
 func usesStore(cmd *cobra.Command) bool {
@@ -232,6 +232,7 @@ it checks the bearer token of every request instead.`,
 
 	root.AddCommand(
 		createCmd(e),
+		credsCmd(e),
 		startCmd(e),
 		stopCmd(e),
 		resumeCmd(e),
@@ -716,7 +717,13 @@ checking is disabled.
 				return fmt.Errorf("VM %q has no IP address", ref.String())
 			}
 
-			c, err := e.service("").SSHCmd(ref, args[1:]...)
+			svc := e.service("")
+			// Store mode: reconcile the credentials folder (and fetch it when it
+			// is missing) before ssh reads its key.
+			if err := svc.PrepareVMCreds(cmd.Context(), m, ref); err != nil {
+				return err
+			}
+			c, err := svc.SSHCmd(ref, args[1:]...)
 			if err != nil {
 				return err
 			}
@@ -760,17 +767,28 @@ Put -t before the VM; after it, -t belongs to the remote command.
 				return fmt.Errorf("VM %q has no IP address", ref.String())
 			}
 
-			c, err := e.service("").RemoteCmd(ref, execCommand(args), ttyOpts(tty)...)
-			if err != nil {
+			svc := e.service("")
+			if err := svc.PrepareVMCreds(cmd.Context(), m, ref); err != nil {
 				return err
 			}
-			// RemoteCmd (exact argv) leaves stdio unset (it is also used for captured runs).
-			c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
-			err = c.Run()
+			run := func() error {
+				c, err := svc.RemoteCmd(ref, execCommand(args), ttyOpts(tty)...)
+				if err != nil {
+					return err
+				}
+				// RemoteCmd (exact argv) leaves stdio unset (it is also used for captured runs).
+				c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
+				return c.Run()
+			}
+			err = run()
+			var ee *exec.ExitError
+			if errors.As(err, &ee) && ee.ExitCode() == 255 && svc.RefetchVMCreds(cmd.Context(), m, ref) {
+				// ssh failed (255) and the store has newer credentials: once more.
+				err = run()
+			}
 			if err == nil {
 				return nil
 			}
-			var ee *exec.ExitError
 			if errors.As(err, &ee) {
 				return remoteExitError{code: ee.ExitCode()}
 			}

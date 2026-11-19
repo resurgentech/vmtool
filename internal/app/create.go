@@ -221,7 +221,8 @@ func (s *Service) CreateVM(ctx context.Context, m Manager, in CreateVMInput) (*v
 	if !in.Noclone {
 		// A fresh clone only has image-default users; drop creds left by a
 		// previous VM of the same name on this host.
-		if err := vmtool.ForgetVM(ref.Host, ref.Name); err != nil {
+		// In store mode the store's record goes too.
+		if err := s.forgetCreds(ctx, ref, nil); err != nil {
 			return nil, wrap("create", err)
 		}
 		emit(in, "clone", "start", "cloning image", "")
@@ -314,6 +315,11 @@ func (s *Service) CreateVM(ctx context.Context, m Manager, in CreateVMInput) (*v
 	}
 	emit(in, "wait_ip", "done", "IP "+ip, "")
 
+	note := s.noter(in.OnProgress)
+	if in.Noclone {
+		// The disk was kept, so a folder from before may be this VM's.
+		s.prepareCreds(ctx, ref, info.UUID, note)
+	}
 	auth := vmtool.ResolveVMAuth(ref.Host, ref.Name, vmtool.Auth{User: cfg.SSHUser, Password: cfg.SSHPass})
 	credsDir, err := vmtool.AbsCredsDir(ref.Host, ref.Name)
 	if err != nil {
@@ -365,8 +371,12 @@ func (s *Service) CreateVM(ctx context.Context, m Manager, in CreateVMInput) (*v
 			emit(in, "playbook", "error", err.Error(), "")
 			return info, wrap("create", err)
 		}
+		before := credSnapshot(ref)
 		out, err := vmtool.RunPlaybook(s.Tunnel, invPath, pb, withDeviceID(cfg.Name, in.ExtraVars))
 		cleanup()
+		// setup_bot.yml writes the folder: hand it to the store after a failed
+		// run as well as a successful one.
+		s.handOffCreds(ctx, ref, info.UUID, before, note)
 		if err != nil {
 			emit(in, "playbook", "error", err.Error(), out)
 			return info, &Error{Kind: KindInternal, Op: "playbook", Err: err, Output: out}

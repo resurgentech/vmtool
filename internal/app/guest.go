@@ -14,7 +14,7 @@ import (
 // ExecVM runs argv, exactly, on VM ref over SSH and returns the result. Every
 // argument reaches the guest as one argument; a shell only when argv is `sh -c`. stdin is written to the command's
 // standard input, then closed; it is never logged or put in an error.
-func (s *Service) ExecVM(_ context.Context, m Manager, ref VMRef, argv []string, stdin string) (*ExecResult, error) {
+func (s *Service) ExecVM(ctx context.Context, m Manager, ref VMRef, argv []string, stdin string) (*ExecResult, error) {
 	if len(argv) == 0 {
 		return nil, invalid("exec", fmt.Errorf("command is required"))
 	}
@@ -28,15 +28,25 @@ func (s *Service) ExecVM(_ context.Context, m Manager, ref VMRef, argv []string,
 	if info.IP == "" {
 		return nil, conflict("exec", fmt.Errorf("VM %q has no IP address", ref.String()))
 	}
-	c, err := vmtool.RemoteCmd(s.Tunnel, ref.Host, ref.Name, argv)
-	if err != nil {
-		return nil, wrap("exec", err)
+	s.prepareCreds(ctx, ref, info.UUID, s.noter(nil))
+	run := func() (*ExecResult, error) {
+		c, err := vmtool.RemoteCmd(s.Tunnel, ref.Host, ref.Name, argv)
+		if err != nil {
+			return nil, wrap("exec", err)
+		}
+		c.Stdin = strings.NewReader(stdin)
+		return runRemote("exec", c, 0)
 	}
-	c.Stdin = strings.NewReader(stdin)
-	return runRemote("exec", c, 0)
+	res, err := run()
+	// ssh's own failure (and a remote command's choice) is 255: fetch the
+	// record again, once, and run again only if it changed.
+	if err == nil && res.ExitCode == 255 && s.RefetchVMCreds(ctx, m, ref) {
+		return run()
+	}
+	return res, err
 }
 
-func (s *Service) RunPlaybook(_ context.Context, m Manager, ref VMRef, playbook string, auth vmtool.Auth, extraVars map[string]string) (*PlaybookResult, error) {
+func (s *Service) RunPlaybook(ctx context.Context, m Manager, ref VMRef, playbook string, auth vmtool.Auth, extraVars map[string]string) (*PlaybookResult, error) {
 	if err := vmtool.CheckExtraVars(extraVars); err != nil {
 		return nil, invalid("playbook", err)
 	}
@@ -58,6 +68,9 @@ func (s *Service) RunPlaybook(_ context.Context, m Manager, ref VMRef, playbook 
 	if err != nil {
 		return nil, wrap("playbook", err)
 	}
+	note := s.noter(nil)
+	s.prepareCreds(ctx, ref, info.UUID, note)
+	before := credSnapshot(ref)
 	resolved := vmtool.ResolveVMAuth(ref.Host, ref.Name, auth)
 	invPath, cleanup, err := vmtool.TempVMInventory(s.Tunnel, ref.Host, ref.Name, resolved, credsDir)
 	if err != nil {
@@ -65,6 +78,9 @@ func (s *Service) RunPlaybook(_ context.Context, m Manager, ref VMRef, playbook 
 	}
 	defer cleanup()
 	out, err := vmtool.RunPlaybook(s.Tunnel, invPath, pb, withDeviceID(ref.Name, extraVars))
+	// The playbook may have written the folder (setup_bot.yml): hand it to the
+	// store after a failed run as well as a successful one.
+	s.handOffCreds(ctx, ref, info.UUID, before, note)
 	res := &PlaybookResult{Output: out}
 	if err != nil {
 		return res, &Error{Kind: KindInternal, Op: "playbook", Err: err, Output: out}
@@ -104,7 +120,7 @@ func (s *Service) RemoteCmd(ref VMRef, argv []string, opts ...vmtool.SSHOption) 
 // shell. It checks the ref and that the VM exists and has an address
 // (conflict otherwise). Stdio and TERM are the caller's: the server gives the
 // command a local pty and starts it. Nothing is started here.
-func (s *Service) ConsoleVM(_ context.Context, m Manager, ref VMRef) (*exec.Cmd, error) {
+func (s *Service) ConsoleVM(ctx context.Context, m Manager, ref VMRef) (*exec.Cmd, error) {
 	if err := validRef("console", ref); err != nil {
 		return nil, err
 	}
@@ -115,6 +131,7 @@ func (s *Service) ConsoleVM(_ context.Context, m Manager, ref VMRef) (*exec.Cmd,
 	if info.IP == "" {
 		return nil, conflict("console", fmt.Errorf("VM %q has no IP address", ref.String()))
 	}
+	s.prepareCreds(ctx, ref, info.UUID, s.noter(nil))
 	c, err := vmtool.ShellCmd(s.Tunnel, ref.Host, ref.Name, vmtool.WithTTY())
 	if err != nil {
 		return nil, wrap("console", err)

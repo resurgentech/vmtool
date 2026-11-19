@@ -7,8 +7,10 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/jaredeh/vmtool/internal/app"
 	"github.com/jaredeh/vmtool/internal/config"
@@ -26,13 +28,19 @@ type cliStore struct {
 	whoami  atomic.Int32
 	version atomic.Int32
 	down    atomic.Bool
+	// creds are the VM records by "host/name" (S8); gets counts their GETs and
+	// onGet, if set, runs after each with the 1-based count.
+	mu    sync.Mutex
+	creds map[string]map[string]any
+	gets  atomic.Int32
+	onGet func(n int32)
 }
 
 // newCLIStore starts a store and points the CLI's store client at its test
 // CA. No system trust store, no network beyond loopback.
 func newCLIStore(t *testing.T) *cliStore {
 	t.Helper()
-	s := &cliStore{}
+	s := &cliStore{creds: map[string]map[string]any{}}
 	s.ts = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		out := func(code int, v any) {
 			w.Header().Set("Content-Type", "application/json")
@@ -55,6 +63,10 @@ func newCLIStore(t *testing.T) *cliStore {
 			}
 			out(200, map[string]string{"name": "jared"})
 		default:
+			if key, ok := strings.CutPrefix(r.URL.Path, "/v1/credentials/vms/"); ok {
+				s.serveVM(w, r, key, out)
+				return
+			}
 			out(404, map[string]string{"error": "not found"})
 		}
 	}))
@@ -64,6 +76,59 @@ func newCLIStore(t *testing.T) *cliStore {
 	storeClientOptions = []storeclient.Option{storeclient.WithRootCAs(pool)}
 	t.Cleanup(func() { storeClientOptions = old })
 	return s
+}
+
+func (s *cliStore) serveVM(w http.ResponseWriter, r *http.Request, key string, out func(int, any)) {
+	if r.Header.Get("Authorization") != "Bearer "+storeTok {
+		out(401, map[string]string{"error": "unauthorized"})
+		return
+	}
+	var post func() // runs after the lock is released
+	defer func() {
+		if post != nil {
+			post()
+		}
+	}()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	switch r.Method {
+	case http.MethodPut:
+		var in map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&in)
+		s.creds[key] = in
+		out(200, map[string]any{"uuid": in["uuid"], "host": "h", "name": "n", "updated": time.Now()})
+	case http.MethodGet:
+		n := s.gets.Add(1)
+		if s.onGet != nil {
+			post = func() { s.onGet(n) }
+		}
+		rec, ok := s.creds[key]
+		switch {
+		case !ok:
+			out(404, map[string]any{"error": "not found"})
+		case rec["uuid"] != r.URL.Query().Get("uuid"):
+			out(404, map[string]any{"error": "stale", "stale": true})
+		default:
+			full := map[string]any{"host": "h", "name": "n", "uuid": rec["uuid"], "username": rec["username"],
+				"password": "", "private_key": "", "public_key": "", "updated": time.Now()}
+			for _, k := range []string{"password", "private_key", "public_key"} {
+				if v, ok := rec[k]; ok {
+					full[k] = v
+				}
+			}
+			out(200, full)
+		}
+	case http.MethodDelete:
+		delete(s.creds, key)
+		w.WriteHeader(204)
+	}
+}
+
+// vmRecord puts a VM record into the store double.
+func (s *cliStore) vmRecord(key, uuid, pass, privKey string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.creds[key] = map[string]any{"uuid": uuid, "username": "bot", "password": pass, "private_key": privKey, "public_key": "PLACEHOLDER-pub"}
 }
 
 func (s *cliStore) cfg() string {
@@ -93,6 +158,7 @@ var storeUsers = map[string]bool{
 	"vmtool metal add": true, "vmtool metal list": true, "vmtool metal info": true,
 	"vmtool metal rm": true, "vmtool metal ssh": true, "vmtool metal exec": true,
 	"vmtool metal playbook": true, "vmtool metal reboot": true,
+	"vmtool creds fetch": true, "vmtool creds forget": true,
 }
 
 func TestStoreModeDecidedAtCommandStart(t *testing.T) {

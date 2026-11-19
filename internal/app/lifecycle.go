@@ -25,7 +25,7 @@ func (s *Service) ListVMs(_ context.Context, m Manager) ([]vmtool.VMInfo, error)
 	return vms, nil
 }
 
-func (s *Service) DeleteVM(_ context.Context, m Manager, ref VMRef, noclone bool) error {
+func (s *Service) DeleteVM(ctx context.Context, m Manager, ref VMRef, noclone bool) error {
 	if err := validRef("delete", ref); err != nil {
 		return err
 	}
@@ -34,7 +34,7 @@ func (s *Service) DeleteVM(_ context.Context, m Manager, ref VMRef, noclone bool
 	}
 	// noclone keeps the disk, so its guest users and keys are still valid.
 	if !noclone {
-		if err := vmtool.ForgetVM(ref.Host, ref.Name); err != nil {
+		if err := s.forgetCreds(ctx, ref, s.noter(nil)); err != nil {
 			return wrap("delete", err)
 		}
 	}
