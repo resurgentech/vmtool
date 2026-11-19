@@ -9,6 +9,7 @@ a handler.
 | Path | Contract |
 |---|---|
 | `openapi/vmtool.yaml` | Every HTTP endpoint `vmtool server` registers. oapi-codegen generates models, a stdlib `ServerInterface`, a strict wrapper, an embedded spec, and a test client (`internal/api`). |
+| `openapi/store.yaml` | The image and credential store's HTTP API (`vmtool-store`, 1.0.0), served by `cmd/vmtool-store`, not by `vmtool server`. Its own generated package, `internal/storeapi`; handled as `vmtool.yaml` is (see [The store](#the-store)). |
 
 Interactive SSH from CLI (`vmtool ssh`) and TUI (`t`) execs `ssh` locally and
 is not an HTTP operation.
@@ -16,11 +17,12 @@ is not an HTTP operation.
 ## Codegen workflow
 
 ```bash
-go generate ./internal/api/...
-scripts/verify-generate.sh   # regenerate + fail if internal/api is dirty
+go generate ./internal/api/... ./internal/storeapi/...
+scripts/verify-generate.sh   # regenerate both + fail if internal/api or internal/storeapi is dirty
 ```
 
-Run generate after editing the YAML and commit `internal/api/api.gen.go`.
+Run generate after editing a YAML and commit the generated files
+(`internal/api/api.gen.go`, and the generated file in `internal/storeapi`).
 
 ## Coverage policy
 
@@ -224,6 +226,124 @@ does not work against this one as it is. What to change:
   `{"command": ["sh", "-c", "umask 077; cat > /p/.env.new && mv /p/.env.new /p/.env"], "stdin": "KEY=PLACEHOLDER\n"}`.
   The reply carries `exit_code`; the secret is on stdin, in no echo and in no
   argv. `POST /v1/metal/{name}/exec` is the same for a machine.
+
+## The store
+
+`openapi/store.yaml` is the contract of `vmtool-store`, a separate command
+(`cmd/vmtool-store`, built with `CGO_ENABLED=0`; it imports neither
+`pkg/vmtool` nor `internal/config`). It keeps base images (bytes in an S3
+bucket, an index in SQLite) and guest credentials (AES-256-GCM columns in
+SQLite). The spec-first rule applies as for `vmtool.yaml`, and every route the
+store serves is in its spec (the exclusion register above is for vmtool's
+server). Setup, modes and deployment are in the root `README.md`; this section
+is the contract.
+
+**Auth.** Every route needs `Authorization: Bearer <token>` except `GET
+/version`. The store holds a SHA-256 per named caller (`tokens.yaml`), never a
+token, and logs requests by caller name; it logs no token, ticket, credential
+or request body. One more scheme exists, `Authorization: Ticket <t>`, accepted
+on exactly `GET /v1/images/{name}/blob`; on any other route it is 401, like a
+bad token. **A store token opens every guest's credentials.**
+
+| Group | Operations |
+|---|---|
+| Probe | `getVersion` (public); `whoami` (the caller's name; the client's mode check) |
+| Images | `listImages`, `getImage`, `putImage`, `deleteImage`, `getImageBlob`, `createImageTicket` |
+| VM credentials, keyed by (host, name) and the domain UUID | `getVMCredential`, `putVMCredential`, `deleteVMCredential` |
+| Metal records, keyed by name | `listMachineCredentials`, `getMachineCredential`, `putMachineCredential`, `deleteMachineCredential` |
+
+**Images.** `putImage` streams the body to the bucket and hashes it as it is
+written; the image is indexed only when the SHA-256 equals `X-Image-SHA256` and
+the length equals `Content-Length` (400 otherwise; 411 without a length). A push
+of an existing name with a new digest replaces it, and the old image is served
+until the new one is indexed (the object key contains the digest). A second
+push of a name already in flight is 409.
+
+**Tickets.** `createImageTicket` returns a random ticket for one image at its
+current digest: read-only, 15 minutes (`store.TicketLifetime`), spent by the
+first successful download, kept by the store only as a hash and only in memory
+(a store restart voids every ticket). A ticket opens that image's blob and
+nothing else: another image, a changed digest, an expired or spent ticket, or
+any other route all answer 401.
+
+**Credentials.** The `GET` of a VM record carries the domain UUID the caller
+holds. A record for another UUID is 404 with `"stale": true` and no credential
+field, so a record for a recreated VM is never used. That `GET` and the machine
+`GET` are the only responses that carry a secret; a `PUT` does not echo one.
+`vmtool delete` and `create`'s replace call the `DELETE`.
+
+### The client's two modes
+
+`config.yml` `server: {url: https://...}` (https only; no credentials, query or
+fragment in the URL) makes a client "configured". The token is
+`VMTOOL_SERVER_TOKEN` from the environment, else `.env`; never `config.yml`. At
+the start of a command that uses credentials or images
+(`app.StoreSession.Mode`), one authenticated `GET /v1/whoami`, limited to 3
+seconds, decides, once for the whole command:
+
+- answered: **store mode**. Credentials, metal records and images come from the
+  store; `.machines/` is a cache.
+- not configured, no token, or no answer: **local mode**. When configured, one
+  stderr line: `<host> unreachable: using this machine's .machines/ and
+  image_dir` (`<host>: <reason>: using ...` when the token is missing).
+
+A store that fails inside a store-mode command does not change the mode:
+credential writes land in `.machines/` marked pending, the command succeeds,
+one line says the credentials are only on this machine, and reads fall back to
+the cache. There is no queue.
+
+### Cache markers and reconciliation
+
+A credentials folder `.machines/<vm>.<host>.vmtool/` holds a `.vmtool-source`
+marker (`pkg/vmtool/credcache.go`): `store <uuid>` is a cache of the store's
+record for that domain UUID; `pending <uuid>` was written here and is not in the
+store; a folder with no marker (local mode, or from before the store) counts as
+pending with the UUID unknown. In store mode the first command that uses the VM
+(`Service.PrepareVMCreds`) compares with the domain's current UUID
+(`VMInfo.uuid`, API 2.3.0, from its daemon):
+
+| Folder | Store | Result |
+|---|---|---|
+| pending, UUID matches (or unknown) | no record, or the same UUID | `PUT`; marker becomes `store`; one notice |
+| pending, another UUID | any | stale: moved to `.machines/.stale/<folder>-<date>/`, never pushed, never deleted; one notice |
+| `store` | record lost | `PUT` back; one notice |
+
+After a playbook run (success or failure) the folder is pushed when it changed;
+the record is fetched when the folder is missing, and once more after `ssh`
+exits 255. A daemon that reports no UUID (older than 2.3.0) gets no sync and one
+line saying to redeploy it.
+
+### `fetchImage` and the relay
+
+`fetchImage` (`POST /v1/hosts/{host}/images/{name}/fetch`, in `vmtool.yaml`,
+API 2.3.0) has a hypervisor daemon download an image from the store instead of
+receiving it from the client. The client first gets a ticket
+(`createImageTicket`) and passes `{sha256, size, ticket}`; the daemon dials only
+the `store_url` in its own `config.yml` (https, the system trust store, no
+redirect, no proxy), sends `Authorization: Ticket`, and writes through the
+receive path of `uploadImage`. It answers NDJSON `progress` lines, then one
+`done` or `error` (reasons `store_unreachable`, `store_refused`, `mismatch`,
+`other`). The ticket is in no log, error or event line. Daemons hold no store
+token and no S3 key.
+
+The client **relays** (streams the store's blob into the daemon's
+`uploadImage`, no local file, one line saying so) when the daemon cannot fetch:
+no `store_url` (409 `no store configured on <host>; ...`), a daemon that
+predates the operation (404 with a plain-text body), or `store_unreachable`. An
+expired or spent ticket (`store_refused`) and a digest or size `mismatch` are
+not relayed: `create` fails.
+
+### Backups and the key
+
+`enc.key` (file mode 0600, mounted at `/etc/vmtool-store/enc.key`) encrypts
+every credential column; the store cannot read what another key wrote, so a
+lost or replaced key loses every stored credential. The design calls for a
+daily `VACUUM INTO` snapshot to `backups/` in the bucket (14 kept) and a
+`vmtool-store backup` command. **Neither is built**: `db.Snapshot`
+(`internal/store/db`) exists and nothing calls it, and the command takes only
+`-config`. Until then a backup is a copy of `data/store.db` taken with the
+container stopped, kept with the key (see the `vmtool_store` role's README in
+`ansible_labtwo`, and the root `README.md`).
 
 ## URL versioning
 

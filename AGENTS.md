@@ -4,7 +4,7 @@
 
 ## Hard rules
 
-1. **Spec-first API.** Change `spec/openapi/vmtool.yaml` first. Run `go generate ./internal/api/...` (or `scripts/verify-generate.sh`). Update `internal/app`, adapters (`internal/server`, `internal/cli`, `internal/tui`), and tests in the same change. Do not hand-edit `internal/api/api.gen.go`. Do not add a route to `Handler()` that is not in the spec unless it is listed in the exclusion register in [`spec/README.md`](spec/README.md).
+1. **Spec-first API.** Change `spec/openapi/vmtool.yaml` first (the store's API, `spec/openapi/store.yaml`, is handled the same way; its generated package is `internal/storeapi`). Run `go generate ./internal/api/... ./internal/storeapi/...` (or `scripts/verify-generate.sh`, which covers both). Update `internal/app`, adapters (`internal/server`, `internal/cli`, `internal/tui`), and tests in the same change. Do not hand-edit `internal/api/api.gen.go`. Do not add a route to `Handler()` that is not in the spec unless it is listed in the exclusion register in [`spec/README.md`](spec/README.md).
 2. **One workflow layer.** CLI, TUI, and REST call `internal/app`. Do not reimplement create / playbook / resize / lifecycle in a surface. `pkg/vmtool` stays primitives (libvirt, ansible, SSH, inventory).
 3. **Secrets.** Never commit `.machines/`, guest passwords, or SSH private keys. Do not log `ssh_pass` or request bodies.
 4. **Generated artifacts.** `internal/api/api.gen.go` is produced by oapi-codegen. Regenerate; do not patch.
@@ -54,4 +54,7 @@ These add to the hard rules above; they do not replace them.
 | What was done, and the judgment calls | `docs/reports/` (local, gitignored): one file per built step, recap plus assumptions |
 | Roles and process | the orch plugin (`/orch`), or `.grok/agents/` for Grok |
 | Test stubs | `internal/testexec` |
+| The store's API and contract | `spec/openapi/store.yaml`, the store sections of [`spec/README.md`](spec/README.md); generated package `internal/storeapi` |
+| The store's code | `internal/store` (server, images, credentials, `blob/`, `db/`), `cmd/vmtool-store`, `deploy/vmtool-store.Dockerfile`; the client side is the store pieces of `internal/app` and `internal/storeclient` |
+| Using and deploying the store | the store section of [`README.md`](README.md); the `vmtool_store` role in `ansible_labtwo` (`roles/vmtool_store/README.md`) |
 | Agent definitions | `architect`, `foreman`, `implementer`, `recon` (plugin); `.grok/agents/` (Grok) |

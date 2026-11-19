@@ -1321,3 +1321,21 @@ are appended, never edited in; a hook refuses rewrites.
   were never built; the README documents a manual backup and restore.
 - vmtool: no code change; `just check` green. Commits: `3d0f09b`
   (ansible_labtwo), the S14 commit on `clone-identity`.
+
+## 2026-11-18 — S15 Docs for group 2 (the store)
+
+- `README.md`: "The image and credential store (optional)": `server:`,
+  `VMTOOL_SERVER_TOKEN` (env, else `.env`; from `make_secrets.sh tokens`,
+  fetched with `bao kv get … -field=<name>`, path names only); the store
+  token opens every guest's credentials; the `hulbert.local` CA on clients
+  and hypervisors; the two modes, fallback, markers and reconciliation;
+  fetch, relay, tickets (one image only); build (`just store-image`) and
+  deploy (the ansible_labtwo role); the key-loss warning; backups (manual
+  only: automatic backups were never built).
+- `spec/README.md`: `store.yaml` in the layout and codegen; `## The
+  store` (auth, operations, tickets, credentials, modes, markers,
+  `fetchImage` and relay, backups and the key).
+- `AGENTS.md`: rule 1 names `spec/openapi/store.yaml` / `internal/storeapi`;
+  three "Where to look" rows.
+- Docs only, no test; `just check` green. Commits: the S15 commit on
+  `clone-identity`.

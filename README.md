@@ -201,6 +201,174 @@ The file is then sent to the host's daemon and cached there (see
 in `packer_images` copies its image to `$VMTOOL_IMAGE_DIR` (default
 `<repo>/images/`, gitignored; no sudo), so set `image_dir` to that folder.
 
+### The image and credential store (optional)
+
+`vmtool-store` is a separate service (`cmd/vmtool-store`) that keeps two
+things in one place: base images, and each guest's credentials (the VM's
+user, password and SSH key, and the same for metal machines). Without it,
+images live in `image_dir` and credentials in `.machines/` on the machine
+that created the VM, as before. The store is optional; nothing below is
+needed to use vmtool.
+
+**The store token opens every guest's credentials.** A token that the store
+accepts can read the password and private key of every VM and metal machine
+in it. Treat it like the keys it guards: one named token per caller, kept in
+OpenBao, never in `config.yml`, never in git.
+
+#### Using it from a client
+
+Name the store in `config.yml` (https only, no credentials in the URL):
+
+```yaml
+server:
+  url: https://vmtool-store.labtwo
+```
+
+The client's token is `VMTOOL_SERVER_TOKEN`, read like `VMTOOL_TOKEN`: from
+the environment, else from `.env` in the working directory (a real
+environment variable wins). It is never read from `config.yml`. The
+tokens are made by `make_secrets.sh tokens` in `ansible_labtwo` (one
+OpenBao field per caller name, under the path `vault_vmtool_store_tokens`,
+`infra/labtwo/vmtool_store/tokens` on mount `kv`). Fetch your own with
+`bao kv get -mount=kv -field=<your name> infra/labtwo/vmtool_store/tokens`
+and put it in `.env` as `VMTOOL_SERVER_TOKEN=<token>`.
+
+Trust: the store is served over HTTPS by Caddy with a certificate issued
+under the `hulbert.local` CA, the same CA as the daemons. **That CA must be
+in the system trust store of every client and of every hypervisor that
+fetches images** (ansible_labtwo's `selfsigned_cert` role installs it).
+vmtool does no CA pinning and has no way to skip verification.
+
+Two modes, decided once at the start of each command that uses
+credentials or base images, by one authenticated `GET /v1/whoami` with a
+3 second limit:
+
+- **Store reachable: store mode.** Credentials, metal records and base
+  images come from the store. `.machines/<vm>.<host>.vmtool/` is a cache of
+  the store's record (still 0700/0600, and plain `ssh`, `scp` and Ansible
+  still read the key from it).
+- **Not configured, no token, or not reachable: local mode.** Credentials
+  stay in `.machines/` and images come from `image_dir` and the local pools,
+  uploaded to the daemon as before. When `server:` is set, one stderr line
+  says so: `vmtool-store.labtwo unreachable: using this machine's .machines/
+  and image_dir` (with the host of your `server.url`; a missing or unusable
+  token gives the same ending with the reason in place of `unreachable`).
+
+If the store fails during a store-mode command, the command still
+succeeds: credential writes land in `.machines/` marked pending, reads fall
+back to the cache, and one line says the store could not be reached and the
+credentials are only on this machine. There is no queue. Each cache folder
+has a `.vmtool-source` marker, `store <uuid>` (a copy of the store's record)
+or `pending <uuid>` (written here, not in the store; a folder with no marker
+counts as pending). In store mode the first command that uses a VM compares
+the folder with the VM's current UUID (reported by its daemon, API 2.3.0 or
+newer):
+
+- pending, and the UUID matches (or is unknown and the store has no record):
+  the folder is pushed to the store and the marker becomes `store`, with one
+  notice line;
+- pending, but the VM was recreated (another UUID): the folder is stale. It
+  is moved to `.machines/.stale/<folder>-<date>/`, never pushed and never
+  deleted, with one notice line;
+- `store`, but the store has lost the record: it is pushed back, with a
+  notice.
+
+The store answers 404 for a record whose UUID is not the VM's current one,
+so a stale record is never used. After every playbook run on a VM, success or
+failure, the client pushes the folder if it changed (so rerunning
+`setup_bot.yml` completes a hand-off that failed). It fetches the record when
+the folder is missing, and once more when `ssh` exits 255. `vmtool delete`
+and the replace in `create` remove the record and the cache.
+
+Base images, in store mode, `create` asks the store first:
+
+1. If the store has the image, the client asks it for a download ticket and
+   tells the hypervisor's daemon to fetch the image itself
+   (`fetchImage`, `POST /v1/hosts/{host}/images/{name}/fetch`). The daemon
+   downloads from the `store_url` in its own `config.yml` (`just deploy`
+   writes it from the client's `server.url`), https only, system trust
+   store, no redirects, through the same checked receive path as an upload
+   (the SHA-256 and size must match). Progress shows as for an upload. The
+   image bytes never pass through the client. A daemon that already holds
+   the image at the store's digest does nothing.
+2. If the daemon cannot fetch (no `store_url`: 409; a daemon older than 2.3.0:
+   404; the store not reachable from the host), the client **relays**: it
+   streams the image from the store into the daemon's `uploadImage` with no
+   local file, after one line saying so. A digest or size mismatch is not
+   relayed; `create` fails.
+3. If the store lacks the image but `image_dir` or a local pool has it, it is
+   uploaded to the daemon as in local mode, with a line suggesting
+   `vmtool images push`.
+
+**A ticket opens one image only.** It is for one image at one digest,
+read-only, good for one download and 15 minutes, held by the store as a hash in
+memory only. Every other store route refuses it with 401. Daemons hold no
+store token and no S3 key.
+
+```bash
+vmtool images push ./img1.qcow2 --name img1   # file into the store
+vmtool images list --store                    # what the store holds
+vmtool images pull img1                       # store to a file
+```
+
+`vmtool hosts` shows a row for the store: whether it answers, its version
+and the name its token is known by. `just -f packer_images/justfile generate
+<template>` pushes the built image to the store as `<template>.qcow2` when
+`config.yml` has `server:` and `./vmtool` is built; when the store does not
+answer, or there is no `server:`, it copies to `image_dir` with a line saying
+so.
+
+#### Building and deploying the store
+
+The store is a static Go binary (`CGO_ENABLED=0`, distroless, runs as uid
+65532). From this repository:
+
+```bash
+just store-image <tag>    # builds registry.labtwo/vmtool-store:<tag> and :latest, pushes both
+```
+
+`<tag>` is a version; empty and `latest` are refused. No secret goes into the
+image. It is deployed to sdf1 by the `vmtool_store` role in `ansible_labtwo`,
+behind Caddy as `https://vmtool-store.labtwo` (port 8095, not behind
+Authelia). The role's own `README.md` has the detail. In outline, with `bao`
+logged in:
+
+```bash
+# once, in ansible_labtwo
+./make_secrets.sh tokens <caller> <caller> ...   # REPLACES the list: name every caller
+./make_secrets.sh enckey                         # refuses to overwrite an existing key
+# each deploy, with VAULT_ADDR and VAULT_TOKEN set
+ANSIBLE_ROLES_PATH=$PWD/public/roles:$PWD/roles:$HOME/.ansible/roles \
+  ansible-playbook -i inventories/labtwo.yml playbooks/sdf1_vmtool_store.yml
+```
+
+The role renders `tokens.yaml` with the SHA-256 of each token, so the store
+never holds a token, and writes `enc.key` (0600) from OpenBao
+(`vault_vmtool_store_enc_key`, field `key`). MinIO is reached by container
+name with the shared S3 key; the store creates its bucket `vmtool-store`
+itself at start if it is missing. Image blobs live in the bucket, and
+metadata and encrypted credentials in `data/store.db` on sdf1. The store
+refuses a token or key file readable by group or others, and a data
+directory looser than 0700. It serves plain HTTP only on loopback or with
+`behind_proxy: true` behind a TLS-terminating proxy (rule 5 in `AGENTS.md`);
+it needs a token on every route except `GET /version`.
+
+**Key loss: `enc.key` encrypts every stored credential.** If it is lost from
+both OpenBao and the file on sdf1, every stored credential is lost, and
+nothing can recover them. A new key (`make_secrets.sh enckey --force`)
+makes every stored credential unreadable. A copy of `store.db` is useless
+without the key it was written with. Keep the key with the backup policy for
+OpenBao.
+
+**Backups are not automatic yet.** There is no scheduled backup and no
+`vmtool-store backup` command. Back up by hand: stop the container, copy
+`data/store.db` to somewhere safe, start it again (the `vmtool_store` README
+has the commands). Image blobs are in the MinIO bucket and are not part of
+that copy; they can be pushed again from `image_dir`. To restore, stop the
+container, put the copy back as `data/store.db` owned by 65532 with mode
+0600, make sure `etc/enc.key` is the key the copy was made with, and start
+it.
+
 ### A new machine
 
 To run `vmtool` from another machine (a laptop, a second workstation) it
@@ -212,14 +380,16 @@ needs:
 - a `.env` with `VMTOOL_TOKEN`, the token whose hash is each daemon's
   `token_sha256` (`just token-fetch` gets it from OpenBao);
 - the `hulbert.local` CA in the system trust store, so TLS to the daemons
-  verifies;
+  (and to the store) verifies;
 - libvirt's client library (`libvirt-dev` on Debian/Ubuntu, `libvirt` on
   Arch), which the binary links even if no libvirt daemon runs here;
 - `ssh` and `ansible`, for `exec`, `ssh`, `playbook` and the guest setup
   that `create` runs (both run on the machine that runs the command);
 - the `.machines/` folders of the VMs it will log in to. They hold each VM's
   key and password and are never in git: copy them from the machine that
-  created the VMs, keeping their permissions.
+  created the VMs, keeping their permissions. With
+  a store (above), put `server:` in `config.yml` and `VMTOOL_SERVER_TOKEN`
+  in `.env` instead and the folders are fetched on first use.
 
 With these, the listed hosts work and the own name is one of the three cases
 above.
