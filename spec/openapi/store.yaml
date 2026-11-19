@@ -9,7 +9,8 @@ info:
     Every operation except GET /version requires
     `Authorization: Bearer <token>`; the store checks the token's SHA-256
     against the named hashes in tokens.yaml and answers 401 otherwise. The
-    image and credential routes answer 501 until they are built.
+    credential routes answer 501 until they are built. The one other
+    credential is a download ticket, accepted only on the image blob route.
 servers:
   - url: /
 security:
@@ -43,61 +44,190 @@ paths:
   /v1/images:
     get:
       operationId: listImages
-      summary: List images (not implemented yet)
+      summary: List images, ordered by name
       responses:
-        "501":
-          $ref: "#/components/responses/NotImplemented"
+        "200":
+          description: Every indexed image.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImageList"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /v1/images/{name}:
     parameters:
       - $ref: "#/components/parameters/Name"
     get:
       operationId: getImage
-      summary: One image's metadata (not implemented yet)
+      summary: One image's metadata
       responses:
-        "501":
-          $ref: "#/components/responses/NotImplemented"
+        "200":
+          description: The image.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Image"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
     put:
       operationId: putImage
-      summary: Upload an image (not implemented yet)
+      summary: Upload an image, streamed
+      description: >
+        The body is streamed to object storage and hashed as it is written;
+        it is never buffered in memory or on local disk and has no size cap.
+        The image is indexed only when the body's SHA-256 equals
+        `X-Image-SHA256` and its length equals `Content-Length`; otherwise the
+        new object is deleted and the answer is 400. A push of an existing
+        name with a new digest replaces it, and until the new object is
+        indexed the old image keeps being served. A push of the digest that
+        is already indexed answers 200 without rewriting. One push of a name
+        runs at a time; a second answers 409 at once. A request without a
+        `Content-Length` (chunked) answers 411.
+      parameters:
+        - name: X-Image-SHA256
+          in: header
+          required: true
+          description: SHA-256 of the body, 64 lowercase hex characters.
+          schema:
+            type: string
+            pattern: "^[0-9a-f]{64}$"
+        - name: Content-Length
+          in: header
+          required: false
+          description: Body length in bytes; required (411 when absent).
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
       responses:
-        "501":
-          $ref: "#/components/responses/NotImplemented"
+        "200":
+          description: The same digest was already indexed; nothing was rewritten.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Image"
+        "201":
+          description: The image is stored and indexed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Image"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "409":
+          description: Another push of this name is in progress.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "411":
+          description: The request has no Content-Length.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/InternalError"
     delete:
       operationId: deleteImage
-      summary: Delete an image (not implemented yet)
+      summary: Delete an image
       responses:
-        "501":
-          $ref: "#/components/responses/NotImplemented"
+        "204":
+          description: The image is deleted.
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: A push of this name is in progress.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /v1/images/{name}/blob:
     parameters:
       - $ref: "#/components/parameters/Name"
     get:
       operationId: getImageBlob
-      summary: Download an image's bytes (not implemented yet)
+      summary: Download an image's bytes, streamed
+      description: >
+        Accepts `Authorization: Bearer <token>`, or
+        `Authorization: Ticket <ticket>` for a ticket minted for this image
+        and its current SHA-256. A ticket is good for one download. The
+        response carries `Content-Length` and `X-Image-SHA256`.
+      security:
+        - bearerAuth: []
+        - ticketAuth: []
       responses:
-        "501":
-          $ref: "#/components/responses/NotImplemented"
+        "200":
+          description: The image bytes.
+          headers:
+            X-Image-SHA256:
+              description: SHA-256 of the body, 64 lowercase hex characters.
+              required: true
+              schema:
+                type: string
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /v1/images/{name}/tickets:
     parameters:
       - $ref: "#/components/parameters/Name"
     post:
       operationId: createImageTicket
-      summary: Mint a download ticket for one image (not implemented yet)
+      summary: Mint a download ticket for one image
+      description: >
+        Needs a bearer token (a ticket never works here). The ticket opens
+        only `GET /v1/images/{name}/blob` of this image at its current
+        SHA-256, once, for 15 minutes. The store keeps only the ticket's
+        SHA-256, in memory; a restart forgets every ticket. This response is
+        the only place the ticket is ever shown.
       responses:
-        "501":
-          $ref: "#/components/responses/NotImplemented"
+        "201":
+          description: A new ticket.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ticket"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /v1/credentials/vms/{host}/{name}:
     parameters:
       - $ref: "#/components/parameters/Host"
@@ -167,6 +297,13 @@ components:
     bearerAuth:
       type: http
       scheme: bearer
+    ticketAuth:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: >
+        `Authorization: Ticket <ticket>`; accepted only by
+        GET /v1/images/{name}/blob.
   parameters:
     Name:
       name: name
@@ -187,6 +324,24 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
+    BadRequest:
+      description: The request is malformed. The body names the field only.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: No such image.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    InternalError:
+      description: The store failed; the body is fixed text.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
     NotImplemented:
       description: Not implemented yet.
       content:
@@ -200,6 +355,44 @@ components:
       properties:
         error:
           type: string
+    Image:
+      type: object
+      required: [name, sha256, size, updated]
+      properties:
+        name:
+          type: string
+        sha256:
+          type: string
+        size:
+          type: integer
+          format: int64
+        updated:
+          type: string
+          format: date-time
+    ImageList:
+      type: object
+      required: [images]
+      properties:
+        images:
+          type: array
+          items:
+            $ref: "#/components/schemas/Image"
+    Ticket:
+      type: object
+      required: [ticket, expires_at, image, sha256, size]
+      properties:
+        ticket:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+        image:
+          type: string
+        sha256:
+          type: string
+        size:
+          type: integer
+          format: int64
     Version:
       type: object
       required: [version]

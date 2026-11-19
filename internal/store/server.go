@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/getkin/kin-openapi/openapi3"
+	"github.com/jaredeh/vmtool/internal/store/blob"
+	"github.com/jaredeh/vmtool/internal/store/db"
 	"github.com/jaredeh/vmtool/internal/storeapi"
 	"github.com/jaredeh/vmtool/internal/tokenhash"
 )
@@ -22,20 +24,30 @@ type Server struct {
 	cfg    *Config
 	log    *slog.Logger
 	routes *routeTable
+	img    *images
+}
+
+// Deps are the store's backends. Image routes answer 500 (fixed text) when
+// Blob or DB is nil; Now defaults to time.Now and exists so tests can move
+// the clock past a ticket's expiry.
+type Deps struct {
+	Blob blob.BlobStore
+	DB   *db.DB
+	Now  func() time.Time
 }
 
 // NewServer returns a Server for a validated Config. A nil log uses
 // slog.Default().
-func NewServer(c *Config, log *slog.Logger) *Server {
+func NewServer(c *Config, log *slog.Logger, d Deps) *Server {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Server{cfg: c, log: log, routes: newRouteTable()}
+	return &Server{cfg: c, log: log, routes: newRouteTable(), img: newImages(log, d)}
 }
 
 // Handler is the whole request pipeline: log -> auth -> generated routes.
 func (s *Server) Handler() http.Handler {
-	strict := storeapi.NewStrictHandlerWithOptions(&handlers{version: specVersion()}, nil, storeapi.StrictHTTPServerOptions{
+	strict := storeapi.NewStrictHandlerWithOptions(&handlers{version: specVersion(), img: s.img}, nil, storeapi.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  func(w http.ResponseWriter, _ *http.Request, _ error) { writeError(w, 400, "bad request") },
 		ResponseErrorHandlerFunc: func(w http.ResponseWriter, _ *http.Request, _ error) { writeError(w, 500, "internal error") },
 	})
@@ -147,7 +159,22 @@ type ctxKey struct{}
 
 // reqInfo is created by the log middleware and filled in by auth, so the log
 // line carries the caller whatever copy of the request reaches it.
-type reqInfo struct{ caller string }
+type reqInfo struct {
+	caller string
+	// contentLength is the request's declared body length (-1 if unknown).
+	contentLength int64
+	// ticketSHA is the image digest a redeemed download ticket was bound to.
+	ticketSHA string
+}
+
+// infoFrom returns the request's reqInfo, or a throwaway one when the log
+// middleware did not run (a handler called without the pipeline).
+func infoFrom(ctx context.Context) *reqInfo {
+	if ri, ok := ctx.Value(ctxKey{}).(*reqInfo); ok {
+		return ri
+	}
+	return &reqInfo{contentLength: -1}
+}
 
 func callerFrom(ctx context.Context) string {
 	if ri, ok := ctx.Value(ctxKey{}).(*reqInfo); ok {
@@ -180,7 +207,7 @@ func (w *statusWriter) Write(b []byte) (int, error) {
 func (s *Server) logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		ri := &reqInfo{}
+		ri := &reqInfo{contentLength: r.ContentLength}
 		sw := &statusWriter{ResponseWriter: w}
 		next.ServeHTTP(sw, r.WithContext(context.WithValue(r.Context(), ctxKey{}, ri)))
 		route := "unmatched"
@@ -221,7 +248,7 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 		name, ok := s.authenticate(r, pat)
 		if !ok {
 			w.Header().Set("WWW-Authenticate", "Bearer")
-			writeError(w, http.StatusUnauthorized, "unauthorized: missing or invalid bearer token")
+			writeError(w, http.StatusUnauthorized, unauthorizedMsg)
 			return
 		}
 		if ri, ok := r.Context().Value(ctxKey{}).(*reqInfo); ok {
@@ -232,10 +259,10 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 }
 
 // authenticate returns the caller's name for a valid credential on route pat
-// (the matched pattern, "" when none matched). Today only a bearer token is
-// accepted. Download tickets (`Authorization: Ticket <t>`) slot in here: a
-// ticket is checked only when pat is "GET /v1/images/{name}/blob" and then
-// only for that image; every other route keeps refusing it.
+// (the matched pattern, "" when none matched). A bearer token is
+// accepted, and a download ticket (`Authorization: Ticket <t>`) on exactly
+// "GET /v1/images/{name}/blob" for its own image (see ticketCaller); every
+// other route refuses a ticket without spending it.
 func (s *Server) authenticate(r *http.Request, pat string) (string, bool) {
 	vals := r.Header.Values("Authorization")
 	if len(vals) != 1 {
@@ -247,6 +274,9 @@ func (s *Server) authenticate(r *http.Request, pat string) (string, bool) {
 	}
 	if strings.EqualFold(scheme, "Bearer") {
 		return s.bearerCaller(cred)
+	}
+	if strings.EqualFold(scheme, "Ticket") {
+		return s.ticketCaller(r, pat, cred)
 	}
 	return "", false
 }
@@ -271,7 +301,10 @@ func writeError(w http.ResponseWriter, code int, msg string) {
 
 // ---- handlers -----------------------------------------------------------
 
-type handlers struct{ version string }
+type handlers struct {
+	version string
+	img     *images
+}
 
 var _ storeapi.StrictServerInterface = (*handlers)(nil)
 
@@ -285,24 +318,6 @@ func (h *handlers) Whoami(ctx context.Context, _ storeapi.WhoamiRequestObject) (
 
 var notImplemented = storeapi.NotImplementedJSONResponse{Error: "not implemented yet"}
 
-func (*handlers) ListImages(context.Context, storeapi.ListImagesRequestObject) (storeapi.ListImagesResponseObject, error) {
-	return storeapi.ListImages501JSONResponse{NotImplementedJSONResponse: notImplemented}, nil
-}
-func (*handlers) GetImage(context.Context, storeapi.GetImageRequestObject) (storeapi.GetImageResponseObject, error) {
-	return storeapi.GetImage501JSONResponse{NotImplementedJSONResponse: notImplemented}, nil
-}
-func (*handlers) PutImage(context.Context, storeapi.PutImageRequestObject) (storeapi.PutImageResponseObject, error) {
-	return storeapi.PutImage501JSONResponse{NotImplementedJSONResponse: notImplemented}, nil
-}
-func (*handlers) DeleteImage(context.Context, storeapi.DeleteImageRequestObject) (storeapi.DeleteImageResponseObject, error) {
-	return storeapi.DeleteImage501JSONResponse{NotImplementedJSONResponse: notImplemented}, nil
-}
-func (*handlers) GetImageBlob(context.Context, storeapi.GetImageBlobRequestObject) (storeapi.GetImageBlobResponseObject, error) {
-	return storeapi.GetImageBlob501JSONResponse{NotImplementedJSONResponse: notImplemented}, nil
-}
-func (*handlers) CreateImageTicket(context.Context, storeapi.CreateImageTicketRequestObject) (storeapi.CreateImageTicketResponseObject, error) {
-	return storeapi.CreateImageTicket501JSONResponse{NotImplementedJSONResponse: notImplemented}, nil
-}
 func (*handlers) GetVMCredential(context.Context, storeapi.GetVMCredentialRequestObject) (storeapi.GetVMCredentialResponseObject, error) {
 	return storeapi.GetVMCredential501JSONResponse{NotImplementedJSONResponse: notImplemented}, nil
 }

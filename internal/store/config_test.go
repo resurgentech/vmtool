@@ -149,6 +149,15 @@ func TestLoadMissingFiles(t *testing.T) {
 	if _, err := Load(cp); err == nil {
 		t.Fatal("missing tokens file accepted")
 	}
+	// The key file is required: the store cannot open its database without it.
+	f = newFixture(t)
+	cp = f.write(t)
+	if err := os.Remove(filepath.Join(f.dir, "enc.key")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(cp); err == nil || !strings.Contains(err.Error(), "key file") {
+		t.Fatalf("missing key file accepted: %v", err)
+	}
 }
 
 // The listening rule (question 34): loopback may be plain; off loopback is

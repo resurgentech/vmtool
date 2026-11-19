@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/getkin/kin-openapi/openapi3"
+	"github.com/jaredeh/vmtool/internal/store/blob"
 	"github.com/jaredeh/vmtool/internal/storeapi"
 	"github.com/jaredeh/vmtool/internal/tokenhash"
 )
@@ -26,7 +27,7 @@ func testServer(t *testing.T) (*httptest.Server, *bytes.Buffer) {
 			"bob":   tokenhash.Hash(tokB),
 		},
 	}
-	s := NewServer(c, slog.New(slog.NewJSONHandler(&logs, nil)))
+	s := NewServer(c, slog.New(slog.NewJSONHandler(&logs, nil)), Deps{Blob: blob.NewMemory(), DB: openTestDB(t)})
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)
 	return ts, &logs
@@ -152,7 +153,7 @@ func TestStubsAnswer501(t *testing.T) {
 	ts, _ := testServer(t)
 	n := 0
 	for op, public := range specOps(t) {
-		if public || op == "GET /v1/whoami" {
+		if public || op == "GET /v1/whoami" || strings.Contains(op, "/v1/images") {
 			continue
 		}
 		method, p, _ := strings.Cut(op, " ")
@@ -170,8 +171,8 @@ func TestStubsAnswer501(t *testing.T) {
 		}
 		n++
 	}
-	if n != 13 {
-		t.Errorf("checked %d stubs, want 13", n)
+	if n != 7 {
+		t.Errorf("checked %d stubs, want 7", n)
 	}
 }
 
@@ -186,7 +187,7 @@ func TestLogLine(t *testing.T) {
 		t.Fatalf("%d log lines, want 3:\n%s", len(lines), logs.String())
 	}
 	want := []map[string]any{
-		{"method": "GET", "route": "/v1/images/{name}", "status": 501.0, "caller": "alice"},
+		{"method": "GET", "route": "/v1/images/{name}", "status": 404.0, "caller": "alice"},
 		{"method": "GET", "route": "/v1/whoami", "status": 401.0, "caller": "-"},
 		{"method": "GET", "route": "/version", "status": 200.0, "caller": "-"},
 	}

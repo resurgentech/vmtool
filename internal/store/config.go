@@ -86,7 +86,7 @@ func Load(path string) (*Config, error) {
 	if err := c.loadTokens(); err != nil {
 		return nil, err
 	}
-	if err := privateFile("key file", c.KeyFile, true); err != nil {
+	if err := privateFile("key file", c.KeyFile, false); err != nil {
 		return nil, err
 	}
 	if err := c.checkListen(); err != nil {
@@ -96,7 +96,7 @@ func Load(path string) (*Config, error) {
 }
 
 // privateFile refuses a file with any group or other permission bit. A
-// missing file is accepted when optional.
+// missing file is accepted only when optional.
 func privateFile(what, path string, optional bool) error {
 	fi, err := os.Stat(path)
 	if err != nil {

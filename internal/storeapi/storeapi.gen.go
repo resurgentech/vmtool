@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/oapi-codegen/runtime"
@@ -25,11 +26,34 @@ import (
 
 const (
 	BearerAuthScopes = "bearerAuth.Scopes"
+	TicketAuthScopes = "ticketAuth.Scopes"
 )
 
 // Error defines model for Error.
 type Error struct {
 	Error string `json:"error"`
+}
+
+// Image defines model for Image.
+type Image struct {
+	Name    string    `json:"name"`
+	Sha256  string    `json:"sha256"`
+	Size    int64     `json:"size"`
+	Updated time.Time `json:"updated"`
+}
+
+// ImageList defines model for ImageList.
+type ImageList struct {
+	Images []Image `json:"images"`
+}
+
+// Ticket defines model for Ticket.
+type Ticket struct {
+	ExpiresAt time.Time `json:"expires_at"`
+	Image     string    `json:"image"`
+	Sha256    string    `json:"sha256"`
+	Size      int64     `json:"size"`
+	Ticket    string    `json:"ticket"`
 }
 
 // Version defines model for Version.
@@ -48,11 +72,29 @@ type Host = string
 // Name defines model for Name.
 type Name = string
 
+// BadRequest defines model for BadRequest.
+type BadRequest = Error
+
+// InternalError defines model for InternalError.
+type InternalError = Error
+
+// NotFound defines model for NotFound.
+type NotFound = Error
+
 // NotImplemented defines model for NotImplemented.
 type NotImplemented = Error
 
 // Unauthorized defines model for Unauthorized.
 type Unauthorized = Error
+
+// PutImageParams defines parameters for PutImage.
+type PutImageParams struct {
+	// XImageSHA256 SHA-256 of the body, 64 lowercase hex characters.
+	XImageSHA256 string `json:"X-Image-SHA256"`
+
+	// ContentLength Body length in bytes; required (411 when absent).
+	ContentLength *int64 `json:"Content-Length,omitempty"`
+}
 
 // RequestEditorFn  is the function signature for the RequestEditor callback function
 type RequestEditorFn func(ctx context.Context, req *http.Request) error
@@ -157,8 +199,8 @@ type ClientInterface interface {
 	// GetImage request
 	GetImage(ctx context.Context, name Name, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// PutImage request
-	PutImage(ctx context.Context, name Name, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// PutImageWithBody request with any body
+	PutImageWithBody(ctx context.Context, name Name, params *PutImageParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetImageBlob request
 	GetImageBlob(ctx context.Context, name Name, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -293,8 +335,8 @@ func (c *Client) GetImage(ctx context.Context, name Name, reqEditors ...RequestE
 	return c.Client.Do(req)
 }
 
-func (c *Client) PutImage(ctx context.Context, name Name, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPutImageRequest(c.Server, name)
+func (c *Client) PutImageWithBody(ctx context.Context, name Name, params *PutImageParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutImageRequestWithBody(c.Server, name, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -700,8 +742,8 @@ func NewGetImageRequest(server string, name Name) (*http.Request, error) {
 	return req, nil
 }
 
-// NewPutImageRequest generates requests for PutImage
-func NewPutImageRequest(server string, name Name) (*http.Request, error) {
+// NewPutImageRequestWithBody generates requests for PutImage with any type of body
+func NewPutImageRequestWithBody(server string, name Name, params *PutImageParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -726,9 +768,35 @@ func NewPutImageRequest(server string, name Name) (*http.Request, error) {
 		return nil, err
 	}
 
-	req, err := http.NewRequest("PUT", queryURL.String(), nil)
+	req, err := http.NewRequest("PUT", queryURL.String(), body)
 	if err != nil {
 		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithLocation("simple", false, "X-Image-SHA256", runtime.ParamLocationHeader, params.XImageSHA256)
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Image-SHA256", headerParam0)
+
+		if params.ContentLength != nil {
+			var headerParam1 string
+
+			headerParam1, err = runtime.StyleParamWithLocation("simple", false, "Content-Length", runtime.ParamLocationHeader, *params.ContentLength)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Content-Length", headerParam1)
+		}
+
 	}
 
 	return req, nil
@@ -929,8 +997,8 @@ type ClientWithResponsesInterface interface {
 	// GetImageWithResponse request
 	GetImageWithResponse(ctx context.Context, name Name, reqEditors ...RequestEditorFn) (*GetImageResponse, error)
 
-	// PutImageWithResponse request
-	PutImageWithResponse(ctx context.Context, name Name, reqEditors ...RequestEditorFn) (*PutImageResponse, error)
+	// PutImageWithBodyWithResponse request with any body
+	PutImageWithBodyWithResponse(ctx context.Context, name Name, params *PutImageParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutImageResponse, error)
 
 	// GetImageBlobWithResponse request
 	GetImageBlobWithResponse(ctx context.Context, name Name, reqEditors ...RequestEditorFn) (*GetImageBlobResponse, error)
@@ -1109,8 +1177,9 @@ func (r PutVMCredentialResponse) StatusCode() int {
 type ListImagesResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	JSON200      *ImageList
 	JSON401      *Unauthorized
-	JSON501      *NotImplemented
+	JSON500      *InternalError
 }
 
 // Status returns HTTPResponse.Status
@@ -1132,8 +1201,11 @@ func (r ListImagesResponse) StatusCode() int {
 type DeleteImageResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	JSON400      *BadRequest
 	JSON401      *Unauthorized
-	JSON501      *NotImplemented
+	JSON404      *NotFound
+	JSON409      *Error
+	JSON500      *InternalError
 }
 
 // Status returns HTTPResponse.Status
@@ -1155,8 +1227,11 @@ func (r DeleteImageResponse) StatusCode() int {
 type GetImageResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	JSON200      *Image
+	JSON400      *BadRequest
 	JSON401      *Unauthorized
-	JSON501      *NotImplemented
+	JSON404      *NotFound
+	JSON500      *InternalError
 }
 
 // Status returns HTTPResponse.Status
@@ -1178,8 +1253,13 @@ func (r GetImageResponse) StatusCode() int {
 type PutImageResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	JSON200      *Image
+	JSON201      *Image
+	JSON400      *BadRequest
 	JSON401      *Unauthorized
-	JSON501      *NotImplemented
+	JSON409      *Error
+	JSON411      *Error
+	JSON500      *InternalError
 }
 
 // Status returns HTTPResponse.Status
@@ -1201,8 +1281,10 @@ func (r PutImageResponse) StatusCode() int {
 type GetImageBlobResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	JSON400      *BadRequest
 	JSON401      *Unauthorized
-	JSON501      *NotImplemented
+	JSON404      *NotFound
+	JSON500      *InternalError
 }
 
 // Status returns HTTPResponse.Status
@@ -1224,8 +1306,11 @@ func (r GetImageBlobResponse) StatusCode() int {
 type CreateImageTicketResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	JSON201      *Ticket
+	JSON400      *BadRequest
 	JSON401      *Unauthorized
-	JSON501      *NotImplemented
+	JSON404      *NotFound
+	JSON500      *InternalError
 }
 
 // Status returns HTTPResponse.Status
@@ -1379,9 +1464,9 @@ func (c *ClientWithResponses) GetImageWithResponse(ctx context.Context, name Nam
 	return ParseGetImageResponse(rsp)
 }
 
-// PutImageWithResponse request returning *PutImageResponse
-func (c *ClientWithResponses) PutImageWithResponse(ctx context.Context, name Name, reqEditors ...RequestEditorFn) (*PutImageResponse, error) {
-	rsp, err := c.PutImage(ctx, name, reqEditors...)
+// PutImageWithBodyWithResponse request with arbitrary body returning *PutImageResponse
+func (c *ClientWithResponses) PutImageWithBodyWithResponse(ctx context.Context, name Name, params *PutImageParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutImageResponse, error) {
+	rsp, err := c.PutImageWithBody(ctx, name, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -1669,6 +1754,13 @@ func ParseListImagesResponse(rsp *http.Response) (*ListImagesResponse, error) {
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ImageList
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Unauthorized
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -1676,12 +1768,12 @@ func ParseListImagesResponse(rsp *http.Response) (*ListImagesResponse, error) {
 		}
 		response.JSON401 = &dest
 
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 501:
-		var dest NotImplemented
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
-		response.JSON501 = &dest
+		response.JSON500 = &dest
 
 	}
 
@@ -1702,6 +1794,13 @@ func ParseDeleteImageResponse(rsp *http.Response) (*DeleteImageResponse, error) 
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Unauthorized
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -1709,12 +1808,26 @@ func ParseDeleteImageResponse(rsp *http.Response) (*DeleteImageResponse, error) 
 		}
 		response.JSON401 = &dest
 
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 501:
-		var dest NotImplemented
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
-		response.JSON501 = &dest
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -1735,6 +1848,20 @@ func ParseGetImageResponse(rsp *http.Response) (*GetImageResponse, error) {
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Image
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Unauthorized
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -1742,12 +1869,19 @@ func ParseGetImageResponse(rsp *http.Response) (*GetImageResponse, error) {
 		}
 		response.JSON401 = &dest
 
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 501:
-		var dest NotImplemented
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
-		response.JSON501 = &dest
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -1768,6 +1902,27 @@ func ParsePutImageResponse(rsp *http.Response) (*PutImageResponse, error) {
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Image
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest Image
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Unauthorized
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -1775,12 +1930,26 @@ func ParsePutImageResponse(rsp *http.Response) (*PutImageResponse, error) {
 		}
 		response.JSON401 = &dest
 
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 501:
-		var dest NotImplemented
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
-		response.JSON501 = &dest
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 411:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON411 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -1801,6 +1970,13 @@ func ParseGetImageBlobResponse(rsp *http.Response) (*GetImageBlobResponse, error
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Unauthorized
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -1808,12 +1984,19 @@ func ParseGetImageBlobResponse(rsp *http.Response) (*GetImageBlobResponse, error
 		}
 		response.JSON401 = &dest
 
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 501:
-		var dest NotImplemented
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
-		response.JSON501 = &dest
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -1834,6 +2017,20 @@ func ParseCreateImageTicketResponse(rsp *http.Response) (*CreateImageTicketRespo
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest Ticket
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Unauthorized
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -1841,12 +2038,19 @@ func ParseCreateImageTicketResponse(rsp *http.Response) (*CreateImageTicketRespo
 		}
 		response.JSON401 = &dest
 
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 501:
-		var dest NotImplemented
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
-		response.JSON501 = &dest
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -1935,22 +2139,22 @@ type ServerInterface interface {
 	// Store a VM's credentials (not implemented yet)
 	// (PUT /v1/credentials/vms/{host}/{name})
 	PutVMCredential(w http.ResponseWriter, r *http.Request, host Host, name Name)
-	// List images (not implemented yet)
+	// List images, ordered by name
 	// (GET /v1/images)
 	ListImages(w http.ResponseWriter, r *http.Request)
-	// Delete an image (not implemented yet)
+	// Delete an image
 	// (DELETE /v1/images/{name})
 	DeleteImage(w http.ResponseWriter, r *http.Request, name Name)
-	// One image's metadata (not implemented yet)
+	// One image's metadata
 	// (GET /v1/images/{name})
 	GetImage(w http.ResponseWriter, r *http.Request, name Name)
-	// Upload an image (not implemented yet)
+	// Upload an image, streamed
 	// (PUT /v1/images/{name})
-	PutImage(w http.ResponseWriter, r *http.Request, name Name)
-	// Download an image's bytes (not implemented yet)
+	PutImage(w http.ResponseWriter, r *http.Request, name Name, params PutImageParams)
+	// Download an image's bytes, streamed
 	// (GET /v1/images/{name}/blob)
 	GetImageBlob(w http.ResponseWriter, r *http.Request, name Name)
-	// Mint a download ticket for one image (not implemented yet)
+	// Mint a download ticket for one image
 	// (POST /v1/images/{name}/tickets)
 	CreateImageTicket(w http.ResponseWriter, r *http.Request, name Name)
 	// The name of the calling token
@@ -2305,8 +2509,55 @@ func (siw *ServerInterfaceWrapper) PutImage(w http.ResponseWriter, r *http.Reque
 
 	r = r.WithContext(ctx)
 
+	// Parameter object where we will unmarshal all parameters from the context
+	var params PutImageParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Image-SHA256" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Image-SHA256")]; found {
+		var XImageSHA256 string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Image-SHA256", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Image-SHA256", valueList[0], &XImageSHA256, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Image-SHA256", Err: err})
+			return
+		}
+
+		params.XImageSHA256 = XImageSHA256
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Image-SHA256 is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Image-SHA256", Err: err})
+		return
+	}
+
+	// ------------- Optional header parameter "Content-Length" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Content-Length")]; found {
+		var ContentLength int64
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Content-Length", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Content-Length", valueList[0], &ContentLength, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Content-Length", Err: err})
+			return
+		}
+
+		params.ContentLength = &ContentLength
+
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PutImage(w, r, name)
+		siw.Handler.PutImage(w, r, name, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2333,6 +2584,8 @@ func (siw *ServerInterfaceWrapper) GetImageBlob(w http.ResponseWriter, r *http.R
 	ctx := r.Context()
 
 	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TicketAuthScopes, []string{})
 
 	r = r.WithContext(ctx)
 
@@ -2551,6 +2804,12 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	return m
 }
 
+type BadRequestJSONResponse Error
+
+type InternalErrorJSONResponse Error
+
+type NotFoundJSONResponse Error
+
 type NotImplementedJSONResponse Error
 
 type UnauthorizedJSONResponse Error
@@ -2746,6 +3005,15 @@ type ListImagesResponseObject interface {
 	VisitListImagesResponse(w http.ResponseWriter) error
 }
 
+type ListImages200JSONResponse ImageList
+
+func (response ListImages200JSONResponse) VisitListImagesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
 type ListImages401JSONResponse struct{ UnauthorizedJSONResponse }
 
 func (response ListImages401JSONResponse) VisitListImagesResponse(w http.ResponseWriter) error {
@@ -2755,11 +3023,11 @@ func (response ListImages401JSONResponse) VisitListImagesResponse(w http.Respons
 	return json.NewEncoder(w).Encode(response)
 }
 
-type ListImages501JSONResponse struct{ NotImplementedJSONResponse }
+type ListImages500JSONResponse struct{ InternalErrorJSONResponse }
 
-func (response ListImages501JSONResponse) VisitListImagesResponse(w http.ResponseWriter) error {
+func (response ListImages500JSONResponse) VisitListImagesResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(501)
+	w.WriteHeader(500)
 
 	return json.NewEncoder(w).Encode(response)
 }
@@ -2772,6 +3040,23 @@ type DeleteImageResponseObject interface {
 	VisitDeleteImageResponse(w http.ResponseWriter) error
 }
 
+type DeleteImage204Response struct {
+}
+
+func (response DeleteImage204Response) VisitDeleteImageResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteImage400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response DeleteImage400JSONResponse) VisitDeleteImageResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
 type DeleteImage401JSONResponse struct{ UnauthorizedJSONResponse }
 
 func (response DeleteImage401JSONResponse) VisitDeleteImageResponse(w http.ResponseWriter) error {
@@ -2781,11 +3066,29 @@ func (response DeleteImage401JSONResponse) VisitDeleteImageResponse(w http.Respo
 	return json.NewEncoder(w).Encode(response)
 }
 
-type DeleteImage501JSONResponse struct{ NotImplementedJSONResponse }
+type DeleteImage404JSONResponse struct{ NotFoundJSONResponse }
 
-func (response DeleteImage501JSONResponse) VisitDeleteImageResponse(w http.ResponseWriter) error {
+func (response DeleteImage404JSONResponse) VisitDeleteImageResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(501)
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteImage409JSONResponse Error
+
+func (response DeleteImage409JSONResponse) VisitDeleteImageResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteImage500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response DeleteImage500JSONResponse) VisitDeleteImageResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
 
 	return json.NewEncoder(w).Encode(response)
 }
@@ -2798,6 +3101,24 @@ type GetImageResponseObject interface {
 	VisitGetImageResponse(w http.ResponseWriter) error
 }
 
+type GetImage200JSONResponse Image
+
+func (response GetImage200JSONResponse) VisitGetImageResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetImage400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response GetImage400JSONResponse) VisitGetImageResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
 type GetImage401JSONResponse struct{ UnauthorizedJSONResponse }
 
 func (response GetImage401JSONResponse) VisitGetImageResponse(w http.ResponseWriter) error {
@@ -2807,21 +3128,59 @@ func (response GetImage401JSONResponse) VisitGetImageResponse(w http.ResponseWri
 	return json.NewEncoder(w).Encode(response)
 }
 
-type GetImage501JSONResponse struct{ NotImplementedJSONResponse }
+type GetImage404JSONResponse struct{ NotFoundJSONResponse }
 
-func (response GetImage501JSONResponse) VisitGetImageResponse(w http.ResponseWriter) error {
+func (response GetImage404JSONResponse) VisitGetImageResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(501)
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetImage500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response GetImage500JSONResponse) VisitGetImageResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
 
 	return json.NewEncoder(w).Encode(response)
 }
 
 type PutImageRequestObject struct {
-	Name Name `json:"name"`
+	Name   Name `json:"name"`
+	Params PutImageParams
+	Body   io.Reader
 }
 
 type PutImageResponseObject interface {
 	VisitPutImageResponse(w http.ResponseWriter) error
+}
+
+type PutImage200JSONResponse Image
+
+func (response PutImage200JSONResponse) VisitPutImageResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutImage201JSONResponse Image
+
+func (response PutImage201JSONResponse) VisitPutImageResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutImage400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PutImage400JSONResponse) VisitPutImageResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
 }
 
 type PutImage401JSONResponse struct{ UnauthorizedJSONResponse }
@@ -2833,11 +3192,29 @@ func (response PutImage401JSONResponse) VisitPutImageResponse(w http.ResponseWri
 	return json.NewEncoder(w).Encode(response)
 }
 
-type PutImage501JSONResponse struct{ NotImplementedJSONResponse }
+type PutImage409JSONResponse Error
 
-func (response PutImage501JSONResponse) VisitPutImageResponse(w http.ResponseWriter) error {
+func (response PutImage409JSONResponse) VisitPutImageResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(501)
+	w.WriteHeader(409)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutImage411JSONResponse Error
+
+func (response PutImage411JSONResponse) VisitPutImageResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(411)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutImage500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response PutImage500JSONResponse) VisitPutImageResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
 
 	return json.NewEncoder(w).Encode(response)
 }
@@ -2850,6 +3227,40 @@ type GetImageBlobResponseObject interface {
 	VisitGetImageBlobResponse(w http.ResponseWriter) error
 }
 
+type GetImageBlob200ResponseHeaders struct {
+	XImageSHA256 string
+}
+
+type GetImageBlob200ApplicationoctetStreamResponse struct {
+	Body          io.Reader
+	Headers       GetImageBlob200ResponseHeaders
+	ContentLength int64
+}
+
+func (response GetImageBlob200ApplicationoctetStreamResponse) VisitGetImageBlobResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/octet-stream")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	w.Header().Set("X-Image-SHA256", fmt.Sprint(response.Headers.XImageSHA256))
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type GetImageBlob400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response GetImageBlob400JSONResponse) VisitGetImageBlobResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
 type GetImageBlob401JSONResponse struct{ UnauthorizedJSONResponse }
 
 func (response GetImageBlob401JSONResponse) VisitGetImageBlobResponse(w http.ResponseWriter) error {
@@ -2859,11 +3270,20 @@ func (response GetImageBlob401JSONResponse) VisitGetImageBlobResponse(w http.Res
 	return json.NewEncoder(w).Encode(response)
 }
 
-type GetImageBlob501JSONResponse struct{ NotImplementedJSONResponse }
+type GetImageBlob404JSONResponse struct{ NotFoundJSONResponse }
 
-func (response GetImageBlob501JSONResponse) VisitGetImageBlobResponse(w http.ResponseWriter) error {
+func (response GetImageBlob404JSONResponse) VisitGetImageBlobResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(501)
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetImageBlob500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response GetImageBlob500JSONResponse) VisitGetImageBlobResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
 
 	return json.NewEncoder(w).Encode(response)
 }
@@ -2876,6 +3296,24 @@ type CreateImageTicketResponseObject interface {
 	VisitCreateImageTicketResponse(w http.ResponseWriter) error
 }
 
+type CreateImageTicket201JSONResponse Ticket
+
+func (response CreateImageTicket201JSONResponse) VisitCreateImageTicketResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CreateImageTicket400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response CreateImageTicket400JSONResponse) VisitCreateImageTicketResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
 type CreateImageTicket401JSONResponse struct{ UnauthorizedJSONResponse }
 
 func (response CreateImageTicket401JSONResponse) VisitCreateImageTicketResponse(w http.ResponseWriter) error {
@@ -2885,11 +3323,20 @@ func (response CreateImageTicket401JSONResponse) VisitCreateImageTicketResponse(
 	return json.NewEncoder(w).Encode(response)
 }
 
-type CreateImageTicket501JSONResponse struct{ NotImplementedJSONResponse }
+type CreateImageTicket404JSONResponse struct{ NotFoundJSONResponse }
 
-func (response CreateImageTicket501JSONResponse) VisitCreateImageTicketResponse(w http.ResponseWriter) error {
+func (response CreateImageTicket404JSONResponse) VisitCreateImageTicketResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(501)
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CreateImageTicket500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response CreateImageTicket500JSONResponse) VisitCreateImageTicketResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
 
 	return json.NewEncoder(w).Encode(response)
 }
@@ -2958,22 +3405,22 @@ type StrictServerInterface interface {
 	// Store a VM's credentials (not implemented yet)
 	// (PUT /v1/credentials/vms/{host}/{name})
 	PutVMCredential(ctx context.Context, request PutVMCredentialRequestObject) (PutVMCredentialResponseObject, error)
-	// List images (not implemented yet)
+	// List images, ordered by name
 	// (GET /v1/images)
 	ListImages(ctx context.Context, request ListImagesRequestObject) (ListImagesResponseObject, error)
-	// Delete an image (not implemented yet)
+	// Delete an image
 	// (DELETE /v1/images/{name})
 	DeleteImage(ctx context.Context, request DeleteImageRequestObject) (DeleteImageResponseObject, error)
-	// One image's metadata (not implemented yet)
+	// One image's metadata
 	// (GET /v1/images/{name})
 	GetImage(ctx context.Context, request GetImageRequestObject) (GetImageResponseObject, error)
-	// Upload an image (not implemented yet)
+	// Upload an image, streamed
 	// (PUT /v1/images/{name})
 	PutImage(ctx context.Context, request PutImageRequestObject) (PutImageResponseObject, error)
-	// Download an image's bytes (not implemented yet)
+	// Download an image's bytes, streamed
 	// (GET /v1/images/{name}/blob)
 	GetImageBlob(ctx context.Context, request GetImageBlobRequestObject) (GetImageBlobResponseObject, error)
-	// Mint a download ticket for one image (not implemented yet)
+	// Mint a download ticket for one image
 	// (POST /v1/images/{name}/tickets)
 	CreateImageTicket(ctx context.Context, request CreateImageTicketRequestObject) (CreateImageTicketResponseObject, error)
 	// The name of the calling token
@@ -3273,10 +3720,13 @@ func (sh *strictHandler) GetImage(w http.ResponseWriter, r *http.Request, name N
 }
 
 // PutImage operation middleware
-func (sh *strictHandler) PutImage(w http.ResponseWriter, r *http.Request, name Name) {
+func (sh *strictHandler) PutImage(w http.ResponseWriter, r *http.Request, name Name, params PutImageParams) {
 	var request PutImageRequestObject
 
 	request.Name = name
+	request.Params = params
+
+	request.Body = r.Body
 
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
 		return sh.ssi.PutImage(ctx, request.(PutImageRequestObject))
@@ -3401,25 +3851,45 @@ func (sh *strictHandler) GetVersion(w http.ResponseWriter, r *http.Request) {
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"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",
+	"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",
+	"wgaEwv8bAF5b0OwHKAAA",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

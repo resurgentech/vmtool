@@ -934,3 +934,32 @@ are appended, never edited in; a hook refuses rewrites.
   neither placeholder secret. Red: build failure (undefined `DB`, `Open`,
   `ErrWrongKey`); green after. `just check` green.
 - Commits: the S4 commit on `clone-identity`.
+
+## 2026-11-18 — S5 Image endpoints and download tickets
+
+- `spec/openapi/store.yaml`: image list, metadata, push (streamed
+  `application/octet-stream`, `X-Image-SHA256`, `Content-Length`), blob
+  (streamed, `Content-Length`, `X-Image-SHA256`), delete, tickets;
+  `Image`, `ImageList`, `Ticket`; a `ticketAuth` scheme on the blob route
+  only. Still 1.0.0; `internal/storeapi` regenerated.
+- `internal/store/images.go`: a push streams through a SHA-256 hasher into
+  `BlobStore.Put` under `images/<name>/<sha256>` (never over the live
+  object), with no body cap; the index row is written only when size and
+  hash match, otherwise the new object is deleted and the answer is 400;
+  a replace then deletes the old object; a second push or a delete of a
+  name in flight → 409; no Content-Length → 411.
+- Tickets: 32 random bytes, 15 minutes, one use, kept only as SHA-256 in
+  memory, bound to the image and its digest; redeemed only on a clean,
+  unencoded `GET /v1/images/{name}/blob` for that image; every other
+  route answers 401 and leaves the ticket unspent; every failure is the
+  same 401 as a bad token. Logged caller `ticket:<issuer>`.
+- `cmd/vmtool-store` opens the key, the database and S3 and makes the
+  bucket at start; the key file is now required.
+- 13 new tests over `blob.NewMemory()` and a temp database, including a
+  5 MiB push, replace and failed replace, 409, one-use, other image,
+  expired, replaced, unclean path, a ticket on every other route, and a
+  captured debug log and every response free of ticket, token, their
+  hashes and the body. Red: the 500-stub handlers failed the tests; green
+  after; two mutations (no spend, no RawPath check) made tests fail.
+  `just check` green.
+- Commits: the S5 commit on `clone-identity`.
