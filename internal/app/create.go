@@ -72,6 +72,18 @@ func (s *Service) syncImage(ctx context.Context, st ImageStore, in CreateVMInput
 		emit(in, "upload", "error", fmt.Sprintf("image %s on %s is not vmtool's", in.Image, in.Host), "")
 		return foreignImageErr(in.Image, in.Host, rem.Path)
 	}
+	// Store mode, on a host that can fetch: the host downloads the store's
+	// copy itself and this machine reads no image bytes. If the store lacks
+	// the image (or cannot be asked) this machine's own copy is used as in
+	// local mode.
+	lacks := false
+	if f, ok := st.(ImageFetcher); ok && s.Store.Mode(ctx) == ModeStore {
+		handled, l, err := s.fetchViaStore(ctx, f, rem, in)
+		if handled || err != nil {
+			return err
+		}
+		lacks = l
+	}
 	local := ""
 	if s.Images != nil {
 		p, err := s.Images.FindImage(in.Image)
@@ -114,6 +126,9 @@ func (s *Service) syncImage(ctx context.Context, st ImageStore, in CreateVMInput
 	}
 	defer f.Close()
 	total := info.Size
+	if lacks {
+		s.noteUpload(in, fmt.Sprintf("%s is not in the store; to share it, run: "+StoreImageHint, in.Image, in.Image))
+	}
 	emit(in, "upload", "start", fmt.Sprintf("uploading %s to %s (%d bytes)", in.Image, in.Host, total), "")
 	step, next := uploadStep(total), int64(0)
 	progress := func(sent int64) {

@@ -249,7 +249,7 @@ func (r *Resolver) Resolve(host string) (app.Manager, func(), error) {
 			m = hypervisorPools{m}
 		}
 		if err == nil && m != nil && r.defaultPool != "" {
-			m = defaultPools{m, r.defaultPool}
+			m = withDefaultPools(m, r.defaultPool)
 		}
 		return m, done, err
 	}
@@ -258,7 +258,7 @@ func (r *Resolver) Resolve(host string) (app.Manager, func(), error) {
 	}
 	m, done, err := r.remote(host, r.token)
 	if p := r.hostPools[host]; err == nil && m != nil && p != "" {
-		m = defaultPools{m, p}
+		m = withDefaultPools(m, p)
 	}
 	return m, done, err
 }
@@ -476,4 +476,35 @@ func (d defaultPools) Probe(ctx context.Context) app.HostStatus {
 		return p.Probe(ctx)
 	}
 	return app.HostStatus{Err: errors.New("host cannot be probed")}
+}
+
+// storeDefaultPools is a defaultPools over a Manager that caches images: the
+// wrapper keeps app.ImageStore visible, so create still syncs the image to a
+// listed host that has a default_pool.
+type storeDefaultPools struct {
+	defaultPools
+	app.ImageStore
+}
+
+// fetchDefaultPools also keeps app.ImageFetcher visible.
+type fetchDefaultPools struct {
+	storeDefaultPools
+	app.ImageFetcher
+}
+
+// withDefaultPools wraps m in defaultPools and keeps the optional image
+// interfaces m has (and only those: a wrapper must not claim a capability the
+// wrapped Manager lacks, or create would treat a local libvirt host as a host
+// with an image cache).
+func withDefaultPools(m app.Manager, pool string) app.Manager {
+	d := defaultPools{m, pool}
+	st, ok := m.(app.ImageStore)
+	if !ok {
+		return d
+	}
+	sd := storeDefaultPools{d, st}
+	if f, ok := m.(app.ImageFetcher); ok {
+		return fetchDefaultPools{sd, f}
+	}
+	return sd
 }

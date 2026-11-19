@@ -103,7 +103,10 @@ func usesStore(cmd *cobra.Command) bool {
 	for top.HasParent() && top.Parent().HasParent() {
 		top = top.Parent()
 	}
-	return top.HasParent() && storeCommands[top.Name()]
+	if top.HasParent() && storeCommands[top.Name()] {
+		return true
+	}
+	return storeImagePaths[strings.TrimPrefix(cmd.CommandPath(), cmd.Root().Name()+" ")]
 }
 
 // gateError is the gate's refusal. Error is one line naming the fix; Unwrap
@@ -968,7 +971,7 @@ func imagesCmd(e *env) *cobra.Command {
 		Use:   "images",
 		Short: "Manage disk images",
 	}
-	cmd.AddCommand(imagesListCmd(e), imagesDeleteCmd(e))
+	cmd.AddCommand(imagesListCmd(e), imagesDeleteCmd(e), imagesPushCmd(e), imagesPullCmd(e))
 	return cmd
 }
 
@@ -978,7 +981,9 @@ func imagesListCmd(e *env) *cobra.Command {
 		Short: "List available disk images grouped by pool",
 	}
 	host := hostFlag(cmd)
-	cmd.RunE = withHost(e, host, func(m app.Manager, cmd *cobra.Command, args []string) error {
+	var fromStore bool
+	cmd.Flags().BoolVar(&fromStore, "store", false, "list the base images the store holds instead of a host's pools (needs a store)")
+	hostList := withHost(e, host, func(m app.Manager, cmd *cobra.Command, args []string) error {
 		byPool, err := e.service("").ListImages(cmd.Context(), m)
 		if err != nil {
 			return err
@@ -998,6 +1003,18 @@ func imagesListCmd(e *env) *cobra.Command {
 		}
 		return nil
 	})
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if !fromStore {
+			return hostList(cmd, args)
+		}
+		// The mode is decided here, once, rather than at the command's start:
+		// without --store this command never touches the store.
+		imgs, err := e.service("").ListStoreImages(cmd.Context())
+		if err != nil {
+			return printAppErr(err)
+		}
+		return writeStoreImages(cmd.OutOrStdout(), imgs)
+	}
 	return cmd
 }
 

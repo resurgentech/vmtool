@@ -1080,3 +1080,32 @@ are appended, never edited in; a hook refuses rewrites.
   checks off, cached shortcut off) and the deploy arg removed, each
   failing its test. `just check` green.
 - Commits: the S9 commit on `clone-identity`.
+
+## 2026-11-18 — S10 Client images in store mode
+
+- `internal/app/fetch.go`: `ImageFetcher` (implemented by
+  `remote.Manager.FetchFromStore`; `app` does not import `remote`) and
+  `RelayableFetch`. `syncImage` in store mode: the daemon's manifest
+  already has the store's digest → nothing; otherwise a ticket and
+  `fetchImage`, daemon progress mapped to the `upload` events; the client
+  reads no image bytes. Store lacks the image → this machine's copy is
+  uploaded as in local mode, with one line suggesting `vmtool images
+  push`; a store failing for metadata or a ticket → the same, with a line.
+  A relayable fetch failure fails create until S11. Local mode unchanged.
+- CLI `vmtool images push <file> [--name]` (hashed through the image
+  manifest cache, streamed once; the store verifies), `images pull <name>
+  [--to] [--force]` (`.part`, size and SHA-256 checked, rename; default
+  `image_dir/<name>`), `images list --store`; push and pull decide the
+  mode at start, list only with `--store`.
+- `internal/hosts`: a host wrapped for `default_pool` keeps `ImageStore`
+  and `ImageFetcher` visible (gap since L4, found in S9).
+- Tests over `httptest` stores and daemons: current host, fetch with no
+  bytes read, store lacks image with hint, store failing, foreign first,
+  local mode, ticket absent from errors, events, notices and the daemon
+  request's URL and headers, push, pull (corrupt download leaves nothing),
+  list, refusals in local mode, the hosts wrapper. Tests were written
+  after the code; red by mutation (store branch off: 5 app tests fail;
+  pull's SHA check and the mode hook off: 2 cli tests fail; FOREMAN:
+  remote progress mapping off: `TestCreateFetchTicketOnlyInRequestBody`
+  fails). `just check` green.
+- Commits: the S10 commit on `clone-identity`.

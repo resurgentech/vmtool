@@ -1,11 +1,16 @@
 package cli
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"slices"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -34,13 +39,20 @@ type cliStore struct {
 	creds map[string]map[string]any
 	gets  atomic.Int32
 	onGet func(n int32)
+	// images are the store's base images (S10): bytes by name and their
+	// metadata; pushes counts PUTs; corrupt flips a byte of every blob it
+	// serves while the headers still say the true digest.
+	images  map[string][]byte
+	updated map[string]time.Time
+	pushes  atomic.Int32
+	corrupt atomic.Bool
 }
 
 // newCLIStore starts a store and points the CLI's store client at its test
 // CA. No system trust store, no network beyond loopback.
 func newCLIStore(t *testing.T) *cliStore {
 	t.Helper()
-	s := &cliStore{creds: map[string]map[string]any{}}
+	s := &cliStore{creds: map[string]map[string]any{}, images: map[string][]byte{}, updated: map[string]time.Time{}}
 	s.ts = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		out := func(code int, v any) {
 			w.Header().Set("Content-Type", "application/json")
@@ -65,6 +77,10 @@ func newCLIStore(t *testing.T) *cliStore {
 		default:
 			if key, ok := strings.CutPrefix(r.URL.Path, "/v1/credentials/vms/"); ok {
 				s.serveVM(w, r, key, out)
+				return
+			}
+			if r.URL.Path == "/v1/images" || strings.HasPrefix(r.URL.Path, "/v1/images/") {
+				s.serveImages(w, r, out)
 				return
 			}
 			out(404, map[string]string{"error": "not found"})
@@ -124,6 +140,64 @@ func (s *cliStore) serveVM(w http.ResponseWriter, r *http.Request, key string, o
 	}
 }
 
+func (s *cliStore) imageMeta(name string) map[string]any {
+	b := s.images[name]
+	sum := sha256.Sum256(b)
+	return map[string]any{"name": name, "sha256": hex.EncodeToString(sum[:]), "size": len(b), "updated": s.updated[name]}
+}
+
+// serveImages is the store's image routes: list, get, put and blob.
+func (s *cliStore) serveImages(w http.ResponseWriter, r *http.Request, out func(int, any)) {
+	if r.Header.Get("Authorization") != "Bearer "+storeTok {
+		out(401, map[string]string{"error": "unauthorized"})
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rest := strings.TrimPrefix(strings.TrimPrefix(r.URL.Path, "/v1/images"), "/")
+	if rest == "" {
+		names := make([]string, 0, len(s.images))
+		for n := range s.images {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		list := []map[string]any{}
+		for _, n := range names {
+			list = append(list, s.imageMeta(n))
+		}
+		out(200, map[string]any{"images": list})
+		return
+	}
+	name, blob := strings.CutSuffix(rest, "/blob")
+	b, have := s.images[name]
+	switch {
+	case r.Method == http.MethodPut:
+		body, _ := io.ReadAll(r.Body)
+		sum := sha256.Sum256(body)
+		if hex.EncodeToString(sum[:]) != r.Header.Get("X-Image-SHA256") || int64(len(body)) != r.ContentLength {
+			out(400, map[string]string{"error": "digest or size mismatch"})
+			return
+		}
+		s.pushes.Add(1)
+		s.images[name] = body
+		s.updated[name] = time.Now()
+		out(201, s.imageMeta(name))
+	case !have:
+		out(404, map[string]string{"error": "not found"})
+	case blob:
+		meta := s.imageMeta(name)
+		w.Header().Set("X-Image-SHA256", meta["sha256"].(string))
+		w.Header().Set("Content-Length", strconv.Itoa(len(b)))
+		w.WriteHeader(200)
+		if s.corrupt.Load() {
+			b = append([]byte{b[0] ^ 0xff}, b[1:]...)
+		}
+		_, _ = w.Write(b)
+	default:
+		out(200, s.imageMeta(name))
+	}
+}
+
 // vmRecord puts a VM record into the store double.
 func (s *cliStore) vmRecord(key, uuid, pass, privKey string) {
 	s.mu.Lock()
@@ -159,6 +233,7 @@ var storeUsers = map[string]bool{
 	"vmtool metal rm": true, "vmtool metal ssh": true, "vmtool metal exec": true,
 	"vmtool metal playbook": true, "vmtool metal reboot": true,
 	"vmtool creds fetch": true, "vmtool creds forget": true,
+	"vmtool images push": true, "vmtool images pull": true,
 }
 
 func TestStoreModeDecidedAtCommandStart(t *testing.T) {

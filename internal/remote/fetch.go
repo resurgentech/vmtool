@@ -188,3 +188,22 @@ func derefString(p *string) string {
 	}
 	return *p
 }
+
+var _ app.ImageFetcher = (*Manager)(nil)
+
+// Relayable makes *FetchError an app.RelayableFetch.
+func (e *FetchError) Relayable() bool { return e.Kind.Relayable() }
+
+// FetchFromStore is app.ImageFetcher: FetchImage with app's types. The
+// ticket goes into the request body and nowhere else.
+func (m *Manager) FetchFromStore(ctx context.Context, name, ticket, sha256 string, size int64, progress func(received, total int64)) error {
+	return m.FetchImage(ctx, name, api.FetchImageRequest{Sha256: sha256, Size: size, Ticket: ticket}, func(ev api.FetchImageEvent) {
+		if progress != nil && ev.Event == api.FetchImageEventEventProgress && ev.Received != nil {
+			total := int64(0)
+			if ev.Total != nil {
+				total = *ev.Total
+			}
+			progress(*ev.Received, total)
+		}
+	})
+}
