@@ -758,3 +758,23 @@ are appended, never edited in; a hook refuses rewrites.
 - Tests in `internal/{cli,server,tui}/ownlisted_test.go`: red before,
   green after; `just check` green.
 - Commits: the W3 commit on `clone-identity`.
+
+## 2026-11-18 — W4 Base images from `image_dir`
+
+- `app.ImageSource` (`internal/app/imagesource.go`) replaces
+  `Service.LocalImages`: `Service.Images`, with one implementation here,
+  `app.LocalImages{Dir, Pools}`: local libvirt pools first (only when
+  local libvirt is in use), then `vmtool.FindImageInDir(image_dir, name)`
+  (`pkg/vmtool/imagedir.go`: `name`, then `name.qcow2`; regular files,
+  symlinks to them included; invalid names are not-found).
+- Create hashes and uploads as before; with no local copy it uses the
+  host's cached one or fails with `image "X" is neither in this
+  machine's pools or image_dir (<dir> | not set) nor cached on <host>`.
+- CLI, server and TUI wire `image_dir` from `config.yml`
+  (`tui.Run` takes it as a trailing argument).
+- Tests `TestLocalImagesOrder`, `TestFindImageInDirRules`,
+  `TestCreateVMImageFromImageDir` (fake `ImageStore`, pool lookup not
+  called when the own name is listed), `TestSvcImagesFromImageDir`,
+  `TestServiceImagesFromImageDir`, `TestServerImageDirHelper`: red against
+  a lookup with no folder search, green after; `just check` green.
+- Commits: the W4 commit on `clone-identity`.

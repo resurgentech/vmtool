@@ -166,6 +166,9 @@ type model struct {
 	manager app.Manager
 	// ownListed is whether the own name has a daemon (no local pools).
 	ownListed bool
+	// imageDir is the config's resolved image_dir ("" when unset), where
+	// create looks for base images after the local pools.
+	imageDir string
 	// resolve returns the Manager for a host and its release func; every VM
 	// action resolves the VM's host through it.
 	resolve func(host string) (app.Manager, func(), error)
@@ -363,7 +366,7 @@ func (m model) svc() *app.Service {
 	// The TUI is a workstation tool: a miss refreshes the pools once. With
 	// the own name listed there are no local pools; with no libvirt either
 	// the answer is the same: not found, so the host's cached copy is used.
-	s.LocalImages = func(name string) (string, error) {
+	pools := func(name string) (string, error) {
 		if m.ownListed {
 			return "", fmt.Errorf("image %q: %s has a daemon, so it has no local pools: %w", name, m.host, vmtool.ErrNotFound)
 		}
@@ -374,6 +377,7 @@ func (m model) svc() *app.Service {
 		defer release()
 		return app.FindLocalImage(mgr, true, name)
 	}
+	s.Images = app.LocalImages{Dir: m.imageDir, Pools: pools}
 	return s.WithTunnel(m.tunnel)
 }
 
@@ -1682,8 +1686,9 @@ func flatImages(mgr app.Manager) []string {
 // local libvirt connection is reused; another host gets a remote client
 // carrying the resolver's token). Machine names may not take any host name.
 // tunnel is how guests are reached (the CLI's own executable and token).
-func Run(r *hosts.Resolver, tunnel vmtool.Tunnel, ipWait, sshWait time.Duration) error {
+func Run(r *hosts.Resolver, tunnel vmtool.Tunnel, ipWait, sshWait time.Duration, imageDir string) error {
 	m := newModel(r, tunnel, ipWait, sshWait)
+	m.imageDir = imageDir
 	m.send = &msgSender{}
 	p := tea.NewProgram(m)
 	m.send.fn = p.Send

@@ -281,11 +281,19 @@ func (e *env) service(inventory string) *app.Service {
 		PlaybookDir:   filepath.Join("ansible", "playbooks"),
 		InventoryPath: inventory,
 		HostNames:     e.resolver().AllNames(),
-		LocalImages:   e.localImages,
+		Images:        app.LocalImages{Dir: e.imageDir(), Pools: e.localImages},
 		// create's waits come from the workstation's config.yml (nil: 120s).
 		IPTimeout:  e.cfg.IPWait(),
 		SSHTimeout: e.cfg.SSHWait(),
 	}).WithTunnel(t)
+}
+
+// imageDir is the config's resolved image_dir; "" when unset.
+func (e *env) imageDir() string {
+	if e.cfg == nil {
+		return ""
+	}
+	return e.cfg.ResolvedImageDir()
 }
 
 // localImages finds a base image in this machine's own libvirt pools: create
@@ -770,7 +778,7 @@ func interactiveCmd(e *env) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return tui.Run(e.resolver(), t, e.cfg.IPWait(), e.cfg.SSHWait())
+			return tui.Run(e.resolver(), t, e.cfg.IPWait(), e.cfg.SSHWait(), e.imageDir())
 		},
 	}
 }

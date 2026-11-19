@@ -73,8 +73,8 @@ func (s *Service) syncImage(ctx context.Context, st ImageStore, in CreateVMInput
 		return foreignImageErr(in.Image, in.Host, rem.Path)
 	}
 	local := ""
-	if s.LocalImages != nil {
-		p, err := s.LocalImages(in.Image)
+	if s.Images != nil {
+		p, err := s.Images.FindImage(in.Image)
 		switch {
 		case err == nil:
 			local = p
@@ -87,7 +87,11 @@ func (s *Service) syncImage(ctx context.Context, st ImageStore, in CreateVMInput
 			emit(in, "upload", "done", fmt.Sprintf("%s: no local copy; using %s's cached copy", in.Image, in.Host), "")
 			return nil
 		}
-		return &Error{Kind: KindNotFound, Op: "create", Err: fmt.Errorf("image %q is neither in this machine's pools nor cached on %s: %w", in.Image, in.Host, vmtool.ErrNotFound)}
+		where := "this machine's pools or image_dir"
+		if sr, ok := s.Images.(imageSearcher); ok {
+			where = sr.Searched()
+		}
+		return &Error{Kind: KindNotFound, Op: "create", Err: fmt.Errorf("image %q is neither in %s nor cached on %s: %w", in.Image, where, in.Host, vmtool.ErrNotFound)}
 	}
 	cachePath := s.ImageCachePath
 	if cachePath == "" {

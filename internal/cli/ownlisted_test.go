@@ -3,6 +3,8 @@ package cli
 import (
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -209,5 +211,35 @@ func TestTunnelOwnListedUsesDaemon(t *testing.T) {
 		if n := o.opened.Load(); n != 0 {
 			t.Fatalf("%s: libvirt opened %d times", arg, n)
 		}
+	}
+}
+
+// The service the CLI builds finds base images in image_dir (relative to the
+// config directory) without opening libvirt when the own name is listed.
+func TestServiceImagesFromImageDir(t *testing.T) {
+	t.Setenv(config.TokenEnv, gateToken)
+	f := &fakeHosts{}
+	o := installOwnResolver(t, true, nil, func(host string) app.Manager { return cliFake{host: host, f: f} })
+	dir := writeWorkdir(t, ownConfig("")+"image_dir: imgs\n", "")
+	if err := os.Mkdir(filepath.Join(dir, "imgs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(dir, "imgs", "u.qcow2")
+	if err := os.WriteFile(want, []byte("placeholder image bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := runGate(t, dir, map[string]bool{"vmtool networks": true}, "networks")
+	if r.err != nil {
+		t.Fatal(r.err)
+	}
+	svc := r.env.service("")
+	if p, err := svc.Images.FindImage("u.qcow2"); err != nil || p != want {
+		t.Fatalf("FindImage = %q, %v", p, err)
+	}
+	if _, err := svc.Images.FindImage("nope.qcow2"); !vmtool.IsNotFound(err) {
+		t.Fatalf("miss = %v", err)
+	}
+	if n := o.opened.Load(); n != 0 {
+		t.Fatalf("local libvirt opened %d times", n)
 	}
 }

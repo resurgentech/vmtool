@@ -56,7 +56,7 @@ func TestCreateVMImageStore(t *testing.T) {
 
 	// Foreign: conflict, no upload, no libvirt work.
 	m := &storeVMs{remote: RemoteImage{Foreign: true, Path: "/var/lib/libvirt/images/u.qcow2"}}
-	err := createOn(t, &Service{LocalImages: found, ImageCachePath: cache}, m)
+	err := createOn(t, &Service{Images: ImageSourceFunc(found), ImageCachePath: cache}, m)
 	var ae *Error
 	if !AsError(err, &ae) || ae.Kind != KindConflict || !strings.Contains(err.Error(), "/var/lib/libvirt/images/u.qcow2") {
 		t.Fatalf("foreign: %v", err)
@@ -67,35 +67,35 @@ func TestCreateVMImageStore(t *testing.T) {
 
 	// Absent on the host: upload, then create.
 	m = &storeVMs{}
-	if err := createOn(t, &Service{LocalImages: found, ImageCachePath: cache}, m); err != nil || m.uploads != 1 {
+	if err := createOn(t, &Service{Images: ImageSourceFunc(found), ImageCachePath: cache}, m); err != nil || m.uploads != 1 {
 		t.Fatalf("absent: %v, %d uploads", err, m.uploads)
 	}
 
 	// No local copy, host has it cached: use it.
 	m = &storeVMs{remote: RemoteImage{SHA256: "ab", Size: 9}}
-	if err := createOn(t, &Service{LocalImages: missing, ImageCachePath: cache}, m); err != nil || m.uploads != 0 {
+	if err := createOn(t, &Service{Images: ImageSourceFunc(missing), ImageCachePath: cache}, m); err != nil || m.uploads != 0 {
 		t.Fatalf("cached only: %v, %d uploads", err, m.uploads)
 	}
 	if err := createOn(t, &Service{ImageCachePath: cache}, m); err != nil || m.uploads != 0 {
-		t.Fatalf("no LocalImages: %v, %d uploads", err, m.uploads)
+		t.Fatalf("no Images: %v, %d uploads", err, m.uploads)
 	}
 
 	// Neither: not found, before libvirt.
 	m = &storeVMs{}
-	err = createOn(t, &Service{LocalImages: missing, ImageCachePath: cache}, m)
+	err = createOn(t, &Service{Images: ImageSourceFunc(missing), ImageCachePath: cache}, m)
 	if !vmtool.IsNotFound(err) || m.imagePath != 0 {
 		t.Fatalf("nowhere: %v, ImagePath %d", err, m.imagePath)
 	}
 
 	// A local lookup failure is not "absent".
 	m = &storeVMs{remote: RemoteImage{SHA256: "ab", Size: 9}}
-	err = createOn(t, &Service{LocalImages: func(string) (string, error) { return "", errors.New("libvirt down") }, ImageCachePath: cache}, m)
+	err = createOn(t, &Service{Images: ImageSourceFunc(func(string) (string, error) { return "", errors.New("libvirt down") }), ImageCachePath: cache}, m)
 	if err == nil || !strings.Contains(err.Error(), "libvirt down") || m.imagePath != 0 {
 		t.Fatalf("lookup failure: %v", err)
 	}
 
 	// A local libvirt Manager (not an ImageStore) is unaffected.
-	if err := createOn(t, &Service{LocalImages: found}, &createVMs{}); err != nil {
+	if err := createOn(t, &Service{Images: ImageSourceFunc(found)}, &createVMs{}); err != nil {
 		t.Fatalf("local host: %v", err)
 	}
 }

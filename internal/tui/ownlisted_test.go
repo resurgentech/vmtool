@@ -3,6 +3,8 @@ package tui
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 
@@ -40,7 +42,7 @@ func TestOwnListedTUIOpensNoLibvirt(t *testing.T) {
 	if len(rows) != 2 || rows[0].Host != "ws" || rows[0].Err != nil || rows[0].Name != "web" {
 		t.Fatalf("rows %+v", rows)
 	}
-	if _, err := m.svc().LocalImages("u.qcow2"); !vmtool.IsNotFound(err) {
+	if _, err := m.svc().Images.FindImage("u.qcow2"); !vmtool.IsNotFound(err) {
 		t.Fatalf("LocalImages = %v, want not found", err)
 	}
 	mm, _ := m.enterCreateMode()
@@ -64,7 +66,29 @@ func TestNeitherTUIStartsWithoutLibvirt(t *testing.T) {
 	if len(rows) != 2 || rows[0].Err == nil || rows[1].Err != nil {
 		t.Fatalf("rows %+v", rows)
 	}
-	if _, err := m.svc().LocalImages("u.qcow2"); !vmtool.IsNotFound(err) {
+	if _, err := m.svc().Images.FindImage("u.qcow2"); !vmtool.IsNotFound(err) {
 		t.Fatalf("LocalImages = %v, want not found", err)
+	}
+}
+
+// create's image lookup in the TUI: image_dir is searched after the pools,
+// and with the own name listed the pools are never opened.
+func TestSvcImagesFromImageDir(t *testing.T) {
+	dir := t.TempDir()
+	want := filepath.Join(dir, "u.qcow2")
+	if err := os.WriteFile(want, []byte("placeholder image bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var opened atomic.Int32
+	m := newModel(ownResolver(&opened, true), vmtool.Tunnel{}, 0, 0)
+	m.imageDir = dir
+	if p, err := m.svc().Images.FindImage("u.qcow2"); err != nil || p != want {
+		t.Fatalf("FindImage = %q, %v", p, err)
+	}
+	if _, err := m.svc().Images.FindImage("nope.qcow2"); !vmtool.IsNotFound(err) {
+		t.Fatalf("miss = %v", err)
+	}
+	if n := opened.Load(); n != 0 {
+		t.Fatalf("libvirt opened %d times", n)
 	}
 }

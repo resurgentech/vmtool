@@ -54,11 +54,11 @@ type Service struct {
 	// callers derive one with WithTunnel. Metal and alien machines do not use
 	// it: they keep direct SSH.
 	Tunnel vmtool.Tunnel
-	// LocalImages finds a base image in this machine's own libvirt pools
-	// (the local Manager's ImagePath). CreateVM on a host whose Manager is an
+	// Images finds this machine's copy of a base image (LocalImages: its
+	// libvirt pools, then image_dir). CreateVM on a host whose Manager is an
 	// ImageStore uploads the image from there. nil means this machine has no
 	// local copy to offer: a host's cached copy is then used as it is.
-	LocalImages func(name string) (string, error)
+	Images ImageSource
 	// ImageCachePath is this machine's image-hash cache; empty means
 	// vmtool.ImageManifestFile in the working directory.
 	ImageCachePath string

@@ -131,3 +131,13 @@ func TestAddMachineNameCheckSkipped(t *testing.T) {
 		t.Fatalf("manager %v, opened %d", vms, opened.Load())
 	}
 }
+
+func TestServerImageDirHelper(t *testing.T) {
+	if got := imageDir(nil); got != "" {
+		t.Fatalf("nil config: %q", got)
+	}
+	c := &config.Config{Dir: "/cfg", ImageDir: "imgs"}
+	if got := imageDir(c); got != "/cfg/imgs" {
+		t.Fatalf("imageDir = %q", got)
+	}
+}

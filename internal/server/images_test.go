@@ -891,13 +891,13 @@ func newE2E(t *testing.T, image []byte) *e2e {
 		IPTimeout:      time.Second,
 		Tunnel:         vmtool.Tunnel{Exe: stubTunnelExe},
 		ImageCachePath: filepath.Join(wsDir, vmtool.ImageManifestFile),
-		LocalImages: func(name string) (string, error) {
+		Images: app.ImageSourceFunc(func(name string) (string, error) {
 			p := filepath.Join(wsDir, "pool", name)
 			if _, err := os.Stat(p); err != nil {
 				return "", fmt.Errorf("image %q: %w", name, vmtool.ErrNotFound)
 			}
 			return p, nil
-		},
+		}),
 	}
 	return &e2e{pm: pm, log: log, m: m, svc: svc, local: local, manifest: manifest}
 }

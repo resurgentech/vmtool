@@ -49,7 +49,7 @@ func (s *Server) Handler() http.Handler {
 			SSHTimeout: s.Config.SSHWait(),
 			// createVM on a remote host uploads the image from this
 			// machine's own pools.
-			LocalImages: localImages(r, s.Config == nil || s.Config.Role != config.RoleHypervisor),
+			Images: app.LocalImages{Dir: imageDir(s.Config), Pools: localImages(r, s.Config == nil || s.Config.Role != config.RoleHypervisor)},
 		},
 		listen: s.Listen,
 		hosts:  r,
@@ -66,6 +66,14 @@ func (s *Server) Handler() http.Handler {
 	return chain(h, func(next http.Handler) http.Handler {
 		return requireBearer(hash, public, next)
 	})
+}
+
+// imageDir is c's resolved image_dir; "" when unset.
+func imageDir(c *config.Config) string {
+	if c == nil {
+		return ""
+	}
+	return c.ResolvedImageDir()
 }
 
 // localImages finds an image in the local host's libvirt pools, opening the

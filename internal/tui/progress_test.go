@@ -41,7 +41,7 @@ func TestUploadProgressRetitlesLog(t *testing.T) {
 // The service the TUI builds finds local images through the local Manager.
 func TestSvcLocalImages(t *testing.T) {
 	m := initialModel(imgFake{}, "jetfire", "ansible/playbooks", "ansible/inventory.yml")
-	p, err := m.svc().LocalImages("u.qcow2")
+	p, err := m.svc().Images.FindImage("u.qcow2")
 	if err != nil || p != "/pool/u.qcow2" {
 		t.Fatalf("LocalImages = %q, %v", p, err)
 	}
