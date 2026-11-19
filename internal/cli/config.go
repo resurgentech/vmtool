@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -80,6 +81,38 @@ func configCmd(dirFn func() (string, error)) *cobra.Command {
 		},
 	}
 
-	cmd.AddCommand(write, host)
+	var (
+		sh     config.Host
+		shPort int
+	)
+	setHost := &cobra.Command{
+		Use:   "set-host <name>",
+		Short: "Add or replace one hosts: entry in config.yml, keeping everything else",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(c *cobra.Command, args []string) error {
+			dir, err := dirFn()
+			if err != nil {
+				return err
+			}
+			// Required flags are checked here, not with MarkFlagRequired:
+			// the gate test runs every command with positional dummies only.
+			if sh.Address == "" || sh.SSHUser == "" {
+				return errors.New("set-host needs --address and --ssh-user")
+			}
+			sh.Port = shPort
+			if err := config.SetHost(dir, args[0], sh); err != nil {
+				return err
+			}
+			fmt.Fprintf(c.OutOrStdout(), "set host %s in %s\n", args[0], config.FileName)
+			return nil
+		},
+	}
+	sf := setHost.Flags()
+	sf.StringVar(&sh.Address, "address", "", "host address (required)")
+	sf.StringVar(&sh.SSHUser, "ssh-user", "", "SSH user (required)")
+	sf.IntVar(&shPort, "port", 0, "daemon port (default 9473)")
+	sf.StringVar(&sh.DefaultPool, "default-pool", "", "pool for new VM disks on this host")
+
+	cmd.AddCommand(write, host, setHost)
 	return cmd
 }

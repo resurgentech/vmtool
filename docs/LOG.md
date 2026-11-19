@@ -697,3 +697,23 @@ are appended, never edited in; a hook refuses rewrites.
 - Found, not fixed: the README example `vmtool create veritech02/build1
   ubuntu2604 --pool nvme` needs `ubuntu2604.qcow2`; `vmtool info` does not
   print `disk_backing` / `disk_cache`, which the API returns.
+
+## 2026-11-18 — W1 Config: the own name may be listed; `image_dir`; `config set-host`
+
+- A workstation's `config.yml` may list its own name under `hosts:`
+  (a hypervisor still may not); the entry is validated like any other,
+  and every host's `port` must now be 0..65535. A top-level
+  `default_pool` beside a listed own name is a load error pointing to
+  `hosts.<name>.default_pool`.
+- New optional key `image_dir`, resolved by `Config.Path`
+  (`Config.ResolvedImageDir`).
+- `vmtool config set-host <name> --address A --ssh-user U [--port P]
+  [--default-pool X]` (`config.SetHost`) adds or replaces one `hosts:`
+  entry whole, editing the YAML node tree so every other key, entry and
+  comment is kept; validated before an atomic 0600 write. `Write` shares
+  the same edit path. No token needed by `SetHost`; the CLI gate still
+  applies to the command.
+- Tests `TestOwnNameListedAsWorkstation`, `TestOwnNameListedValidatedLikeAnyEntry`,
+  `TestImageDir`, `TestSetHostRoundTrip`, `TestSetHostOnMissingFileAndInvalid`,
+  `TestConfigSetHost`: red before, green after; `just check` green.
+- Commits: the W1 commit on `clone-identity`.

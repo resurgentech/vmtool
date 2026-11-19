@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -74,6 +75,9 @@ type Config struct {
 	// request names none (a plain pool name). Optional; a remote host's is
 	// hosts.<name>.default_pool. Images stay in the cache pool.
 	DefaultPool string `yaml:"default_pool"`
+	// ImageDir is where base images are looked up. Optional; relative to the
+	// config directory unless absolute. Callers use ResolvedImageDir.
+	ImageDir string `yaml:"image_dir"`
 	// IPWaitSeconds and SSHWaitSeconds bound create's wait for an address and
 	// for SSH. 0 or absent is DefaultWait; otherwise 1..MaxWaitSeconds.
 	// Create runs on the workstation, so only its config.yml governs; a
@@ -124,6 +128,9 @@ func (c *Config) Path(p string) string {
 	}
 	return filepath.Join(c.Dir, p)
 }
+
+// ResolvedImageDir is ImageDir resolved by Path; "" when image_dir is unset.
+func (c *Config) ResolvedImageDir() string { return c.Path(c.ImageDir) }
 
 // ShortHostname returns the local hostname up to the first dot.
 func ShortHostname() (string, error) {
@@ -216,6 +223,13 @@ func (c *Config) finish() error {
 	if c.DefaultPool != "" && !poolRE.MatchString(c.DefaultPool) {
 		return errors.New("default_pool must be a plain pool name (letters, digits, '.', '_', '-'; not starting with a punctuation mark)")
 	}
+	_, listedName := c.Hosts[c.Name]
+	_, listedShort := c.Hosts[short]
+	if listedName || listedShort {
+		if c.DefaultPool != "" {
+			return fmt.Errorf("default_pool must not be set when this host (%q) is listed under hosts: use hosts.%s.default_pool", c.Name, c.Name)
+		}
+	}
 	if err := dotFree(c.Name); err != nil {
 		return err
 	}
@@ -232,8 +246,11 @@ func (c *Config) finish() error {
 		if !vmtool.ValidHostName(name) {
 			return fmt.Errorf("host name %q is not a valid host name", name)
 		}
-		if name == short || name == c.Name {
-			return fmt.Errorf("host %q has the same name as the local host", name)
+		if (name == short || name == c.Name) && c.Role != RoleWorkstation {
+			return fmt.Errorf("host %q has the same name as the local host; only a workstation may list itself", name)
+		}
+		if h.Port < 0 || h.Port > 65535 {
+			return fmt.Errorf("hosts.%s.port must be 0 (default %d) or from 1 to 65535", name, DefaultPort)
 		}
 		if h.DefaultPool != "" && !poolRE.MatchString(h.DefaultPool) {
 			return fmt.Errorf("hosts.%s.default_pool must be a plain pool name (letters, digits, '.', '_', '-'; not starting with a punctuation mark)", name)
@@ -362,11 +379,73 @@ func Write(dir, token string, opts WriteOptions) error {
 	if token == "" {
 		return ErrNoToken
 	}
+	return edit(dir, func(root *yaml.Node) error {
+		for _, kv := range []struct{ k, v string }{
+			{"name", opts.Name}, {"role", opts.Role}, {"listen", opts.Listen},
+			{"tls_cert", opts.TLSCert}, {"tls_key", opts.TLSKey},
+			{"token_sha256", Hash(token)},
+		} {
+			if kv.v != "" {
+				setKey(root, kv.k, kv.v)
+			}
+		}
+		return nil
+	})
+}
+
+// SetHost adds or replaces the hosts.<name> entry with h and keeps every other
+// key and entry (and comments). The entry is replaced whole: a zero Port or
+// empty DefaultPool leaves that key out. No token is needed. The result is
+// validated before it replaces the file, which is written atomically with
+// mode 0600; a missing file is created.
+func SetHost(dir, name string, h Host) error {
+	if h.Address == "" || h.SSHUser == "" {
+		return errors.New("host entry needs an address and an ssh_user")
+	}
+	return edit(dir, func(root *yaml.Node) error {
+		str := func(v string) *yaml.Node { return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: v} }
+		entry := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map", Content: []*yaml.Node{
+			str("address"), str(h.Address), str("ssh_user"), str(h.SSHUser)}}
+		if h.Port != 0 {
+			entry.Content = append(entry.Content, str("port"),
+				&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!int", Value: strconv.Itoa(h.Port)})
+		}
+		if h.DefaultPool != "" {
+			entry.Content = append(entry.Content, str("default_pool"), str(h.DefaultPool))
+		}
+		var hosts *yaml.Node
+		for i := 0; i+1 < len(root.Content); i += 2 {
+			if root.Content[i].Value == "hosts" {
+				hosts = root.Content[i+1]
+			}
+		}
+		if hosts == nil || hosts.Kind != yaml.MappingNode {
+			if hosts != nil && hosts.Kind != yaml.ScalarNode {
+				return errors.New("hosts must be a mapping")
+			}
+			hosts = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+			setNode(root, "hosts", hosts)
+		}
+		for i := 0; i+1 < len(hosts.Content); i += 2 {
+			if hosts.Content[i].Value == name {
+				hosts.Content[i+1] = entry
+				return nil
+			}
+		}
+		hosts.Content = append(hosts.Content, str(name), entry)
+		return nil
+	})
+}
+
+// edit reads dir/config.yml as a node tree (empty if missing), applies fn,
+// validates the result with parse and writes it atomically with mode 0600.
+func edit(dir string, fn func(root *yaml.Node) error) error {
 	path := filepath.Join(dir, FileName)
 	root := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	var doc *yaml.Node
 	if b, err := os.ReadFile(path); err == nil {
-		var doc yaml.Node
-		if err := yaml.Unmarshal(b, &doc); err != nil {
+		doc = &yaml.Node{}
+		if err := yaml.Unmarshal(b, doc); err != nil {
 			return fmt.Errorf("%s: invalid YAML%s", FileName, yamlLine(err))
 		}
 		if len(doc.Content) > 0 {
@@ -378,14 +457,8 @@ func Write(dir, token string, opts WriteOptions) error {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("read %s: %w", FileName, err)
 	}
-	for _, kv := range []struct{ k, v string }{
-		{"name", opts.Name}, {"role", opts.Role}, {"listen", opts.Listen},
-		{"tls_cert", opts.TLSCert}, {"tls_key", opts.TLSKey},
-		{"token_sha256", Hash(token)},
-	} {
-		if kv.v != "" {
-			setKey(root, kv.k, kv.v)
-		}
+	if err := fn(root); err != nil {
+		return err
 	}
 	var buf bytes.Buffer
 	enc := yaml.NewEncoder(&buf)
@@ -400,6 +473,16 @@ func Write(dir, token string, opts WriteOptions) error {
 		return err
 	}
 	return writeAtomic(path, buf.Bytes())
+}
+
+func setNode(m *yaml.Node, key string, val *yaml.Node) {
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value == key {
+			m.Content[i+1] = val
+			return
+		}
+	}
+	m.Content = append(m.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}, val)
 }
 
 func setKey(m *yaml.Node, key, val string) {

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -70,8 +71,8 @@ func TestLoadValidation(t *testing.T) {
 	cases := map[string]string{
 		"bad role":        "role: boss\n",
 		"bad host name":   "hosts:\n  'bad name': { address: a, ssh_user: u }\n",
-		"local host name": "hosts:\n  jetfire: { address: a, ssh_user: u }\n",
-		"config name":     "name: foo\nhosts:\n  foo: { address: a, ssh_user: u }\n",
+		"local host name": "role: hypervisor\nhosts:\n  jetfire: { address: a, ssh_user: u }\n",
+		"config name":     "name: foo\nrole: hypervisor\nhosts:\n  foo: { address: a, ssh_user: u }\n",
 		"short hash":      "token_sha256: abc\n",
 		"upper hash":      "token_sha256: " + strings.ToUpper(hash) + "\n",
 		"missing address": "hosts:\n  h1: { ssh_user: u }\n",
@@ -328,5 +329,165 @@ func TestDefaultPoolValidation(t *testing.T) {
 				t.Fatalf("want error naming %s, got %v", tc.key, err)
 			}
 		})
+	}
+}
+
+func TestOwnNameListedAsWorkstation(t *testing.T) {
+	setHost(t, "jetfire")
+	dir := t.TempDir()
+	writeFile(t, dir, "config.yml", "hosts:\n  jetfire: { address: 127.0.0.1, ssh_user: u, default_pool: nvme }\n")
+	c, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := c.Hosts["jetfire"]
+	if h.Address != "127.0.0.1" || h.Port != DefaultPort || h.DefaultPool != "nvme" {
+		t.Fatalf("%+v", h)
+	}
+	// an explicit name is own too
+	writeFile(t, dir, "config.yml", "name: ws1\nhosts:\n  ws1: { address: 127.0.0.1, ssh_user: u, port: 9474 }\n")
+	if c, err = Load(dir); err != nil || c.Hosts["ws1"].Port != 9474 {
+		t.Fatalf("%v %+v", err, c)
+	}
+}
+
+func TestOwnNameListedValidatedLikeAnyEntry(t *testing.T) {
+	setHost(t, "jetfire")
+	for name, body := range map[string]string{
+		"no address":   "hosts:\n  jetfire: { ssh_user: u }\n",
+		"bad pool":     "hosts:\n  jetfire: { address: a, ssh_user: u, default_pool: a/b }\n",
+		"hypervisor":   "role: hypervisor\nhosts:\n  jetfire: { address: a, ssh_user: u }\n",
+		"top pool too": "default_pool: nvme\nhosts:\n  jetfire: { address: a, ssh_user: u }\n",
+	} {
+		dir := t.TempDir()
+		writeFile(t, dir, "config.yml", body)
+		if _, err := Load(dir); err == nil {
+			t.Errorf("%s: no error", name)
+		}
+	}
+	dir := t.TempDir()
+	writeFile(t, dir, "config.yml", "default_pool: nvme\nhosts:\n  jetfire: { address: a, ssh_user: u }\n")
+	_, err := Load(dir)
+	if err == nil || !strings.Contains(err.Error(), "hosts.jetfire.default_pool") {
+		t.Fatalf("want pointer to hosts.jetfire.default_pool, got %v", err)
+	}
+	// top-level default_pool is fine when the own name is not listed
+	writeFile(t, dir, "config.yml", "default_pool: nvme\nhosts:\n  hv1: { address: a, ssh_user: u }\n")
+	if _, err := Load(dir); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestImageDir(t *testing.T) {
+	setHost(t, "jetfire")
+	dir := t.TempDir()
+	writeFile(t, dir, "config.yml", "image_dir: images\n")
+	c, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.ImageDir != "images" || c.ResolvedImageDir() != filepath.Join(dir, "images") {
+		t.Fatalf("%q %q", c.ImageDir, c.ResolvedImageDir())
+	}
+	writeFile(t, dir, "config.yml", "image_dir: /srv/img\n")
+	if c, _ = Load(dir); c.ResolvedImageDir() != "/srv/img" {
+		t.Fatalf("abs: %q", c.ResolvedImageDir())
+	}
+	writeFile(t, dir, "config.yml", "name: x\n")
+	if c, _ = Load(dir); c.ResolvedImageDir() != "" {
+		t.Fatalf("unset: %q", c.ResolvedImageDir())
+	}
+}
+
+const allKeys = `# header comment
+name: jetfire
+role: workstation
+listen: 127.0.0.1:9473
+token_sha256: ` + "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" + `
+tls_cert: tls/a.crt
+tls_key: tls/a.key
+default_pool: nvme
+image_dir: images
+ip_wait_seconds: 30
+ssh_wait_seconds: 40
+future_key: keepme
+hosts:
+  # hv1 comment
+  hv1: { address: a.example, ssh_user: u, port: 9475, default_pool: fast }
+`
+
+func TestSetHostRoundTrip(t *testing.T) {
+	setHost(t, "jetfire")
+	dir := t.TempDir()
+	writeFile(t, dir, "config.yml", allKeys)
+	before, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SetHost(dir, "PLACEHOLDER-HOST", Host{Address: "10.0.0.9", SSHUser: "ops", Port: 9474, DefaultPool: "nvme2"}); err != nil {
+		t.Fatal(err)
+	}
+	after, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := after.Hosts["PLACEHOLDER-HOST"]; got != (Host{"10.0.0.9", "ops", 9474, "nvme2"}) {
+		t.Fatalf("new entry %+v", got)
+	}
+	if after.Hosts["hv1"] != before.Hosts["hv1"] {
+		t.Fatalf("hv1 changed: %+v", after.Hosts["hv1"])
+	}
+	// every other key unchanged
+	a, b := *after, *before
+	a.Hosts, b.Hosts = nil, nil
+	if !reflect.DeepEqual(a, b) {
+		t.Fatalf("keys changed:\n%+v\n%+v", a, b)
+	}
+	raw, _ := os.ReadFile(filepath.Join(dir, "config.yml"))
+	for _, s := range []string{"# header comment", "future_key: keepme", "# hv1 comment"} {
+		if !strings.Contains(string(raw), s) {
+			t.Errorf("lost %q:\n%s", s, raw)
+		}
+	}
+	if st, _ := os.Stat(filepath.Join(dir, "config.yml")); st.Mode().Perm() != 0o600 {
+		t.Fatalf("mode %v", st.Mode().Perm())
+	}
+	// replace: the entry becomes exactly the new one
+	if err := SetHost(dir, "hv1", Host{Address: "b.example", SSHUser: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	after, _ = Load(dir)
+	if got := after.Hosts["hv1"]; got != (Host{"b.example", "x", DefaultPort, ""}) || len(after.Hosts) != 2 {
+		t.Fatalf("replaced %+v (%d hosts)", got, len(after.Hosts))
+	}
+}
+
+func TestSetHostOnMissingFileAndInvalid(t *testing.T) {
+	setHost(t, "jetfire")
+	dir := t.TempDir()
+	if err := SetHost(dir, "hv1", Host{Address: "a", SSHUser: "u"}); err != nil {
+		t.Fatal(err)
+	}
+	if c, err := Load(dir); err != nil || c.Hosts["hv1"].Address != "a" {
+		t.Fatalf("%v %+v", err, c)
+	}
+	before, _ := os.ReadFile(filepath.Join(dir, "config.yml"))
+	for name, h := range map[string]struct {
+		n string
+		h Host
+	}{
+		"no address": {"hv2", Host{SSHUser: "u"}},
+		"no user":    {"hv2", Host{Address: "a"}},
+		"dotted":     {"a.b", Host{Address: "a", SSHUser: "u"}},
+		"bad pool":   {"hv2", Host{Address: "a", SSHUser: "u", DefaultPool: "../x"}},
+		"bad port":   {"hv2", Host{Address: "a", SSHUser: "u", Port: 70000}},
+	} {
+		if err := SetHost(dir, h.n, h.h); err == nil {
+			t.Errorf("%s: no error", name)
+		}
+	}
+	after, _ := os.ReadFile(filepath.Join(dir, "config.yml"))
+	if string(before) != string(after) {
+		t.Fatal("file changed by rejected set-host")
 	}
 }

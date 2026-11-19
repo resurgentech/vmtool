@@ -139,3 +139,38 @@ func TestConfigHost(t *testing.T) {
 		t.Fatal("missing config should error")
 	}
 }
+
+func TestConfigSetHost(t *testing.T) {
+	dir := t.TempDir()
+	// no token in the environment or .env: set-host must not need one
+	t.Setenv("VMTOOL_TOKEN", "")
+	orig := "name: jetfire\nfuture_key: keepme\nhosts:\n  hv1: { address: a.example, ssh_user: u }\n"
+	if err := os.WriteFile(filepath.Join(dir, "config.yml"), []byte(orig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runConfig(t, dir, "", "set-host", "PLACEHOLDER-HOST", "--address", "10.0.0.9",
+		"--ssh-user", "ops", "--port", "9474", "--default-pool", "nvme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "PLACEHOLDER-HOST") {
+		t.Fatalf("out %q", out)
+	}
+	c, err := config.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h := c.Hosts["PLACEHOLDER-HOST"]; h != (config.Host{Address: "10.0.0.9", SSHUser: "ops", Port: 9474, DefaultPool: "nvme"}) {
+		t.Fatalf("%+v", h)
+	}
+	if c.Hosts["hv1"].Address != "a.example" {
+		t.Fatal("hv1 lost")
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, "config.yml"))
+	if !strings.Contains(string(b), "future_key: keepme") {
+		t.Fatalf("unknown key lost:\n%s", b)
+	}
+	if _, err := runConfig(t, dir, "", "set-host", "hv2", "--address", "a"); err == nil {
+		t.Fatal("missing --ssh-user accepted")
+	}
+}
