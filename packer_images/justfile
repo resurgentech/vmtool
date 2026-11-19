@@ -21,12 +21,41 @@ default:
 templates:
     @ls -1 "{{ images }}"
 
-# Render user-data, packer build, copy qcow2 to $VMTOOL_IMAGE_DIR (default <repo>/images/)
+# Render user-data, packer build; push to the store when config.yml has server: (and it answers), else copy to $VMTOOL_IMAGE_DIR (default <repo>/images/)
 generate template=default_template: (_check-template template)
+    #!/usr/bin/env bash
+    set -euo pipefail
     rm -rf "{{ output / template }}"
     cd "{{ images / template / "http" }}" && PKR_VAR_distro="{{ template }}" PKR_VAR_hashedpassword="$(openssl passwd -6 "$PKR_VAR_password")" envsubst < user-data.tpl > user-data
     cd "{{ images / template }}" && packer init .
     cd "{{ images / template }}" && PKR_VAR_distro="{{ template }}" PKR_VAR_output_directory="{{ output / template }}" packer build .
+    img="{{ output / template / template }}"
+    repo="{{ root }}/.."
+    # S12: vmtool reads config.yml in its working directory (the repo root) and
+    # the store token itself. With server: set, push as <template>.qcow2, the
+    # name the copy below gives, so a create resolves it in both modes.
+    if [[ -x "$repo/vmtool" ]] && grep -Eq '^server:' "$repo/config.yml" 2>/dev/null; then
+        log="$(mktemp)"
+        if (cd "$repo" && ./vmtool images push --name "{{ template }}.qcow2" "$img") 2>&1 | tee "$log"; then
+            rm -f "$log"
+            echo "pushed {{ template }}.qcow2 to the store"
+            exit 0
+        fi
+        # "no store in use": the store did not answer (unreachable or no token); nothing was sent.
+        # Any other failure (digest or size mismatch, store error) fails the recipe; the image stays in output/.
+        if grep -q 'no store in use' "$log"; then
+            rm -f "$log"
+            echo "store did not answer; falling back to image_dir" >&2
+        else
+            rm -f "$log"
+            echo "push to the store failed; the image is at $img" >&2
+            exit 1
+        fi
+    elif ! grep -Eq '^server:' "$repo/config.yml" 2>/dev/null; then
+        echo "no server: in config.yml; copying to image_dir" >&2
+    else
+        echo "no built $repo/vmtool to push with; falling back to image_dir" >&2
+    fi
     # vmtool finds base images in image_dir (config.yml); set that to this folder.
     # Copy under a temp name, then mv, so a reader never sees a half file.
     dir="${VMTOOL_IMAGE_DIR:-{{ root }}/../images}" && mkdir -p "$dir" && cp "{{ output / template / template }}" "$dir/.{{ template }}.qcow2.tmp" && mv -f "$dir/.{{ template }}.qcow2.tmp" "$dir/{{ template }}.qcow2" && echo "installed $dir/{{ template }}.qcow2"
@@ -216,6 +245,36 @@ check:
             || shape_failures+=(".gitignore does not list images/")
     }
     check_generate_image_dir
+
+    # S12: with server: in config.yml, generate pushes the image to the store
+    # (vmtool images push --name <template>.qcow2) before it copies to image_dir;
+    # when the store does not answer it falls back to W6's copy and says so.
+    # Neither path reads or passes a token (vmtool reads VMTOOL_SERVER_TOKEN itself).
+    check_generate_store_push() {
+        local body push copy
+        body="$(awk '/^generate / { on = 1; next } on && /^[^[:space:]]/ { on = 0 } on' "{{ justfile() }}")"
+        [[ "$body" == *'^server:'*config.yml* || "$body" == *config.yml*'^server:'* ]] \
+            || shape_failures+=("generate does not look for server: in config.yml")
+        [[ "$body" == *'images push'* ]] \
+            || { shape_failures+=("generate does not run vmtool images push"); return; }
+        [[ "$body" == *'--name'*'.qcow2'* ]] \
+            || shape_failures+=("generate does not push under the name <template>.qcow2")
+        [[ "$body" == *'no store in use'* ]] \
+            || shape_failures+=("generate does not tell a store that did not answer from a failed push")
+        [[ "$body" == *'falling back to image_dir'* ]] \
+            || shape_failures+=("generate's fallback to the image_dir copy lost its line (\"falling back to image_dir\")")
+        [[ "$body" == *'no server: in config.yml; copying to image_dir'* ]] \
+            || shape_failures+=("generate copies to image_dir without a line when config.yml has no server:")
+        [[ "$body" == *VMTOOL_IMAGE_DIR* ]] \
+            || shape_failures+=("generate lost the image_dir copy the push falls back to")
+        [[ "$body" != *VMTOOL_SERVER_TOKEN* && "$body" != *--token* && "$body" != *.env* ]] \
+            || shape_failures+=("generate handles the store token (vmtool reads it itself)")
+        push="${body%%images push*}"
+        copy="${body%%VMTOOL_IMAGE_DIR*}"
+        (( ${#push} < ${#copy} )) \
+            || shape_failures+=("generate copies to image_dir before it tries the push")
+    }
+    check_generate_store_push
 
     shape_checks=(check_efi_boot check_fallback_loader check_clean_for_cloud_init check_no_installer_hosts_line check_vmtool_cfg check_cloud_init_not_disabled check_netplan_shared check_rolling_url_checksum check_tmp_on_disk)
 

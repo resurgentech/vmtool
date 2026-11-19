@@ -1208,3 +1208,19 @@ are appended, never edited in; a hook refuses rewrites.
   failure before `thin.go`, then mutations (limits, clone count; FOREMAN:
   `sudo` without `-n`) each failing. `just check` green.
 - Commits: the T3 commit on `clone-identity`.
+
+## 2026-11-18 — S12 Packer pushes to the store when configured
+
+- `packer_images/justfile` `generate` (now a bash-shebang recipe): with a
+  `^server:` line in the repo's `config.yml` and a built `<repo>/vmtool`,
+  runs `vmtool images push --name <template>.qcow2` from the repo root
+  (vmtool reads the store token itself). Push says "no store in use"
+  (store unreachable or no token) → `store did not answer; falling back to
+  image_dir` and W6's copy; any other push failure fails the recipe, the
+  image stays in `output/`. No `server:` or no binary → a line, then W6's
+  copy.
+- Shape check `check_generate_store_push` (red before the recipe change,
+  green after); `bash -n` of the recipe body. Docs: packer_images
+  `CLAUDE.md`, `README.md`, `docs/LOG.md`. `./run generate` and `update`
+  unchanged (libvirt-pool path). `generate` never run.
+- Commits: the S12 commit on `clone-identity`.

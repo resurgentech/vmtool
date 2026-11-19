@@ -69,7 +69,7 @@ Every image ends clean for cloud-init, so each clone takes its identity at first
 `justfile` is the main entry point; `./run` is the older equivalent. Both take a template dir name (default `ubuntu2404`).
 
 ```bash
-just generate <template>       # render user-data, packer build, copy to $VMTOOL_IMAGE_DIR (default <repo>/images/); KVM, ISO download, no sudo
+just generate <template>       # render user-data, packer build, push to the store (server: in config.yml and it answers) else copy to $VMTOOL_IMAGE_DIR (default <repo>/images/); KVM, ISO download, no sudo
 just validate <template>       # render user-data, packer init + validate; offline, no build, no sudo
 just check                     # bash -n run + shape checks (UEFI, clean first boot, netplan, checksums, /tmp on disk) + validate every template (the gate for this directory)
 just clean <template>          # delete output for one template
@@ -83,9 +83,10 @@ just distclean                 # delete all output
 `generate` does the full pipeline:
 1. `envsubst` renders `http/user-data.tpl` → `http/user-data` (cloud-init autoinstall config)
 2. `packer init .` + `packer build .` in `qemu_images/<template>/`
-3. Copies the built qcow2 to `$VMTOOL_IMAGE_DIR/<template>.qcow2` (default `<repo>/images/`, created if missing; no sudo). It copies to a temp name in that folder and `mv`s it into place, so a reader never sees a half file. No `pool-refresh`.
+3. If `config.yml` (repo root, the file vmtool reads) has a `server:` key and `<repo>/vmtool` exists, runs `vmtool images push --name <template>.qcow2 output/<template>/<template>` from the repo root. vmtool reads the store token itself (`VMTOOL_SERVER_TOKEN` or `.env`); the recipe never touches it. On success it stops there. If the store does not answer (push says "no store in use": unreachable or no token), it prints `store did not answer; falling back to image_dir` and does step 4. Any other push failure (digest or size mismatch, store error) fails the recipe; the image stays in `output/<template>/`.
+4. Otherwise (no `server:`: it prints `no server: in config.yml; copying to image_dir`; no built `<repo>/vmtool`: it says so) or after that fallback, copies the built qcow2 to `$VMTOOL_IMAGE_DIR/<template>.qcow2` (default `<repo>/images/`, created if missing; no sudo). It copies to a temp name in that folder and `mv`s it into place, so a reader never sees a half file. No `pool-refresh`.
 
-vmtool finds the image through `image_dir` in `config.yml`: set `image_dir` to the same folder (`<repo>/images/` unless you set `VMTOOL_IMAGE_DIR`). `images/` is gitignored. `just check` (`check_generate_image_dir`) fails if `generate` stops copying into `${VMTOOL_IMAGE_DIR:-<repo>/images}`, uses `sudo` or `pool-refresh`, or the repo `.gitignore` lacks `images/`. The older `./run generate` and the `update` recipe still use the libvirt pool path.
+vmtool finds the image through `image_dir` in `config.yml`: set `image_dir` to the same folder (`<repo>/images/` unless you set `VMTOOL_IMAGE_DIR`). `images/` is gitignored. `just check` (`check_generate_store_push`) fails if `generate` stops looking for `server:`, stops running `images push --name <template>.qcow2`, loses the `falling back to image_dir` line or the image_dir copy, tries the copy before the push, or handles the token. `just check` (`check_generate_image_dir`) fails if `generate` stops copying into `${VMTOOL_IMAGE_DIR:-<repo>/images}`, uses `sudo` or `pool-refresh`, or the repo `.gitignore` lacks `images/`. The older `./run generate` and the `update` recipe still use the libvirt pool path.
 
 ## Architecture
 

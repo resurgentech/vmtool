@@ -319,3 +319,13 @@ rewrites.
   `image_dir` must name the same folder. `./run generate` and `update`
   are unchanged (outside the step).
 - Commits: the W6 commit on `clone-identity`.
+
+## 2026-11-18 — S12 `generate` pushes to the store when configured
+
+- `just generate` now runs `vmtool images push --name <template>.qcow2`
+  (from the repo root) when `config.yml` has `server:`. If the push says
+  "no store in use" (store unreachable or no token) it prints
+  `store did not answer; falling back to image_dir` and does W6's copy. Any
+  other push failure fails the recipe; the image stays in `output/`.
+- Shape check `check_generate_store_push` in the image gate; red before the
+  recipe change, green after. `./run generate` and `update` unchanged.

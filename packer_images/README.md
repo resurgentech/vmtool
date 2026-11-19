@@ -1,7 +1,10 @@
 # packer_images
 
 Packer templates that build qcow2 VM images for vmtool and install them
-into a folder. `just generate` copies the image to `$VMTOOL_IMAGE_DIR`
+into a folder or the store. When `config.yml` has `server:`, `just generate`
+pushes the image to the store (`vmtool images push`, as `<template>.qcow2`);
+if the store does not answer it says so and falls back to the folder.
+Otherwise it copies the image to `$VMTOOL_IMAGE_DIR`
 (default `<repo>/images/`); vmtool finds it through `image_dir` in
 `config.yml`, so set `image_dir` to the same folder. One template per directory in
 `qemu_images/`: `ubuntu2404`, `ubuntu2404_gui`, `ubuntu2404_aws`,
