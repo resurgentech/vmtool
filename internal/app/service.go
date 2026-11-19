@@ -66,6 +66,8 @@ type Service struct {
 	// ImageCachePath is this machine's image-hash cache; empty means
 	// vmtool.ImageManifestFile in the working directory.
 	ImageCachePath string
+	// Now is the clock create's elapsed stamps read; nil means time.Now.
+	Now func() time.Time
 }
 
 // WithTunnel returns a shallow copy of s that reaches guests through t. The
@@ -125,6 +127,9 @@ type ProgressEvent struct {
 	Output string
 	// Sent and Total are bytes, for stage "upload" status "progress".
 	Sent, Total int64
+	// ElapsedMS is the milliseconds since the operation began, set by
+	// CreateVM on every event it emits (API 2.4.0 ProgressEvent.elapsed_ms).
+	ElapsedMS int64
 }
 
 type CreateVMInput struct {
@@ -191,6 +196,29 @@ func (f ProgressFunc) emit(stage, status, detail, output string) {
 
 func (f ProgressFunc) emitEvent(ev ProgressEvent) {
 	if f != nil {
+		f(ev)
+	}
+}
+
+// now reads the service's clock (time.Now when none was set).
+func (s *Service) now() time.Time {
+	if s.Now != nil {
+		return s.Now()
+	}
+	return time.Now()
+}
+
+// stamped wraps f so every event carries ElapsedMS, the milliseconds since
+// this call. The stamp is this machine's: an event relayed from a daemon
+// (the fetch progress mapped to "upload" events) gets the time on the clock
+// that is timing the create, not the daemon's. A nil f stays nil.
+func (s *Service) stamped(f ProgressFunc) ProgressFunc {
+	if f == nil {
+		return nil
+	}
+	start := s.now()
+	return func(ev ProgressEvent) {
+		ev.ElapsedMS = s.now().Sub(start).Milliseconds()
 		f(ev)
 	}
 }

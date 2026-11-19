@@ -164,6 +164,7 @@ func (s *Service) syncImage(ctx context.Context, st ImageStore, in CreateVMInput
 }
 
 func (s *Service) CreateVM(ctx context.Context, m Manager, in CreateVMInput) (*vmtool.VMInfo, error) {
+	in.OnProgress = s.stamped(in.OnProgress)
 	if in.Name == "" || in.Image == "" {
 		return nil, invalid("create", fmt.Errorf("name and image are required"))
 	}

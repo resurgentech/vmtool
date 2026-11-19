@@ -1447,3 +1447,20 @@ are appended, never edited in; a hook refuses rewrites.
 - Known gap: `internal/remote` quotes a daemon's error body, so a daemon
   that echoes headers would show its own token (all remote calls).
 - Commits: the T10 commit on `clone-identity`.
+
+## 2026-11-18 — T11 Create stage timings
+
+- Spec (2.4.0): a documented `ProgressEvent` schema with `elapsed_ms`.
+  No route references it (createVM is a synchronous JSON call and streams
+  no progress), so it generates no Go; `api.gen.go` unchanged.
+- `internal/app`: `ProgressEvent.ElapsedMS`, `Service.Now` (injectable
+  clock); `CreateVM` stamps every event with ms since create started.
+- CLI create prints one closing line on success and on failure, e.g.
+  `timings: clone 0.3s, start 1.1s, wait_ip 2.0s, wait_ssh 7.0s, grow_disk
+  0.6s, total 11.0s` (each stage first to last event; only stages that
+  ran).
+- Not built: the step's "REST NDJSON" part (no create stream exists).
+- Tests with a fake clock (app stamps, failure stamps, fields unchanged,
+  CLI line on success and failure). Red: runtime assertion failures;
+  green; `just check` green.
+- Commits: the T11 commit on `clone-identity`.

@@ -1991,6 +1991,28 @@ components:
           maxLength: 128
           pattern: '^[A-Za-z0-9_-]+$'
           description: "the store's one-use download ticket for this image and digest; sent only to the daemon's store_url as `Authorization: Ticket`, never logged or echoed"
+    ProgressEvent:
+      type: object
+      description: >
+        One progress event of a workstation workflow (create today), as the CLI
+        and TUI receive it. createVM itself stays a synchronous JSON call and
+        streams none; this is the documented shape of the event so a client
+        that relays or records them keeps the names.
+      required: [stage, status]
+      properties:
+        stage: { type: string, description: "clone, resize, extra_disk, start, write_inventory, wait_ip, wait_ssh, grow_disk, playbook, reboot, upload, credentials" }
+        status: { type: string, description: "start, done, error, progress, hash or notice" }
+        detail: { type: string }
+        output: { type: string, description: "captured tool output, for a failed or finished step" }
+        sent: { type: integer, format: int64, description: "upload: bytes sent so far" }
+        total: { type: integer, format: int64, description: "upload: bytes expected" }
+        elapsed_ms:
+          type: integer
+          format: int64
+          description: >
+            Milliseconds since the operation started, read from the clock of the
+            process running the workflow, so a stage's time is the difference of
+            two stamps (API 2.4.0). Omitted by a producer that predates the field.
     FetchImageEvent:
       type: object
       description: One line of fetchImage's NDJSON stream.

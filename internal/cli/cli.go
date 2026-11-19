@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"text/tabwriter"
+	"time"
 
 	"github.com/jaredeh/vmtool/internal/app"
 	"github.com/jaredeh/vmtool/internal/config"
@@ -58,6 +59,9 @@ type env struct {
 	// when config.yml has no server: block), opened on first use by session.
 	store     *app.StoreSession
 	storeOnce sync.Once
+	// now is the clock create's elapsed stamps read; nil means time.Now.
+	// Tests set it.
+	now func() time.Time
 }
 
 // storeClientOptions are extra storeclient options for the CLI's store
@@ -364,6 +368,7 @@ func (e *env) service(inventory string) *app.Service {
 		// create's waits come from the workstation's config.yml (nil: 120s).
 		IPTimeout:  e.cfg.IPWait(),
 		SSHTimeout: e.cfg.SSHWait(),
+		Now:        e.now,
 	}).WithTunnel(t)
 }
 
@@ -521,6 +526,7 @@ grows it at first boot on images built with it).
 			if err != nil {
 				return err
 			}
+			var evs []app.ProgressEvent
 			info, err := e.service(inventory).CreateVM(cmd.Context(), m, app.CreateVMInput{
 				Host:            ref.Host,
 				Name:            ref.Name,
@@ -543,6 +549,7 @@ grows it at first boot on images built with it).
 				ExtraDiskPool:   extraDiskPool,
 				ExtraVars:       extra,
 				OnProgress: func(ev app.ProgressEvent) {
+					evs = append(evs, ev)
 					if uploadProgress(os.Stderr, ev) {
 						return
 					}
@@ -556,6 +563,13 @@ grows it at first boot on images built with it).
 			})
 			out := cmd.OutOrStdout()
 			if err != nil {
+				// The line closes what create printed; the error itself follows
+				// on stderr. Nothing for a create refused before it began.
+				defer func() {
+					if l := timingsLine(evs); l != "" {
+						fmt.Fprintln(out, l)
+					}
+				}()
 				// info is set once the domain exists: it is left running.
 				if info != nil {
 					fmt.Fprintf(out, "VM %q exists and is running, but create did not finish:\n", ref.String())
@@ -565,6 +579,9 @@ grows it at first boot on images built with it).
 			fmt.Fprintf(out, "VM %q created and started\n", ref.String())
 			if info != nil && info.IP != "" {
 				fmt.Fprintf(out, "IP: %s\n", info.IP)
+			}
+			if l := timingsLine(evs); l != "" {
+				fmt.Fprintln(out, l)
 			}
 			return nil
 		}),
@@ -1305,4 +1322,44 @@ address: --listen if given, else config.yml listen, else 127.0.0.1:9473.`,
 	}
 	cmd.Flags().StringVar(&listen, "listen", config.DefaultListen, "address to listen on (overrides config.yml listen)")
 	return cmd
+}
+
+// timingsLine is create's closing line, built from the events' elapsed
+// stamps: each stage that started is listed in the order it began, with the
+// time from its first event to its last (start to done, or to the error that
+// ended it), then the time of the last event as the total. A stage whose only
+// events are a lone note (no start, no hash) did not run and is left out.
+// "" when there were no events.
+func timingsLine(evs []app.ProgressEvent) string {
+	if len(evs) == 0 {
+		return ""
+	}
+	type span struct {
+		stage       string
+		first, last int64
+		ran         bool
+	}
+	var spans []*span
+	idx := map[string]*span{}
+	for _, ev := range evs {
+		sp := idx[ev.Stage]
+		if sp == nil {
+			sp = &span{stage: ev.Stage, first: ev.ElapsedMS}
+			idx[ev.Stage] = sp
+			spans = append(spans, sp)
+		}
+		sp.last = ev.ElapsedMS
+		if ev.Status == "start" || ev.Status == "hash" {
+			sp.ran = true
+		}
+	}
+	secs := func(ms int64) string { return fmt.Sprintf("%.1fs", float64(ms)/1000) }
+	var parts []string
+	for _, sp := range spans {
+		if sp.ran {
+			parts = append(parts, sp.stage+" "+secs(sp.last-sp.first))
+		}
+	}
+	parts = append(parts, "total "+secs(evs[len(evs)-1].ElapsedMS))
+	return "timings: " + strings.Join(parts, ", ")
 }
