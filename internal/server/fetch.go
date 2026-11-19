@@ -370,7 +370,7 @@ func newNDJSON(w http.ResponseWriter) *ndjsonStream {
 	return &ndjsonStream{w: w, rc: http.NewResponseController(w)}
 }
 
-func (s *ndjsonStream) send(ev api.FetchImageEvent) {
+func (s *ndjsonStream) send(ev any) {
 	b, err := json.Marshal(ev)
 	if err != nil {
 		return

@@ -23,7 +23,7 @@ whose image is no longer the host's current copy under that name. A saved
 template is a project template: a snapshot of a shut-off VM's boot disk (see
 "save"). Removing a template never touches its clones.`,
 	}
-	cmd.AddCommand(templatesListCmd(e), templatesPrepareCmd(e), templatesDeleteCmd(e), templatesPruneCmd(e), templatesSaveCmd(e))
+	cmd.AddCommand(templatesListCmd(e), templatesPrepareCmd(e), templatesDeleteCmd(e), templatesPruneCmd(e), templatesSaveCmd(e), templatesExportCmd(e))
 	return cmd
 }
 
@@ -287,5 +287,72 @@ new one exists), never an image template or a cached image.`,
 		},
 	}
 	cmd.Flags().BoolVar(&replace, "replace", false, "replace the saved template of that name (never an image template or a cached image)")
+	return cmd
+}
+
+func templatesExportCmd(e *env) *cobra.Command {
+	var pool string
+	cmd := &cobra.Command{
+		Use:   "export <host>/<name>",
+		Short: "Write a template into the host's image cache as a qcow2 image",
+		Long: `Have <host>'s daemon write the template <name> (its name, or its LV name
+vmtpl-<12 hex>) into its image cache as a qcow2 image of the template's name,
+hashed, as an image the daemon created. The template's tags then carry the
+image's SHA-256, so a later create of that image name on <host> uses the
+template: no upload, no rebuild. Take the image to another host with
+"vmtool images pull <host>/<name>" and create from it there as from any base
+image (the first create on a host builds its template in a few seconds).
+
+A name already in the host's image cache is refused unless it is this same
+template exported again (then nothing is rewritten); remove the cached image
+first with "vmtool images delete" to export a changed template under that
+name. Only a saved template makes a new image. Use --pool when the name is in
+more than one thin pool.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			host, name, err := parseTemplateRef(args[0])
+			if err != nil {
+				return err
+			}
+			m, release, err := e.resolver().Resolve(host)
+			if err != nil {
+				return err
+			}
+			defer release()
+			errw := cmd.ErrOrStderr()
+			hashing := false
+			img, err := e.service("").ExportTemplate(cmd.Context(), m, app.ExportTemplateInput{Host: host, Name: name, Pool: pool,
+				OnProgress: func(ev app.ProgressEvent) {
+					if ev.Stage != "export" {
+						return
+					}
+					switch {
+					case ev.Status == "start":
+						fmt.Fprintln(errw, ev.Detail)
+					case ev.Status == "progress" && ev.Detail == "hash":
+						if !hashing {
+							hashing = true
+							fmt.Fprintln(errw)
+						}
+						if ev.Total > 0 {
+							fmt.Fprintf(errw, "\rhashing: %3d%%", ev.Sent*100/ev.Total)
+						}
+					case ev.Status == "progress":
+						fmt.Fprintf(errw, "\rexporting: %d MiB written", ev.Sent>>20)
+					}
+				}})
+			if hashing || err == nil {
+				fmt.Fprintln(errw)
+			}
+			if err != nil {
+				return printAppErr(err)
+			}
+			out := cmd.OutOrStdout()
+			fmt.Fprintf(out, "Image %s/%s is in the image cache (%d bytes, sha256 %s)\n", host, img.Name, img.Size, img.SHA256)
+			fmt.Fprintf(out, "Take it to another machine with: vmtool images pull %s/%s\n", host, img.Name)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&pool, "pool", "", "only the template in this thin pool")
 	return cmd
 }

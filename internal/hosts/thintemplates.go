@@ -106,20 +106,10 @@ func (t ThinPools) DeleteTemplate(name, pool string) (app.TemplateInfo, error) {
 	if err != nil {
 		return app.TemplateInfo{}, err
 	}
-	matches := matchTemplates(vols, name, pool)
-	switch len(matches) {
-	case 0:
-		return app.TemplateInfo{}, notFoundTemplate(name, pool)
-	case 1:
-	default:
-		var which []string
-		for _, v := range matches {
-			which = append(which, v.Pool+"/"+v.Name)
-		}
-		return app.TemplateInfo{}, &app.Error{Kind: app.KindConflict, Op: "delete template",
-			Err: fmt.Errorf("%q matches %d templates (%s); name one by its LV name, and by --pool if the LV name is in two pools", name, len(matches), strings.Join(which, ", "))}
+	target, err := pickTemplate(vols, name, pool, "delete template")
+	if err != nil {
+		return app.TemplateInfo{}, err
 	}
-	target := matches[0]
 
 	unlock := t.Builds.lock(target.VG + "/" + target.Name)
 	defer unlock()
@@ -165,6 +155,27 @@ func matchTemplates(vols []vmtool.ThinVolume, name, pool string) []vmtool.ThinVo
 		}
 	}
 	return out
+}
+
+// pickTemplate is the one template volume among vols that name (and pool,
+// when set) matches: not found when none does, a conflict listing them when
+// several do. op names the operation in the error.
+func pickTemplate(vols []vmtool.ThinVolume, name, pool, op string) (vmtool.ThinVolume, error) {
+	matches := matchTemplates(vols, name, pool)
+	switch len(matches) {
+	case 0:
+		e := notFoundTemplate(name, pool).(*app.Error)
+		e.Op = op
+		return vmtool.ThinVolume{}, e
+	case 1:
+		return matches[0], nil
+	}
+	var which []string
+	for _, v := range matches {
+		which = append(which, v.Pool+"/"+v.Name)
+	}
+	return vmtool.ThinVolume{}, &app.Error{Kind: app.KindConflict, Op: op,
+		Err: fmt.Errorf("%q matches %d templates (%s); name one by its LV name, and by --pool if the LV name is in two pools", name, len(matches), strings.Join(which, ", "))}
 }
 
 func notFoundTemplate(name, pool string) error {

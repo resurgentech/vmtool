@@ -106,7 +106,15 @@ func usesStore(cmd *cobra.Command) bool {
 	if top.HasParent() && storeCommands[top.Name()] {
 		return true
 	}
-	return storeImagePaths[strings.TrimPrefix(cmd.CommandPath(), cmd.Root().Name()+" ")]
+	path := strings.TrimPrefix(cmd.CommandPath(), cmd.Root().Name()+" ")
+	// `images pull host/<name>` pulls from a host's daemon: no store, so no
+	// probe of one (a bare name is the store's).
+	if path == "images pull" {
+		if args := cmd.Flags().Args(); len(args) > 0 && isHostImageRef(args[0]) {
+			return false
+		}
+	}
+	return storeImagePaths[path]
 }
 
 // gateError is the gate's refusal. Error is one line naming the fix; Unwrap

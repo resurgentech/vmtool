@@ -124,12 +124,23 @@ func poolVols(vols []vmtool.ThinVolume, pool vmtool.ThinPool) []vmtool.ThinVolum
 	return out
 }
 
-// imageTemplate is the image template of exactly (image, sha) in the pool. A
-// saved template of the same name is never an answer here: a cached image is
+// imageTemplate is the template of exactly (image, sha) in the pool: an image
+// template of that image and digest, or a saved template of that name that
+// carries that digest, which only an export of it records (the exported file
+// is that saved template's content, so a create of the exported image clones
+// the template instead of building another). A saved template of the same name
+// with no digest, or another one, is never an answer here: a cached image is
 // not shadowed (T3's A9, the conservative reading).
 func imageTemplate(vols []vmtool.ThinVolume, pool vmtool.ThinPool, image, sha string) (vmtool.Template, bool) {
+	if sha == "" {
+		return vmtool.Template{}, false
+	}
 	for _, tp := range vmtool.ThinTemplates(poolVols(vols, pool)) {
-		if tp.Origin == vmtool.TemplateOriginImage && tp.Image == image && tp.SHA256 == sha {
+		if tp.SHA256 != sha {
+			continue
+		}
+		if (tp.Origin == vmtool.TemplateOriginImage && tp.Image == image) ||
+			(tp.Origin == vmtool.TemplateOriginSaved && tp.Name == image) {
 			return tp, true
 		}
 	}

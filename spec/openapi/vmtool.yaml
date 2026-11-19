@@ -818,6 +818,47 @@ paths:
         '403': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+  /v1/hosts/{host}/images/{name}/blob:
+    parameters:
+      - $ref: '#/components/parameters/HostName'
+      - $ref: '#/components/parameters/ImageName'
+    get:
+      operationId: getImageBlob
+      summary: Download a cached image the daemon created (API 2.4.0)
+      description: >
+        Streams the bytes of one image of a hypervisor's image cache, for
+        `vmtool images pull host/<name>`. Only a file the daemon's own
+        `image-manifest.yml` lists is served: {name} must be a valid image
+        name (400), a name the manifest does not list is 404, and a name the
+        manifest does not list but a foreign volume has is 409 (the daemon
+        never serves a file it did not create). The file is the manifest
+        entry's file in the `vmtool` pool's directory (the validated name
+        joined to that directory, nothing else from the request reaches the
+        filesystem), opened without following a symlink; anything but a
+        regular file of exactly the listed size is 409. The answer carries
+        `Content-Length` and `X-Image-SHA256` (the manifest's digest, which
+        the client checks the bytes against). The body is never logged. A
+        workstation forwards to the listed {host}'s daemon and answers 403
+        for itself.
+      responses:
+        '200':
+          description: the image bytes
+          headers:
+            X-Image-SHA256:
+              description: SHA-256 the manifest records, 64 lowercase hex digits
+              schema: { type: string }
+            Content-Length:
+              description: the image's size in bytes
+              schema: { type: integer, format: int64 }
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
   /v1/hosts/{host}/pools:
     parameters:
       - $ref: '#/components/parameters/HostName'
@@ -955,6 +996,58 @@ paths:
               schema: { $ref: '#/components/schemas/TemplateInfo' }
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+  /v1/hosts/{host}/templates/{name}/export:
+    parameters:
+      - $ref: '#/components/parameters/HostName'
+    post:
+      operationId: exportTemplate
+      summary: Write a template into the image cache as a qcow2 image (API 2.4.0)
+      description: >
+        Served by hypervisor daemons (a workstation forwards to the listed
+        {host}; for its own unlisted name it answers 403). `{name}` is a
+        template's name (`vmtool_name`) or LV name, resolved to exactly one
+        template as `deleteTemplate` does (404 none, 409 several; `pool`
+        limits the match). The image is written under the template's own
+        name. The same refusals as `uploadImage` apply before anything is
+        written: a foreign volume of that name is 409, a second upload,
+        fetch or export of the name running in this daemon is 409. If the
+        manifest already lists the name the answer is 409 unless it is the
+        same template re-exported (the template's recorded `sha256` equals
+        the manifest entry's and the file is in place), which is a single
+        `done` line and no rewrite. An image template (built from a cached
+        image) is only ever exported as that same image; only a saved
+        template makes a new image. Otherwise the answer is 200
+        `application/x-ndjson`, one ExportTemplateEvent per line: `progress`
+        lines (stage `export` while the root helper converts the volume to
+        qcow2 into `.<name>.part`, stage `hash` while the file is hashed),
+        then exactly one `done` (with the manifest entry) or one `error`. The
+        file is hard-linked into place under the manifest's lock and recorded
+        as a daemon-created entry; the template's tags then carry the file's
+        SHA-256, so a later create of that image name on this host uses the
+        template and uploads nothing. Any failure removes the `.<name>.part`
+        and nothing else. Bodies are never logged.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+        - name: pool
+          in: query
+          required: false
+          description: only the template in this thin pool
+          schema: { type: string }
+      responses:
+        '200':
+          description: NDJSON progress, ending in one `done` or one `error` line
+          content:
+            application/x-ndjson:
+              schema: { $ref: '#/components/schemas/ExportTemplateEvent' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
@@ -1912,6 +2005,17 @@ components:
           type: string
           enum: [store_unreachable, store_refused, mismatch, other]
           description: "error: why. store_unreachable is the case a client may answer by relaying the image itself."
+    ExportTemplateEvent:
+      type: object
+      description: One line of exportTemplate's NDJSON stream.
+      required: [event]
+      properties:
+        event: { type: string, enum: [progress, done, error] }
+        stage: { type: string, enum: [export, hash], description: "progress: what is running" }
+        received: { type: integer, format: int64, description: "progress: bytes of the qcow2 file written (export) or hashed (hash) so far" }
+        total: { type: integer, format: int64, description: "progress: bytes expected; for stage export the volume's size, an upper bound of the qcow2 file" }
+        image: { $ref: '#/components/schemas/ImageManifestEntry' }
+        error: { type: string, description: "error: what failed" }
     PathResult:
       type: object
       required: [path]

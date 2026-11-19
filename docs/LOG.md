@@ -1402,3 +1402,30 @@ are appended, never edited in; a hook refuses rewrites.
   snapshot origin; refusals; replace order and re-read; statuses;
   workstation forwarding. Red: build failures; green; `just check` green.
 - Commits: the T8 commit on `clone-identity`.
+
+## 2026-11-18 — T9 Export a template as an image; pull an image from a daemon
+
+- Spec (2.4.0): `exportTemplate` (`POST /v1/hosts/{host}/templates/{name}/export`,
+  NDJSON `ExportTemplateEvent`), `getImageBlob` (`GET
+  /v1/hosts/{host}/images/{name}/blob`, `Content-Length`,
+  `X-Image-SHA256`); regenerated; `spec/README.md` rows.
+- Daemon (`internal/server/export.go`; `images.go` gains `beginReceiveAs`
+  and a shared `commit`): export resolves one template, helper `export`
+  to `.<name>.part`, hash, tag the template `vmtool_sha256`, link and
+  manifest entry under the S9 lock and foreign rules; an existing manifest
+  name is 409 unless the template's digest already matches (one `done`,
+  no rewrite). Blob serves only manifest-listed, regular, right-size files
+  opened `O_NOFOLLOW`. Workstations forward both.
+- `internal/hosts`: lookup/export/tag on `ThinPools`; `imageTemplate`
+  also matches a saved template carrying the cached file's digest, so the
+  next create clones it with no upload or rebuild.
+- App `ExportTemplate`, `PullHostImage` (temp `.part` `O_EXCL`, size and
+  digest checked, `os.Link` never replaces; same file is a no-op);
+  remote client; CLI `templates export host/<name>`, `images pull
+  host/<name> [--to dir]` (a `/` means a host; bare name is the store).
+- Tests: blob refusals (not listed, foreign, symlink, dir, size, `..`
+  names), pull never overwrites (incl. race), mismatch leaves nothing,
+  export failure removes only its part, no body logged, forwarding. Red:
+  build failures; mutations (no `O_NOFOLLOW`, `Rename` for `Link`) fail
+  the safety tests; green; `just check` green.
+- Commits: the T9 commit on `clone-identity`.

@@ -1,14 +1,17 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
 	"github.com/jaredeh/vmtool/internal/app"
+	"github.com/jaredeh/vmtool/pkg/vmtool"
 )
 
 // storeImagePaths are the image commands that need the store. Like the
@@ -57,18 +60,37 @@ func imagesPushCmd(e *env) *cobra.Command {
 	return cmd
 }
 
+// isHostImageRef reports whether an `images pull` argument names an image of a
+// host (host/<name>) rather than of the store: image names cannot contain '/'.
+func isHostImageRef(arg string) bool { return strings.Contains(arg, "/") }
+
 func imagesPullCmd(e *env) *cobra.Command {
 	var to string
 	var force bool
 	cmd := &cobra.Command{
-		Use:   "pull <name>",
-		Short: "Download a base image from the store to a file",
-		Long: "Download a base image from the store. It is written to a .part file beside the destination,\n" +
-			"checked against the store's SHA-256 and size, and renamed. The default destination is\n" +
-			"<image_dir>/<name> when image_dir is set in config.yml, else ./<name>. An existing file is\n" +
-			"refused unless --force. Needs a store.",
+		Use:   "pull <name> | <host>/<name>",
+		Short: "Download a base image from the store, or a cached image from a host",
+		Long: "Two forms, told apart by the argument: image names cannot contain '/'.\n\n" +
+			"  <name>         (a bare name) download the image from the store. It is written to a .part file\n" +
+			"                 beside the destination, checked against the store's SHA-256 and size, and\n" +
+			"                 renamed. The default destination is <image_dir>/<name> when image_dir is set in\n" +
+			"                 config.yml, else ./<name>; --to is the destination file. An existing file is\n" +
+			"                 refused unless --force. Needs a store.\n\n" +
+			"  <host>/<name>  download an image from the image cache of <host>'s daemon, one the daemon created\n" +
+			"                 itself (an upload or a `vmtool templates export`; never a file it did not create).\n" +
+			"                 It is written to <dir>/<name>, where <dir> is --to (a directory) or image_dir, else\n" +
+			"                 the current directory: a .part file, checked against the size and SHA-256 the\n" +
+			"                 daemon sent, then linked into place. A file of that name that is already there with\n" +
+			"                 the same SHA-256 is left as it is; with a different one the pull is refused, and\n" +
+			"                 there is no --force. Needs no store.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if isHostImageRef(args[0]) {
+				if force {
+					return errors.New("--force applies to a store pull only: a pull from a host never replaces a file")
+				}
+				return pullFromHost(cmd, e, args[0], to)
+			}
 			name := args[0]
 			dest := to
 			if dest == "" {
@@ -86,9 +108,50 @@ func imagesPullCmd(e *env) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&to, "to", "", "destination file (default: image_dir/<name>, else ./<name>)")
-	cmd.Flags().BoolVar(&force, "force", false, "replace the destination if it exists")
+	cmd.Flags().StringVar(&to, "to", "", "store pull: destination file (default: image_dir/<name>, else ./<name>); host pull: destination directory (default: image_dir, else .)")
+	cmd.Flags().BoolVar(&force, "force", false, "store pull only: replace the destination if it exists")
 	return cmd
+}
+
+// pullFromHost is `images pull <host>/<name>`.
+func pullFromHost(cmd *cobra.Command, e *env, ref, to string) error {
+	host, name, ok := strings.Cut(ref, "/")
+	if !ok || !vmtool.ValidMachineName(host) || !vmtool.ValidImageName(name) {
+		return fmt.Errorf("%q: want <host>/<image name> (letters, digits, '.', '_', '-'), or a bare image name for the store", ref)
+	}
+	dir := to
+	if dir == "" {
+		if dir = e.imageDir(); dir == "" {
+			dir = "."
+		}
+	}
+	m, release, err := e.resolver().Resolve(host)
+	if err != nil {
+		return err
+	}
+	defer release()
+	errw := cmd.ErrOrStderr()
+	tp := transferProgress(errw, "pulling")
+	img, err := e.service("").PullHostImage(cmd.Context(), m, app.PullHostImageInput{Host: host, Name: name, Dir: dir,
+		OnProgress: func(ev app.ProgressEvent) {
+			switch {
+			case ev.Stage != "pull":
+			case ev.Status == "start":
+				fmt.Fprintln(errw, ev.Detail)
+			case ev.Status == "progress":
+				tp(ev.Sent, ev.Total)
+			}
+		}})
+	if err != nil {
+		return printAppErr(err)
+	}
+	out := cmd.OutOrStdout()
+	if img.Unchanged {
+		fmt.Fprintf(out, "Image %s/%s is already at %s (same SHA-256 %s); nothing to do\n", host, img.Name, img.Path, img.SHA256)
+		return nil
+	}
+	fmt.Fprintf(out, "Image %s/%s written to %s (%d bytes, sha256 %s)\n", host, img.Name, img.Path, img.Size, img.SHA256)
+	return nil
 }
 
 // writeStoreImages prints the store's images, one per line.

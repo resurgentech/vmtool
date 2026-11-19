@@ -404,6 +404,13 @@ func rerr(code int, format string, a ...any) *uploadErr {
 // name (409) and a name already being received (409), and enters the name in
 // the registry. Nothing is read or written yet.
 func (h *handlers) beginReceive(ctx context.Context, host, name, verb string) (*receipt, *uploadErr) {
+	return h.beginReceiveAs(ctx, host, verb, func(app.Manager) (string, *uploadErr) { return name, nil })
+}
+
+// beginReceiveAs is beginReceive for a name only the host's Manager can say
+// (an export names the image after its template): pick is called with the
+// resolved Manager before anything else is checked. A failure of pick ends it.
+func (h *handlers) beginReceiveAs(ctx context.Context, host, verb string, pick func(app.Manager) (string, *uploadErr)) (*receipt, *uploadErr) {
 	m, done, err := h.hosts.WithToken(requestToken(ctx)).Resolve(host)
 	if err != nil {
 		if kindOf(err) == app.KindNotFound {
@@ -417,6 +424,10 @@ func (h *handlers) beginReceive(ctx context.Context, host, name, verb string) (*
 			done()
 		}
 	}()
+	name, perr := pick(m)
+	if perr != nil {
+		return nil, perr
+	}
 	dir, err := h.poolDirOf(host, func() (string, error) { return cachePoolDir(m, host) })
 	if err != nil {
 		return nil, rerr(http.StatusInternalServerError, "%v", err)
@@ -444,8 +455,11 @@ func (h *handlers) beginReceive(ctx context.Context, host, name, verb string) (*
 	// one's .part is never removed by a second request.
 	if !uploads.enter(part) {
 		what := "an upload"
-		if verb == "fetch" {
+		switch verb {
+		case "fetch":
 			what = "a fetch"
+		case "export":
+			what = "an export"
 		}
 		return nil, rerr(http.StatusConflict, "%s of %q to %s is already running; try again when it has finished", what, name, host)
 	}
@@ -468,7 +482,7 @@ func (rc *receipt) receive(src io.Reader, size int64, wantSHA string) (api.Image
 		e.mismatch = true
 		return zero, e
 	}
-	name, host, m, man, dir, final, part := rc.name, rc.host, rc.m, rc.man, rc.dir, rc.final, rc.part
+	name, part := rc.name, rc.part
 	// No upload of name is running here: a .part is left from an interrupted
 	// one. Only a file or a symlink (the link itself) is removed.
 	if err := removeStalePart(part); err != nil {
@@ -535,6 +549,19 @@ func (rc *receipt) receive(src io.Reader, size int64, wantSHA string) (api.Image
 	if err != nil {
 		return fail(http.StatusInternalServerError, "write %s: %v", part, err)
 	}
+	return rc.commit(got, n, &partLive)
+}
+
+// commit puts the complete, checked temporary file in place and records it:
+// the end of receive, and of an export. got and n are the file's SHA-256 and
+// size. *partLive is cleared once the temporary file has been linked and
+// removed, so the caller's deferred cleanup does not remove it again.
+func (rc *receipt) commit(got string, n int64, partLive *bool) (api.ImageManifestEntry, *uploadErr) {
+	var zero api.ImageManifestEntry
+	fail := func(code int, format string, a ...any) (api.ImageManifestEntry, *uploadErr) {
+		return zero, rerr(code, format, a...)
+	}
+	name, host, m, man, dir, final, part := rc.name, rc.host, rc.m, rc.man, rc.dir, rc.final, rc.part
 	if rc.h.beforeCommit != nil {
 		rc.h.beforeCommit(name)
 	}
@@ -574,7 +601,7 @@ func (rc *receipt) receive(src io.Reader, size int64, wantSHA string) (api.Image
 		}
 		return fail(http.StatusInternalServerError, "put %s in place: %v", final, err)
 	}
-	partLive = false
+	*partLive = false
 	if err := os.Remove(part); err != nil {
 		slog.Error("uploadImage: remove temporary file after link", "path", part, "err", err)
 	}
