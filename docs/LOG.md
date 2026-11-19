@@ -913,3 +913,24 @@ are appended, never edited in; a hook refuses rewrites.
   green after. `go list -deps ./cmd/vmtool` has no minio. `just check`
   green.
 - Commits: the S3 commit on `clone-identity`.
+
+## 2026-11-18 — S4 SQLite store with encrypted credential columns
+
+- `internal/store/db` on `modernc.org/sqlite` v1.46.1 (pure Go; go.mod
+  stays `go 1.24.0`): tables `schema_version`, `meta`, `images`,
+  `vm_credentials`, `machines`; forward migrations, one transaction each;
+  a database newer than the code is refused.
+- username, password, private_key, public_key and the machines'
+  credentials blob are sealed with AES-256-GCM, a fresh 12-byte nonce per
+  write, bound to table, column and row by the additional data. A sealed
+  key check in `meta` makes a wrong key the start error "encryption key
+  does not match this database", checked before any migration runs.
+- `LoadKey`: 32 raw bytes or 64 hex characters, file 0600; errors give the
+  length only. `Open` makes the directory 0700 and the file 0600 and
+  refuses looser ones (journal siblings too). `Snapshot` runs `VACUUM INTO`
+  a new 0600 file.
+- 13 tests, among them two keys (0x01, 0x02), a fresh nonce on every write,
+  ciphertext bound to its row, and the raw db file and a snapshot holding
+  neither placeholder secret. Red: build failure (undefined `DB`, `Open`,
+  `ErrWrongKey`); green after. `just check` green.
+- Commits: the S4 commit on `clone-identity`.
