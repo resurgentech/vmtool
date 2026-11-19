@@ -272,3 +272,80 @@ func sameFile(path string, size int64, want string) (bool, error) {
 	}
 	return hex.EncodeToString(h.Sum(nil)) == want, nil
 }
+
+// ExportedToStore is the result of ExportTemplateToStore: the daemon's cache
+// entry and the store's image.
+type ExportedToStore struct {
+	Image ExportedImage
+	Store StoreImage
+}
+
+// ExportTemplateToStore is `templates export --push`: ExportTemplate on the
+// host, then the daemon's blob streamed straight into the store as the image
+// of the template's name, with no local file. Store mode only: in local mode
+// (no server, or the store did not answer) it is refused before the host is
+// contacted, naming `images pull` and `images push`, the way to do it without
+// a store. The store takes the size and SHA-256 before the bytes; they come
+// from the blob's headers (Content-Length, X-Image-SHA256) and must agree
+// with the export's done event, and the store verifies the stream against them
+// before it indexes anything (it is not skipped here). Re-pushing what the
+// store holds and pushing over a different image are as `images push`: the
+// store decides. progress events: stage "export" (as ExportTemplate), then
+// stage "push".
+func (s *Service) ExportTemplateToStore(ctx context.Context, m Manager, in ExportTemplateInput) (ExportedToStore, error) {
+	const op = "templates export --push"
+	if !vmtool.ValidImageName(in.Name) {
+		return ExportedToStore{}, invalid(op, fmt.Errorf("template name %q must be a plain name (letters, digits, '.', '_', '-')", in.Name))
+	}
+	if _, ok := m.(TemplateExporter); !ok {
+		return ExportedToStore{}, invalid(op, fmt.Errorf("%s has no daemon with thin pools to export templates from", hostText(in.Host)))
+	}
+	src, ok := m.(ImageBlobSource)
+	if !ok {
+		return ExportedToStore{}, invalid(op, fmt.Errorf("%s has no daemon to pull images from", hostText(in.Host)))
+	}
+	if s.Store.Mode(ctx) != ModeStore {
+		return ExportedToStore{}, invalid(op, fmt.Errorf("%w; --push needs the store (server: in config.yml and VMTOOL_SERVER_TOKEN). Without one: vmtool templates export %s/%s, then vmtool images pull %s/%s and vmtool images push <file>",
+			ErrNoStore, in.Host, in.Name, in.Host, in.Name))
+	}
+	cat := s.Store.CatalogFor(ctx)
+
+	img, err := s.ExportTemplate(ctx, m, in)
+	if err != nil {
+		return ExportedToStore{}, err
+	}
+	rc, info, err := src.OpenImageBlob(ctx, img.Name)
+	if err != nil {
+		return ExportedToStore{}, wrap(op, err)
+	}
+	defer rc.Close()
+	want := strings.ToLower(info.SHA256)
+	if info.Size <= 0 {
+		return ExportedToStore{}, badGateway(op, fmt.Errorf("%s did not state the image's size", hostText(in.Host)))
+	}
+	if len(want) != 64 || strings.Trim(want, "0123456789abcdef") != "" {
+		return ExportedToStore{}, badGateway(op, fmt.Errorf("%s did not send a SHA-256 digest for the image", hostText(in.Host)))
+	}
+	if (img.SHA256 != "" && !strings.EqualFold(img.SHA256, want)) || (img.Size > 0 && img.Size != info.Size) {
+		return ExportedToStore{}, badGateway(op, fmt.Errorf("%s's image %s is not the one just exported (export: %d bytes, sha256 %s; blob: %d bytes, sha256 %s); nothing was pushed",
+			hostText(in.Host), img.Name, img.Size, img.SHA256, info.Size, want))
+	}
+
+	in.OnProgress.emit("push", "start", fmt.Sprintf("pushing %s/%s (%d bytes) to the store as %s", in.Host, img.Name, info.Size, img.Name), "")
+	step := uploadStep(info.Size)
+	next := int64(0)
+	body := &progressReader{r: io.LimitReader(rc, info.Size), total: info.Size, step: step,
+		progress: func(done, total int64) {
+			if done >= next || done == total {
+				next = done + step
+				in.OnProgress.emitEvent(ProgressEvent{Stage: "push", Status: "progress", Detail: "bytes", Sent: done, Total: total})
+			}
+		}}
+	pushed, err := cat.Push(ctx, img.Name, want, info.Size, body)
+	if err != nil {
+		in.OnProgress.emit("push", "error", "the store did not accept the image", "")
+		return ExportedToStore{}, badGateway(op, fmt.Errorf("push %s to the store: %w; nothing was pushed", img.Name, err))
+	}
+	in.OnProgress.emit("push", "done", fmt.Sprintf("%s is in the store (%d bytes, sha256 %s)", pushed.Name, pushed.Size, pushed.SHA256), "")
+	return ExportedToStore{Image: img, Store: *pushed}, nil
+}

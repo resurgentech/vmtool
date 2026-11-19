@@ -1429,3 +1429,21 @@ are appended, never edited in; a hook refuses rewrites.
   build failures; mutations (no `O_NOFOLLOW`, `Rename` for `Link`) fail
   the safety tests; green; `just check` green.
 - Commits: the T9 commit on `clone-identity`.
+
+## 2026-11-18 — T10 `templates export --push`: straight to the store
+
+- `internal/app/exportpull.go` `Service.ExportTemplateToStore`: store mode
+  only (else, and when the store is down, refused before the daemon is
+  asked, naming `images pull host/<name>` and `images push`); export, then
+  the daemon's blob streamed into the S10 store push with no local file;
+  the blob's size and digest must match the export's, and the store
+  checks the digest.
+- CLI `templates export host/<name> --push` (push progress, final store
+  line); `usesStore` probes the store only with `--push`.
+- Tests (httptest daemon and store doubles): bytes equal, digest mismatch
+  rejected, local mode and store down refused, daemon failures push
+  nothing, no store token in output, progress or errors (hostile store).
+  Red: build failure / unknown flag; green; `just check` green.
+- Known gap: `internal/remote` quotes a daemon's error body, so a daemon
+  that echoes headers would show its own token (all remote calls).
+- Commits: the T10 commit on `clone-identity`.

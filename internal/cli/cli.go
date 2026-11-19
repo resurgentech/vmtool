@@ -114,6 +114,12 @@ func usesStore(cmd *cobra.Command) bool {
 			return false
 		}
 	}
+	// `templates export --push` uploads into the store; without --push it
+	// never uses one.
+	if path == "templates export" {
+		push, _ := cmd.Flags().GetBool("push")
+		return push
+	}
 	return storeImagePaths[path]
 }
 

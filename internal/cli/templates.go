@@ -292,6 +292,7 @@ new one exists), never an image template or a cached image.`,
 
 func templatesExportCmd(e *env) *cobra.Command {
 	var pool string
+	var push bool
 	cmd := &cobra.Command{
 		Use:   "export <host>/<name>",
 		Short: "Write a template into the host's image cache as a qcow2 image",
@@ -307,7 +308,16 @@ A name already in the host's image cache is refused unless it is this same
 template exported again (then nothing is rewritten); remove the cached image
 first with "vmtool images delete" to export a changed template under that
 name. Only a saved template makes a new image. Use --pool when the name is in
-more than one thin pool.`,
+more than one thin pool.
+
+With --push the image then goes straight from <host>'s daemon into the store,
+as an image of the template's name, with no copy on this machine: the daemon's
+digest and size go to the store first and the store verifies the stream against
+them, as for "vmtool images push". Needs a store (server: in config.yml and
+VMTOOL_SERVER_TOKEN, and the store must answer); without one --push is refused
+before <host> is contacted: use "vmtool images pull <host>/<name>" and
+"vmtool images push" instead. The store decides what happens when it already
+has an image of that name.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			host, name, err := parseTemplateRef(args[0])
@@ -321,8 +331,21 @@ more than one thin pool.`,
 			defer release()
 			errw := cmd.ErrOrStderr()
 			hashing := false
-			img, err := e.service("").ExportTemplate(cmd.Context(), m, app.ExportTemplateInput{Host: host, Name: name, Pool: pool,
+			pushing := false
+			tp := transferProgress(errw, "pushing")
+			in := app.ExportTemplateInput{Host: host, Name: name, Pool: pool,
 				OnProgress: func(ev app.ProgressEvent) {
+					if ev.Stage == "push" {
+						switch {
+						case ev.Status == "start":
+							pushing = true
+							fmt.Fprintln(errw)
+							fmt.Fprintln(errw, ev.Detail)
+						case ev.Status == "progress":
+							tp(ev.Sent, ev.Total)
+						}
+						return
+					}
 					if ev.Stage != "export" {
 						return
 					}
@@ -340,19 +363,36 @@ more than one thin pool.`,
 					case ev.Status == "progress":
 						fmt.Fprintf(errw, "\rexporting: %d MiB written", ev.Sent>>20)
 					}
-				}})
-			if hashing || err == nil {
+				}}
+			var img app.ExportedImage
+			var res app.ExportedToStore
+			if push {
+				res, err = e.service("").ExportTemplateToStore(cmd.Context(), m, in)
+				img = res.Image
+			} else {
+				img, err = e.service("").ExportTemplate(cmd.Context(), m, in)
+			}
+			// pushing: the export's line was ended when the push began, and the
+			// push's own line ends itself when it completes.
+			if (hashing || err == nil) && !pushing {
+				fmt.Fprintln(errw)
+			} else if err != nil && pushing {
 				fmt.Fprintln(errw)
 			}
 			if err != nil {
 				return printAppErr(err)
 			}
 			out := cmd.OutOrStdout()
+			if push {
+				fmt.Fprintf(out, "Image %s is in the store (%d bytes, sha256 %s), exported from %s/%s\n", res.Store.Name, res.Store.Size, res.Store.SHA256, host, name)
+				return nil
+			}
 			fmt.Fprintf(out, "Image %s/%s is in the image cache (%d bytes, sha256 %s)\n", host, img.Name, img.Size, img.SHA256)
 			fmt.Fprintf(out, "Take it to another machine with: vmtool images pull %s/%s\n", host, img.Name)
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&pool, "pool", "", "only the template in this thin pool")
+	cmd.Flags().BoolVar(&push, "push", false, "then push the image straight from the host into the store (needs a store)")
 	return cmd
 }
