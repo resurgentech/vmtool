@@ -495,6 +495,9 @@ func (h *handlers) ResizeVMVolume(ctx context.Context, req api.ResizeVMVolumeReq
 		if primKind(err) == app.KindNotFound {
 			return api.ResizeVMVolume404JSONResponse(apiErr(err)), nil
 		}
+		if primKind(err) == app.KindConflict { // a thin pool without room
+			return api.ResizeVMVolume409JSONResponse(apiErr(err)), nil
+		}
 		return api.ResizeVMVolume500JSONResponse(apiErr(err)), nil
 	}
 	return api.ResizeVMVolume204Response{}, nil

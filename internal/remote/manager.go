@@ -191,6 +191,24 @@ func (m *Manager) statusErr(status int, body []byte) error {
 	return fail(statusKind(status), &StatusError{Host: m.name, Status: status, Msg: msg})
 }
 
+// noRoomError is a daemon's 409 for a disk call: the only conflict addDisk and
+// resize-volume answer is a thin pool without room. It keeps the daemon's text
+// and matches vmtool.ErrThinNoRoom.
+type noRoomError struct{ err error }
+
+func (e *noRoomError) Error() string        { return e.err.Error() }
+func (e *noRoomError) Unwrap() error        { return e.err }
+func (e *noRoomError) Is(target error) bool { return target == vmtool.ErrThinNoRoom }
+
+// noRoom409 makes a 409 from addDisk or resize-volume match ErrThinNoRoom.
+func noRoom409(err error) error {
+	var se *StatusError
+	if !errors.As(err, &se) || se.Status != http.StatusConflict {
+		return err
+	}
+	return fail(app.KindConflict, &noRoomError{err: se})
+}
+
 // transportErr is a call that got no answer. *url.Error names the URL and
 // the cause, never the request headers, so the token cannot leak here.
 func (m *Manager) transportErr(op string, timeout time.Duration, err error) error {
@@ -409,9 +427,9 @@ func (m *Manager) WaitForIP(name string, timeout time.Duration) (string, error) 
 // ResizeDisk is the raw resizeVMVolume (libvirt only); the workstation's
 // ResizeDisk workflow grows the guest itself.
 func (m *Manager) ResizeDisk(name string, sizeGB uint) error {
-	return m.call("resizeVMVolume", m.long, nil, func(ctx context.Context) (*http.Response, error) {
+	return noRoom409(m.call("resizeVMVolume", m.long, nil, func(ctx context.Context) (*http.Response, error) {
 		return m.client.ResizeVMVolume(ctx, m.name, name, api.ResizeVMVolumeRequest{SizeGb: int(sizeGB)})
-	})
+	}))
 }
 
 func (m *Manager) MigrateDisk(name, pool string) error {
@@ -435,7 +453,7 @@ func (m *Manager) AddDisk(name string, sizeGB uint, pool string) (*vmtool.DiskDe
 	if err := m.call("addDisk", m.timeout, &v, func(ctx context.Context) (*http.Response, error) {
 		return m.client.AddDisk(ctx, m.name, name, api.AddDiskRequest{Size: int(sizeGB), Pool: nonEmpty(pool)})
 	}); err != nil {
-		return nil, err
+		return nil, noRoom409(err)
 	}
 	return &vmtool.DiskDevice{Path: v.Path, Target: v.Target}, nil
 }

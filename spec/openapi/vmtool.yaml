@@ -571,6 +571,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/WorkstationOnly' }
         '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
   /v1/hosts/{host}/vms/{name}/add-disk:
     parameters:
@@ -601,6 +602,7 @@ paths:
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
   /v1/hosts/{host}/networks:
     parameters:
@@ -1231,7 +1233,8 @@ paths:
       description: >
         Daemon primitive (Manager.ResizeDisk). Grows the volume to size_gb GB
         and nothing else: no guest filesystem grow, no credentials. The
-        workstation-only resizeDisk is the workflow that also grows the guest.
+        workstation-only resizeDisk is the workflow that also grows the guest. 409 if the volume is on a thin pool
+        without room (the message gives the pool's numbers).
       requestBody:
         required: true
         content:
@@ -1242,6 +1245,7 @@ paths:
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
   /v1/playbooks:
     get:

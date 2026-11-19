@@ -1464,3 +1464,19 @@ are appended, never edited in; a hook refuses rewrites.
   CLI line on success and failure). Red: runtime assertion failures;
   green; `just check` green.
 - Commits: the T11 commit on `clone-identity`.
+
+## 2026-11-18 — T6a A full thin pool is 409 on add-disk and resize-disk
+
+- Spec (2.4.0, additive): `'409'` on `addDisk`, `resizeDisk` and
+  `resizeVMVolume` (the daemon-side resize a client reaches; it answered
+  500 too). `api.gen.go` regenerated.
+- Server: the three handlers map a conflict (`primKind`, which also catches
+  a bare `ErrThinNoRoom`) to 409 with the pool's numbers.
+- Remote: a 409 from `addDisk` or `resize-volume` becomes a conflict
+  matching `vmtool.ErrThinNoRoom`, the daemon's text kept. CLI unchanged
+  (prints the message, exit 1); proven by test.
+- Other room-checked routes checked: createTemplate build-ahead and save,
+  cloneVolume already 409 with tests; createVM's clone path gains a test.
+- Red: 500 where 409 was wanted; remote error not matching. Green;
+  `just check` green.
+- Commits: the T6a commit on `clone-identity`.

@@ -484,6 +484,9 @@ func (h *handlers) ResizeDisk(ctx context.Context, req api.ResizeDiskRequestObje
 		if kindOf(err) == app.KindInvalid {
 			return api.ResizeDisk400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
 		}
+		if primKind(err) == app.KindConflict { // a thin pool without room
+			return api.ResizeDisk409JSONResponse(apiErr(err)), nil
+		}
 		return api.ResizeDisk500JSONResponse(apiErr(err)), nil
 	}
 	res := v.(*app.ResizeResult)
@@ -507,6 +510,9 @@ func (h *handlers) AddDisk(ctx context.Context, req api.AddDiskRequestObject) (a
 		}
 		if kindOf(err) == app.KindInvalid {
 			return api.AddDisk400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
+		}
+		if primKind(err) == app.KindConflict { // a thin pool without room
+			return api.AddDisk409JSONResponse(apiErr(err)), nil
 		}
 		return api.AddDisk500JSONResponse(apiErr(err)), nil
 	}
