@@ -868,3 +868,28 @@ are appended, never edited in; a hook refuses rewrites.
   failures on the missing fields; green after), `TestVersion` pins 2.3.0.
   `just check` green.
 - Commits: the S1 commit on `clone-identity`.
+
+## 2026-11-18 — S2 Store spec, libvirt-free command, config and auth
+
+- `spec/openapi/store.yaml` 1.0.0 (new): `GET /version` public, `GET
+  /v1/whoami`, and the image, blob, ticket, VM-credential and
+  machine-credential operations as stubs answering 501; generated into
+  `internal/storeapi`. `scripts/verify-generate.sh` and `just generate`
+  cover both specs.
+- `internal/tokenhash` (libvirt-free `Hash`, `Check`, `Valid`);
+  `internal/config` re-exports `Hash` and `Check`.
+- `internal/store`: config (`/etc/vmtool-store/config.yaml`; tokens
+  `{name: sha256-hex}`; S3 keys from `VMTOOL_STORE_S3_ACCESS_KEY` /
+  `_SECRET_KEY`; refuses no token, a bad hash or name, a token or key file
+  with group/other bits, unknown keys), the listening rule (plain HTTP off
+  loopback only with `behind_proxy: true`, else TLS; every bind needs a
+  token hash), auth (one `Authorization` header, all hashes checked,
+  caller name in the context; public routes from the embedded spec), one
+  log line per request (method, route pattern, status, caller, duration),
+  fixed error bodies that never echo an error's text.
+- `cmd/vmtool-store` (`-config`); tests prove `go list -deps` has no
+  `libvirt.org` and it builds with `CGO_ENABLED=0`.
+- AGENTS.md hard rule 5 gains the store exception sentence.
+- Red: build failures (undefined `Config`, `Load`, `NewServer`; no Go
+  files in `cmd/vmtool-store`); green after. `just check` green.
+- Commits: the S2 commit on `clone-identity`.

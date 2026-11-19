@@ -8,9 +8,6 @@ package config
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"crypto/subtle"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -20,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jaredeh/vmtool/internal/tokenhash"
 	"github.com/jaredeh/vmtool/pkg/vmtool"
 	"gopkg.in/yaml.v3"
 )
@@ -56,8 +54,6 @@ var (
 )
 
 var poolRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
-
-var hashRE = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // hostnameFn is os.Hostname; tests replace it.
 var hostnameFn = os.Hostname
@@ -217,7 +213,7 @@ func (c *Config) finish() error {
 			return fmt.Errorf("%s must be 0 (default 120) or from 1 to %d seconds", w.key, MaxWaitSeconds)
 		}
 	}
-	if c.TokenSHA256 != "" && !hashRE.MatchString(c.TokenSHA256) {
+	if c.TokenSHA256 != "" && !tokenhash.Valid(c.TokenSHA256) {
 		return errors.New("token_sha256 must be 64 lowercase hex characters")
 	}
 	if c.DefaultPool != "" && !poolRE.MatchString(c.DefaultPool) {
@@ -290,24 +286,12 @@ func (c *Config) notAMachine(name string) error {
 	return nil
 }
 
-// Hash returns the lowercase hex SHA-256 of token.
-func Hash(token string) string {
-	sum := sha256.Sum256([]byte(token))
-	return hex.EncodeToString(sum[:])
-}
+// Hash returns the lowercase hex SHA-256 of token. It lives in the
+// libvirt-free tokenhash package; this is the same function.
+func Hash(token string) string { return tokenhash.Hash(token) }
 
 // Check reports whether token hashes to hashHex, in constant time.
-func Check(token, hashHex string) bool {
-	if token == "" || hashHex == "" {
-		return false
-	}
-	want, err := hex.DecodeString(hashHex)
-	if err != nil {
-		return false
-	}
-	got := sha256.Sum256([]byte(token))
-	return subtle.ConstantTimeCompare(got[:], want) == 1
-}
+func Check(token, hashHex string) bool { return tokenhash.Check(token, hashHex) }
 
 // Verify loads the token and config from dir and checks one against the
 // other. It returns ErrNoToken, ErrTokenMismatch, or a Load error (including

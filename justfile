@@ -52,9 +52,9 @@ deploy host:
 build:
     cd "{{ root }}" && go build -o {{ bin }} ./cmd/vmtool
 
-# Regenerate internal/api from spec/openapi/vmtool.yaml
+# Regenerate internal/api and internal/storeapi from spec/openapi/{vmtool,store}.yaml
 generate:
-    cd "{{ root }}" && go generate ./internal/api/...
+    cd "{{ root }}" && go generate ./internal/api/... ./internal/storeapi/...
 
 # Fail if generated API code is stale
 verify:

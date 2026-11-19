@@ -1,0 +1,214 @@
+openapi: 3.0.3
+info:
+  title: vmtool store API
+  version: 1.0.0
+  description: >
+    HTTP surface of `vmtool-store`, the image and credential store that runs as
+    a container behind a TLS-terminating proxy. Spec-first: models, stdlib
+    ServerInterface, embedded spec and a client are generated from this file.
+    Every operation except GET /version requires
+    `Authorization: Bearer <token>`; the store checks the token's SHA-256
+    against the named hashes in tokens.yaml and answers 401 otherwise. The
+    image and credential routes answer 501 until they are built.
+servers:
+  - url: /
+security:
+  - bearerAuth: []
+paths:
+  /version:
+    get:
+      operationId: getVersion
+      summary: Reachability probe; public
+      security: []
+      responses:
+        "200":
+          description: The store is up.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Version"
+  /v1/whoami:
+    get:
+      operationId: whoami
+      summary: The name of the calling token
+      responses:
+        "200":
+          description: The caller's name.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Whoami"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/images:
+    get:
+      operationId: listImages
+      summary: List images (not implemented yet)
+      responses:
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/images/{name}:
+    parameters:
+      - $ref: "#/components/parameters/Name"
+    get:
+      operationId: getImage
+      summary: One image's metadata (not implemented yet)
+      responses:
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    put:
+      operationId: putImage
+      summary: Upload an image (not implemented yet)
+      responses:
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    delete:
+      operationId: deleteImage
+      summary: Delete an image (not implemented yet)
+      responses:
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/images/{name}/blob:
+    parameters:
+      - $ref: "#/components/parameters/Name"
+    get:
+      operationId: getImageBlob
+      summary: Download an image's bytes (not implemented yet)
+      responses:
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/images/{name}/tickets:
+    parameters:
+      - $ref: "#/components/parameters/Name"
+    post:
+      operationId: createImageTicket
+      summary: Mint a download ticket for one image (not implemented yet)
+      responses:
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/credentials/vms/{host}/{name}:
+    parameters:
+      - $ref: "#/components/parameters/Host"
+      - $ref: "#/components/parameters/Name"
+    get:
+      operationId: getVMCredential
+      summary: A VM's credentials (not implemented yet)
+      responses:
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    put:
+      operationId: putVMCredential
+      summary: Store a VM's credentials (not implemented yet)
+      responses:
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    delete:
+      operationId: deleteVMCredential
+      summary: Delete a VM's credentials (not implemented yet)
+      responses:
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/credentials/machines:
+    get:
+      operationId: listMachineCredentials
+      summary: List metal and alien machine credentials (not implemented yet)
+      responses:
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/credentials/machines/{name}:
+    parameters:
+      - $ref: "#/components/parameters/Name"
+    get:
+      operationId: getMachineCredential
+      summary: A machine's credentials (not implemented yet)
+      responses:
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    put:
+      operationId: putMachineCredential
+      summary: Store a machine's credentials (not implemented yet)
+      responses:
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    delete:
+      operationId: deleteMachineCredential
+      summary: Delete a machine's credentials (not implemented yet)
+      responses:
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  parameters:
+    Name:
+      name: name
+      in: path
+      required: true
+      schema:
+        type: string
+    Host:
+      name: host
+      in: path
+      required: true
+      schema:
+        type: string
+  responses:
+    Unauthorized:
+      description: Missing or invalid bearer token.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotImplemented:
+      description: Not implemented yet.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+    Version:
+      type: object
+      required: [version]
+      properties:
+        version:
+          type: string
+    Whoami:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
