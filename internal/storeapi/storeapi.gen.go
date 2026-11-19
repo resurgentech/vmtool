@@ -29,6 +29,20 @@ const (
 	TicketAuthScopes = "ticketAuth.Scopes"
 )
 
+// Defines values for MachineCredentialInputKind.
+const (
+	Alien MachineCredentialInputKind = "alien"
+	Metal MachineCredentialInputKind = "metal"
+)
+
+// CredentialNotFound defines model for CredentialNotFound.
+type CredentialNotFound struct {
+	Error string `json:"error"`
+
+	// Stale True only when a record exists for another UUID.
+	Stale *bool `json:"stale,omitempty"`
+}
+
 // Error defines model for Error.
 type Error struct {
 	Error string `json:"error"`
@@ -47,6 +61,49 @@ type ImageList struct {
 	Images []Image `json:"images"`
 }
 
+// MachineCredential defines model for MachineCredential.
+type MachineCredential struct {
+	Address    string    `json:"address"`
+	Kind       string    `json:"kind"`
+	Name       string    `json:"name"`
+	Password   string    `json:"password"`
+	PrivateKey string    `json:"private_key"`
+	PublicKey  string    `json:"public_key"`
+	Updated    time.Time `json:"updated"`
+	Username   string    `json:"username"`
+}
+
+// MachineCredentialInput defines model for MachineCredentialInput.
+type MachineCredentialInput struct {
+	Address    string                     `json:"address"`
+	Kind       MachineCredentialInputKind `json:"kind"`
+	Password   *string                    `json:"password,omitempty"`
+	PrivateKey *string                    `json:"private_key,omitempty"`
+	PublicKey  *string                    `json:"public_key,omitempty"`
+	Username   string                     `json:"username"`
+}
+
+// MachineCredentialInputKind defines model for MachineCredentialInput.Kind.
+type MachineCredentialInputKind string
+
+// MachineList defines model for MachineList.
+type MachineList struct {
+	Machines []MachineSummary `json:"machines"`
+}
+
+// MachineRef defines model for MachineRef.
+type MachineRef struct {
+	Kind    string    `json:"kind"`
+	Name    string    `json:"name"`
+	Updated time.Time `json:"updated"`
+}
+
+// MachineSummary defines model for MachineSummary.
+type MachineSummary struct {
+	Kind string `json:"kind"`
+	Name string `json:"name"`
+}
+
 // Ticket defines model for Ticket.
 type Ticket struct {
 	ExpiresAt time.Time `json:"expires_at"`
@@ -54,6 +111,37 @@ type Ticket struct {
 	Sha256    string    `json:"sha256"`
 	Size      int64     `json:"size"`
 	Ticket    string    `json:"ticket"`
+}
+
+// VMCredential defines model for VMCredential.
+type VMCredential struct {
+	Host       string    `json:"host"`
+	Name       string    `json:"name"`
+	Password   string    `json:"password"`
+	PrivateKey string    `json:"private_key"`
+	PublicKey  string    `json:"public_key"`
+	Updated    time.Time `json:"updated"`
+	Username   string    `json:"username"`
+	Uuid       string    `json:"uuid"`
+}
+
+// VMCredentialInput defines model for VMCredentialInput.
+type VMCredentialInput struct {
+	Password   *string `json:"password,omitempty"`
+	PrivateKey *string `json:"private_key,omitempty"`
+	PublicKey  *string `json:"public_key,omitempty"`
+	Username   string  `json:"username"`
+
+	// Uuid The libvirt domain UUID these credentials belong to.
+	Uuid string `json:"uuid"`
+}
+
+// VMCredentialRef defines model for VMCredentialRef.
+type VMCredentialRef struct {
+	Host    string    `json:"host"`
+	Name    string    `json:"name"`
+	Updated time.Time `json:"updated"`
+	Uuid    string    `json:"uuid"`
 }
 
 // Version defines model for Version.
@@ -81,11 +169,17 @@ type InternalError = Error
 // NotFound defines model for NotFound.
 type NotFound = Error
 
-// NotImplemented defines model for NotImplemented.
-type NotImplemented = Error
+// TooLarge defines model for TooLarge.
+type TooLarge = Error
 
 // Unauthorized defines model for Unauthorized.
 type Unauthorized = Error
+
+// GetVMCredentialParams defines parameters for GetVMCredential.
+type GetVMCredentialParams struct {
+	// Uuid The domain UUID the caller holds now (canonical 8-4-4-4-12 hex).
+	Uuid string `form:"uuid" json:"uuid"`
+}
 
 // PutImageParams defines parameters for PutImage.
 type PutImageParams struct {
@@ -95,6 +189,12 @@ type PutImageParams struct {
 	// ContentLength Body length in bytes; required (411 when absent).
 	ContentLength *int64 `json:"Content-Length,omitempty"`
 }
+
+// PutMachineCredentialJSONRequestBody defines body for PutMachineCredential for application/json ContentType.
+type PutMachineCredentialJSONRequestBody = MachineCredentialInput
+
+// PutVMCredentialJSONRequestBody defines body for PutVMCredential for application/json ContentType.
+type PutVMCredentialJSONRequestBody = VMCredentialInput
 
 // RequestEditorFn  is the function signature for the RequestEditor callback function
 type RequestEditorFn func(ctx context.Context, req *http.Request) error
@@ -178,17 +278,21 @@ type ClientInterface interface {
 	// GetMachineCredential request
 	GetMachineCredential(ctx context.Context, name Name, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// PutMachineCredential request
-	PutMachineCredential(ctx context.Context, name Name, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// PutMachineCredentialWithBody request with any body
+	PutMachineCredentialWithBody(ctx context.Context, name Name, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	PutMachineCredential(ctx context.Context, name Name, body PutMachineCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DeleteVMCredential request
 	DeleteVMCredential(ctx context.Context, host Host, name Name, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetVMCredential request
-	GetVMCredential(ctx context.Context, host Host, name Name, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetVMCredential(ctx context.Context, host Host, name Name, params *GetVMCredentialParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// PutVMCredential request
-	PutVMCredential(ctx context.Context, host Host, name Name, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// PutVMCredentialWithBody request with any body
+	PutVMCredentialWithBody(ctx context.Context, host Host, name Name, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	PutVMCredential(ctx context.Context, host Host, name Name, body PutVMCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListImages request
 	ListImages(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -251,8 +355,20 @@ func (c *Client) GetMachineCredential(ctx context.Context, name Name, reqEditors
 	return c.Client.Do(req)
 }
 
-func (c *Client) PutMachineCredential(ctx context.Context, name Name, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPutMachineCredentialRequest(c.Server, name)
+func (c *Client) PutMachineCredentialWithBody(ctx context.Context, name Name, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutMachineCredentialRequestWithBody(c.Server, name, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PutMachineCredential(ctx context.Context, name Name, body PutMachineCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutMachineCredentialRequest(c.Server, name, body)
 	if err != nil {
 		return nil, err
 	}
@@ -275,8 +391,8 @@ func (c *Client) DeleteVMCredential(ctx context.Context, host Host, name Name, r
 	return c.Client.Do(req)
 }
 
-func (c *Client) GetVMCredential(ctx context.Context, host Host, name Name, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetVMCredentialRequest(c.Server, host, name)
+func (c *Client) GetVMCredential(ctx context.Context, host Host, name Name, params *GetVMCredentialParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetVMCredentialRequest(c.Server, host, name, params)
 	if err != nil {
 		return nil, err
 	}
@@ -287,8 +403,20 @@ func (c *Client) GetVMCredential(ctx context.Context, host Host, name Name, reqE
 	return c.Client.Do(req)
 }
 
-func (c *Client) PutVMCredential(ctx context.Context, host Host, name Name, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPutVMCredentialRequest(c.Server, host, name)
+func (c *Client) PutVMCredentialWithBody(ctx context.Context, host Host, name Name, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutVMCredentialRequestWithBody(c.Server, host, name, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PutVMCredential(ctx context.Context, host Host, name Name, body PutVMCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutVMCredentialRequest(c.Server, host, name, body)
 	if err != nil {
 		return nil, err
 	}
@@ -490,8 +618,19 @@ func NewGetMachineCredentialRequest(server string, name Name) (*http.Request, er
 	return req, nil
 }
 
-// NewPutMachineCredentialRequest generates requests for PutMachineCredential
-func NewPutMachineCredentialRequest(server string, name Name) (*http.Request, error) {
+// NewPutMachineCredentialRequest calls the generic PutMachineCredential builder with application/json body
+func NewPutMachineCredentialRequest(server string, name Name, body PutMachineCredentialJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPutMachineCredentialRequestWithBody(server, name, "application/json", bodyReader)
+}
+
+// NewPutMachineCredentialRequestWithBody generates requests for PutMachineCredential with any type of body
+func NewPutMachineCredentialRequestWithBody(server string, name Name, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -516,10 +655,12 @@ func NewPutMachineCredentialRequest(server string, name Name) (*http.Request, er
 		return nil, err
 	}
 
-	req, err := http.NewRequest("PUT", queryURL.String(), nil)
+	req, err := http.NewRequest("PUT", queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -566,7 +707,7 @@ func NewDeleteVMCredentialRequest(server string, host Host, name Name) (*http.Re
 }
 
 // NewGetVMCredentialRequest generates requests for GetVMCredential
-func NewGetVMCredentialRequest(server string, host Host, name Name) (*http.Request, error) {
+func NewGetVMCredentialRequest(server string, host Host, name Name, params *GetVMCredentialParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -596,6 +737,24 @@ func NewGetVMCredentialRequest(server string, host Host, name Name) (*http.Reque
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "uuid", runtime.ParamLocationQuery, params.Uuid); err != nil {
+			return nil, err
+		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+			return nil, err
+		} else {
+			for k, v := range parsed {
+				for _, v2 := range v {
+					queryValues.Add(k, v2)
+				}
+			}
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
 	}
 
 	req, err := http.NewRequest("GET", queryURL.String(), nil)
@@ -606,8 +765,19 @@ func NewGetVMCredentialRequest(server string, host Host, name Name) (*http.Reque
 	return req, nil
 }
 
-// NewPutVMCredentialRequest generates requests for PutVMCredential
-func NewPutVMCredentialRequest(server string, host Host, name Name) (*http.Request, error) {
+// NewPutVMCredentialRequest calls the generic PutVMCredential builder with application/json body
+func NewPutVMCredentialRequest(server string, host Host, name Name, body PutVMCredentialJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPutVMCredentialRequestWithBody(server, host, name, "application/json", bodyReader)
+}
+
+// NewPutVMCredentialRequestWithBody generates requests for PutVMCredential with any type of body
+func NewPutVMCredentialRequestWithBody(server string, host Host, name Name, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -639,10 +809,12 @@ func NewPutVMCredentialRequest(server string, host Host, name Name) (*http.Reque
 		return nil, err
 	}
 
-	req, err := http.NewRequest("PUT", queryURL.String(), nil)
+	req, err := http.NewRequest("PUT", queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -976,17 +1148,21 @@ type ClientWithResponsesInterface interface {
 	// GetMachineCredentialWithResponse request
 	GetMachineCredentialWithResponse(ctx context.Context, name Name, reqEditors ...RequestEditorFn) (*GetMachineCredentialResponse, error)
 
-	// PutMachineCredentialWithResponse request
-	PutMachineCredentialWithResponse(ctx context.Context, name Name, reqEditors ...RequestEditorFn) (*PutMachineCredentialResponse, error)
+	// PutMachineCredentialWithBodyWithResponse request with any body
+	PutMachineCredentialWithBodyWithResponse(ctx context.Context, name Name, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutMachineCredentialResponse, error)
+
+	PutMachineCredentialWithResponse(ctx context.Context, name Name, body PutMachineCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*PutMachineCredentialResponse, error)
 
 	// DeleteVMCredentialWithResponse request
 	DeleteVMCredentialWithResponse(ctx context.Context, host Host, name Name, reqEditors ...RequestEditorFn) (*DeleteVMCredentialResponse, error)
 
 	// GetVMCredentialWithResponse request
-	GetVMCredentialWithResponse(ctx context.Context, host Host, name Name, reqEditors ...RequestEditorFn) (*GetVMCredentialResponse, error)
+	GetVMCredentialWithResponse(ctx context.Context, host Host, name Name, params *GetVMCredentialParams, reqEditors ...RequestEditorFn) (*GetVMCredentialResponse, error)
 
-	// PutVMCredentialWithResponse request
-	PutVMCredentialWithResponse(ctx context.Context, host Host, name Name, reqEditors ...RequestEditorFn) (*PutVMCredentialResponse, error)
+	// PutVMCredentialWithBodyWithResponse request with any body
+	PutVMCredentialWithBodyWithResponse(ctx context.Context, host Host, name Name, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutVMCredentialResponse, error)
+
+	PutVMCredentialWithResponse(ctx context.Context, host Host, name Name, body PutVMCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*PutVMCredentialResponse, error)
 
 	// ListImagesWithResponse request
 	ListImagesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListImagesResponse, error)
@@ -1016,8 +1192,9 @@ type ClientWithResponsesInterface interface {
 type ListMachineCredentialsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	JSON200      *MachineList
 	JSON401      *Unauthorized
-	JSON501      *NotImplemented
+	JSON500      *InternalError
 }
 
 // Status returns HTTPResponse.Status
@@ -1039,8 +1216,10 @@ func (r ListMachineCredentialsResponse) StatusCode() int {
 type DeleteMachineCredentialResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	JSON400      *BadRequest
 	JSON401      *Unauthorized
-	JSON501      *NotImplemented
+	JSON404      *NotFound
+	JSON500      *InternalError
 }
 
 // Status returns HTTPResponse.Status
@@ -1062,8 +1241,11 @@ func (r DeleteMachineCredentialResponse) StatusCode() int {
 type GetMachineCredentialResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	JSON200      *MachineCredential
+	JSON400      *BadRequest
 	JSON401      *Unauthorized
-	JSON501      *NotImplemented
+	JSON404      *NotFound
+	JSON500      *InternalError
 }
 
 // Status returns HTTPResponse.Status
@@ -1085,8 +1267,11 @@ func (r GetMachineCredentialResponse) StatusCode() int {
 type PutMachineCredentialResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	JSON200      *MachineRef
+	JSON400      *BadRequest
 	JSON401      *Unauthorized
-	JSON501      *NotImplemented
+	JSON413      *TooLarge
+	JSON500      *InternalError
 }
 
 // Status returns HTTPResponse.Status
@@ -1108,8 +1293,10 @@ func (r PutMachineCredentialResponse) StatusCode() int {
 type DeleteVMCredentialResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	JSON400      *BadRequest
 	JSON401      *Unauthorized
-	JSON501      *NotImplemented
+	JSON404      *NotFound
+	JSON500      *InternalError
 }
 
 // Status returns HTTPResponse.Status
@@ -1131,8 +1318,11 @@ func (r DeleteVMCredentialResponse) StatusCode() int {
 type GetVMCredentialResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	JSON200      *VMCredential
+	JSON400      *BadRequest
 	JSON401      *Unauthorized
-	JSON501      *NotImplemented
+	JSON404      *CredentialNotFound
+	JSON500      *InternalError
 }
 
 // Status returns HTTPResponse.Status
@@ -1154,8 +1344,11 @@ func (r GetVMCredentialResponse) StatusCode() int {
 type PutVMCredentialResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	JSON200      *VMCredentialRef
+	JSON400      *BadRequest
 	JSON401      *Unauthorized
-	JSON501      *NotImplemented
+	JSON413      *TooLarge
+	JSON500      *InternalError
 }
 
 // Status returns HTTPResponse.Status
@@ -1401,9 +1594,17 @@ func (c *ClientWithResponses) GetMachineCredentialWithResponse(ctx context.Conte
 	return ParseGetMachineCredentialResponse(rsp)
 }
 
-// PutMachineCredentialWithResponse request returning *PutMachineCredentialResponse
-func (c *ClientWithResponses) PutMachineCredentialWithResponse(ctx context.Context, name Name, reqEditors ...RequestEditorFn) (*PutMachineCredentialResponse, error) {
-	rsp, err := c.PutMachineCredential(ctx, name, reqEditors...)
+// PutMachineCredentialWithBodyWithResponse request with arbitrary body returning *PutMachineCredentialResponse
+func (c *ClientWithResponses) PutMachineCredentialWithBodyWithResponse(ctx context.Context, name Name, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutMachineCredentialResponse, error) {
+	rsp, err := c.PutMachineCredentialWithBody(ctx, name, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutMachineCredentialResponse(rsp)
+}
+
+func (c *ClientWithResponses) PutMachineCredentialWithResponse(ctx context.Context, name Name, body PutMachineCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*PutMachineCredentialResponse, error) {
+	rsp, err := c.PutMachineCredential(ctx, name, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -1420,17 +1621,25 @@ func (c *ClientWithResponses) DeleteVMCredentialWithResponse(ctx context.Context
 }
 
 // GetVMCredentialWithResponse request returning *GetVMCredentialResponse
-func (c *ClientWithResponses) GetVMCredentialWithResponse(ctx context.Context, host Host, name Name, reqEditors ...RequestEditorFn) (*GetVMCredentialResponse, error) {
-	rsp, err := c.GetVMCredential(ctx, host, name, reqEditors...)
+func (c *ClientWithResponses) GetVMCredentialWithResponse(ctx context.Context, host Host, name Name, params *GetVMCredentialParams, reqEditors ...RequestEditorFn) (*GetVMCredentialResponse, error) {
+	rsp, err := c.GetVMCredential(ctx, host, name, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseGetVMCredentialResponse(rsp)
 }
 
-// PutVMCredentialWithResponse request returning *PutVMCredentialResponse
-func (c *ClientWithResponses) PutVMCredentialWithResponse(ctx context.Context, host Host, name Name, reqEditors ...RequestEditorFn) (*PutVMCredentialResponse, error) {
-	rsp, err := c.PutVMCredential(ctx, host, name, reqEditors...)
+// PutVMCredentialWithBodyWithResponse request with arbitrary body returning *PutVMCredentialResponse
+func (c *ClientWithResponses) PutVMCredentialWithBodyWithResponse(ctx context.Context, host Host, name Name, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutVMCredentialResponse, error) {
+	rsp, err := c.PutVMCredentialWithBody(ctx, host, name, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutVMCredentialResponse(rsp)
+}
+
+func (c *ClientWithResponses) PutVMCredentialWithResponse(ctx context.Context, host Host, name Name, body PutVMCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*PutVMCredentialResponse, error) {
+	rsp, err := c.PutVMCredential(ctx, host, name, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -1523,6 +1732,13 @@ func ParseListMachineCredentialsResponse(rsp *http.Response) (*ListMachineCreden
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest MachineList
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Unauthorized
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -1530,12 +1746,12 @@ func ParseListMachineCredentialsResponse(rsp *http.Response) (*ListMachineCreden
 		}
 		response.JSON401 = &dest
 
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 501:
-		var dest NotImplemented
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
-		response.JSON501 = &dest
+		response.JSON500 = &dest
 
 	}
 
@@ -1556,6 +1772,13 @@ func ParseDeleteMachineCredentialResponse(rsp *http.Response) (*DeleteMachineCre
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Unauthorized
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -1563,12 +1786,19 @@ func ParseDeleteMachineCredentialResponse(rsp *http.Response) (*DeleteMachineCre
 		}
 		response.JSON401 = &dest
 
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 501:
-		var dest NotImplemented
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
-		response.JSON501 = &dest
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -1589,6 +1819,20 @@ func ParseGetMachineCredentialResponse(rsp *http.Response) (*GetMachineCredentia
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest MachineCredential
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Unauthorized
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -1596,12 +1840,19 @@ func ParseGetMachineCredentialResponse(rsp *http.Response) (*GetMachineCredentia
 		}
 		response.JSON401 = &dest
 
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 501:
-		var dest NotImplemented
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
-		response.JSON501 = &dest
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -1622,6 +1873,20 @@ func ParsePutMachineCredentialResponse(rsp *http.Response) (*PutMachineCredentia
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest MachineRef
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Unauthorized
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -1629,12 +1894,19 @@ func ParsePutMachineCredentialResponse(rsp *http.Response) (*PutMachineCredentia
 		}
 		response.JSON401 = &dest
 
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 501:
-		var dest NotImplemented
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest TooLarge
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
-		response.JSON501 = &dest
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -1655,6 +1927,13 @@ func ParseDeleteVMCredentialResponse(rsp *http.Response) (*DeleteVMCredentialRes
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Unauthorized
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -1662,12 +1941,19 @@ func ParseDeleteVMCredentialResponse(rsp *http.Response) (*DeleteVMCredentialRes
 		}
 		response.JSON401 = &dest
 
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 501:
-		var dest NotImplemented
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
-		response.JSON501 = &dest
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -1688,6 +1974,20 @@ func ParseGetVMCredentialResponse(rsp *http.Response) (*GetVMCredentialResponse,
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest VMCredential
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Unauthorized
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -1695,12 +1995,19 @@ func ParseGetVMCredentialResponse(rsp *http.Response) (*GetVMCredentialResponse,
 		}
 		response.JSON401 = &dest
 
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 501:
-		var dest NotImplemented
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest CredentialNotFound
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
-		response.JSON501 = &dest
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -1721,6 +2028,20 @@ func ParsePutVMCredentialResponse(rsp *http.Response) (*PutVMCredentialResponse,
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest VMCredentialRef
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Unauthorized
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -1728,12 +2049,19 @@ func ParsePutVMCredentialResponse(rsp *http.Response) (*PutVMCredentialResponse,
 		}
 		response.JSON401 = &dest
 
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 501:
-		var dest NotImplemented
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest TooLarge
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
-		response.JSON501 = &dest
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -2118,25 +2446,25 @@ func ParseGetVersionResponse(rsp *http.Response) (*GetVersionResponse, error) {
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
-	// List metal and alien machine credentials (not implemented yet)
+	// List metal and alien machines (names and kinds only)
 	// (GET /v1/credentials/machines)
 	ListMachineCredentials(w http.ResponseWriter, r *http.Request)
-	// Delete a machine's credentials (not implemented yet)
+	// Delete a machine's record
 	// (DELETE /v1/credentials/machines/{name})
 	DeleteMachineCredential(w http.ResponseWriter, r *http.Request, name Name)
-	// A machine's credentials (not implemented yet)
+	// A machine's manifest and credentials
 	// (GET /v1/credentials/machines/{name})
 	GetMachineCredential(w http.ResponseWriter, r *http.Request, name Name)
-	// Store a machine's credentials (not implemented yet)
+	// Store a machine's manifest and credentials, replacing any record
 	// (PUT /v1/credentials/machines/{name})
 	PutMachineCredential(w http.ResponseWriter, r *http.Request, name Name)
-	// Delete a VM's credentials (not implemented yet)
+	// Delete a VM's credentials (whatever UUID they are for)
 	// (DELETE /v1/credentials/vms/{host}/{name})
 	DeleteVMCredential(w http.ResponseWriter, r *http.Request, host Host, name Name)
-	// A VM's credentials (not implemented yet)
+	// A VM's credentials, if the stored record is for this domain UUID
 	// (GET /v1/credentials/vms/{host}/{name})
-	GetVMCredential(w http.ResponseWriter, r *http.Request, host Host, name Name)
-	// Store a VM's credentials (not implemented yet)
+	GetVMCredential(w http.ResponseWriter, r *http.Request, host Host, name Name, params GetVMCredentialParams)
+	// Store a VM's credentials, replacing any record for (host, name)
 	// (PUT /v1/credentials/vms/{host}/{name})
 	PutVMCredential(w http.ResponseWriter, r *http.Request, host Host, name Name)
 	// List images, ordered by name
@@ -2356,8 +2684,26 @@ func (siw *ServerInterfaceWrapper) GetVMCredential(w http.ResponseWriter, r *htt
 
 	r = r.WithContext(ctx)
 
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetVMCredentialParams
+
+	// ------------- Required query parameter "uuid" -------------
+
+	if paramValue := r.URL.Query().Get("uuid"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "uuid"})
+		return
+	}
+
+	err = runtime.BindQueryParameter("form", true, true, "uuid", r.URL.Query(), &params.Uuid)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "uuid", Err: err})
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetVMCredential(w, r, host, name)
+		siw.Handler.GetVMCredential(w, r, host, name, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2810,7 +3156,7 @@ type InternalErrorJSONResponse Error
 
 type NotFoundJSONResponse Error
 
-type NotImplementedJSONResponse Error
+type TooLargeJSONResponse Error
 
 type UnauthorizedJSONResponse Error
 
@@ -2819,6 +3165,15 @@ type ListMachineCredentialsRequestObject struct {
 
 type ListMachineCredentialsResponseObject interface {
 	VisitListMachineCredentialsResponse(w http.ResponseWriter) error
+}
+
+type ListMachineCredentials200JSONResponse MachineList
+
+func (response ListMachineCredentials200JSONResponse) VisitListMachineCredentialsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
 }
 
 type ListMachineCredentials401JSONResponse struct{ UnauthorizedJSONResponse }
@@ -2830,11 +3185,11 @@ func (response ListMachineCredentials401JSONResponse) VisitListMachineCredential
 	return json.NewEncoder(w).Encode(response)
 }
 
-type ListMachineCredentials501JSONResponse struct{ NotImplementedJSONResponse }
+type ListMachineCredentials500JSONResponse struct{ InternalErrorJSONResponse }
 
-func (response ListMachineCredentials501JSONResponse) VisitListMachineCredentialsResponse(w http.ResponseWriter) error {
+func (response ListMachineCredentials500JSONResponse) VisitListMachineCredentialsResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(501)
+	w.WriteHeader(500)
 
 	return json.NewEncoder(w).Encode(response)
 }
@@ -2847,6 +3202,23 @@ type DeleteMachineCredentialResponseObject interface {
 	VisitDeleteMachineCredentialResponse(w http.ResponseWriter) error
 }
 
+type DeleteMachineCredential204Response struct {
+}
+
+func (response DeleteMachineCredential204Response) VisitDeleteMachineCredentialResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteMachineCredential400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response DeleteMachineCredential400JSONResponse) VisitDeleteMachineCredentialResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
 type DeleteMachineCredential401JSONResponse struct{ UnauthorizedJSONResponse }
 
 func (response DeleteMachineCredential401JSONResponse) VisitDeleteMachineCredentialResponse(w http.ResponseWriter) error {
@@ -2856,11 +3228,20 @@ func (response DeleteMachineCredential401JSONResponse) VisitDeleteMachineCredent
 	return json.NewEncoder(w).Encode(response)
 }
 
-type DeleteMachineCredential501JSONResponse struct{ NotImplementedJSONResponse }
+type DeleteMachineCredential404JSONResponse struct{ NotFoundJSONResponse }
 
-func (response DeleteMachineCredential501JSONResponse) VisitDeleteMachineCredentialResponse(w http.ResponseWriter) error {
+func (response DeleteMachineCredential404JSONResponse) VisitDeleteMachineCredentialResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(501)
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteMachineCredential500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response DeleteMachineCredential500JSONResponse) VisitDeleteMachineCredentialResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
 
 	return json.NewEncoder(w).Encode(response)
 }
@@ -2873,6 +3254,24 @@ type GetMachineCredentialResponseObject interface {
 	VisitGetMachineCredentialResponse(w http.ResponseWriter) error
 }
 
+type GetMachineCredential200JSONResponse MachineCredential
+
+func (response GetMachineCredential200JSONResponse) VisitGetMachineCredentialResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetMachineCredential400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response GetMachineCredential400JSONResponse) VisitGetMachineCredentialResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
 type GetMachineCredential401JSONResponse struct{ UnauthorizedJSONResponse }
 
 func (response GetMachineCredential401JSONResponse) VisitGetMachineCredentialResponse(w http.ResponseWriter) error {
@@ -2882,21 +3281,49 @@ func (response GetMachineCredential401JSONResponse) VisitGetMachineCredentialRes
 	return json.NewEncoder(w).Encode(response)
 }
 
-type GetMachineCredential501JSONResponse struct{ NotImplementedJSONResponse }
+type GetMachineCredential404JSONResponse struct{ NotFoundJSONResponse }
 
-func (response GetMachineCredential501JSONResponse) VisitGetMachineCredentialResponse(w http.ResponseWriter) error {
+func (response GetMachineCredential404JSONResponse) VisitGetMachineCredentialResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(501)
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetMachineCredential500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response GetMachineCredential500JSONResponse) VisitGetMachineCredentialResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
 
 	return json.NewEncoder(w).Encode(response)
 }
 
 type PutMachineCredentialRequestObject struct {
 	Name Name `json:"name"`
+	Body *PutMachineCredentialJSONRequestBody
 }
 
 type PutMachineCredentialResponseObject interface {
 	VisitPutMachineCredentialResponse(w http.ResponseWriter) error
+}
+
+type PutMachineCredential200JSONResponse MachineRef
+
+func (response PutMachineCredential200JSONResponse) VisitPutMachineCredentialResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutMachineCredential400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PutMachineCredential400JSONResponse) VisitPutMachineCredentialResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
 }
 
 type PutMachineCredential401JSONResponse struct{ UnauthorizedJSONResponse }
@@ -2908,11 +3335,20 @@ func (response PutMachineCredential401JSONResponse) VisitPutMachineCredentialRes
 	return json.NewEncoder(w).Encode(response)
 }
 
-type PutMachineCredential501JSONResponse struct{ NotImplementedJSONResponse }
+type PutMachineCredential413JSONResponse struct{ TooLargeJSONResponse }
 
-func (response PutMachineCredential501JSONResponse) VisitPutMachineCredentialResponse(w http.ResponseWriter) error {
+func (response PutMachineCredential413JSONResponse) VisitPutMachineCredentialResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(501)
+	w.WriteHeader(413)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutMachineCredential500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response PutMachineCredential500JSONResponse) VisitPutMachineCredentialResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
 
 	return json.NewEncoder(w).Encode(response)
 }
@@ -2926,6 +3362,23 @@ type DeleteVMCredentialResponseObject interface {
 	VisitDeleteVMCredentialResponse(w http.ResponseWriter) error
 }
 
+type DeleteVMCredential204Response struct {
+}
+
+func (response DeleteVMCredential204Response) VisitDeleteVMCredentialResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteVMCredential400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response DeleteVMCredential400JSONResponse) VisitDeleteVMCredentialResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
 type DeleteVMCredential401JSONResponse struct{ UnauthorizedJSONResponse }
 
 func (response DeleteVMCredential401JSONResponse) VisitDeleteVMCredentialResponse(w http.ResponseWriter) error {
@@ -2935,22 +3388,50 @@ func (response DeleteVMCredential401JSONResponse) VisitDeleteVMCredentialRespons
 	return json.NewEncoder(w).Encode(response)
 }
 
-type DeleteVMCredential501JSONResponse struct{ NotImplementedJSONResponse }
+type DeleteVMCredential404JSONResponse struct{ NotFoundJSONResponse }
 
-func (response DeleteVMCredential501JSONResponse) VisitDeleteVMCredentialResponse(w http.ResponseWriter) error {
+func (response DeleteVMCredential404JSONResponse) VisitDeleteVMCredentialResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(501)
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteVMCredential500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response DeleteVMCredential500JSONResponse) VisitDeleteVMCredentialResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
 
 	return json.NewEncoder(w).Encode(response)
 }
 
 type GetVMCredentialRequestObject struct {
-	Host Host `json:"host"`
-	Name Name `json:"name"`
+	Host   Host `json:"host"`
+	Name   Name `json:"name"`
+	Params GetVMCredentialParams
 }
 
 type GetVMCredentialResponseObject interface {
 	VisitGetVMCredentialResponse(w http.ResponseWriter) error
+}
+
+type GetVMCredential200JSONResponse VMCredential
+
+func (response GetVMCredential200JSONResponse) VisitGetVMCredentialResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetVMCredential400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response GetVMCredential400JSONResponse) VisitGetVMCredentialResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
 }
 
 type GetVMCredential401JSONResponse struct{ UnauthorizedJSONResponse }
@@ -2962,11 +3443,20 @@ func (response GetVMCredential401JSONResponse) VisitGetVMCredentialResponse(w ht
 	return json.NewEncoder(w).Encode(response)
 }
 
-type GetVMCredential501JSONResponse struct{ NotImplementedJSONResponse }
+type GetVMCredential404JSONResponse CredentialNotFound
 
-func (response GetVMCredential501JSONResponse) VisitGetVMCredentialResponse(w http.ResponseWriter) error {
+func (response GetVMCredential404JSONResponse) VisitGetVMCredentialResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(501)
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetVMCredential500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response GetVMCredential500JSONResponse) VisitGetVMCredentialResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
 
 	return json.NewEncoder(w).Encode(response)
 }
@@ -2974,10 +3464,29 @@ func (response GetVMCredential501JSONResponse) VisitGetVMCredentialResponse(w ht
 type PutVMCredentialRequestObject struct {
 	Host Host `json:"host"`
 	Name Name `json:"name"`
+	Body *PutVMCredentialJSONRequestBody
 }
 
 type PutVMCredentialResponseObject interface {
 	VisitPutVMCredentialResponse(w http.ResponseWriter) error
+}
+
+type PutVMCredential200JSONResponse VMCredentialRef
+
+func (response PutVMCredential200JSONResponse) VisitPutVMCredentialResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutVMCredential400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PutVMCredential400JSONResponse) VisitPutVMCredentialResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
 }
 
 type PutVMCredential401JSONResponse struct{ UnauthorizedJSONResponse }
@@ -2989,11 +3498,20 @@ func (response PutVMCredential401JSONResponse) VisitPutVMCredentialResponse(w ht
 	return json.NewEncoder(w).Encode(response)
 }
 
-type PutVMCredential501JSONResponse struct{ NotImplementedJSONResponse }
+type PutVMCredential413JSONResponse struct{ TooLargeJSONResponse }
 
-func (response PutVMCredential501JSONResponse) VisitPutVMCredentialResponse(w http.ResponseWriter) error {
+func (response PutVMCredential413JSONResponse) VisitPutVMCredentialResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(501)
+	w.WriteHeader(413)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutVMCredential500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response PutVMCredential500JSONResponse) VisitPutVMCredentialResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
 
 	return json.NewEncoder(w).Encode(response)
 }
@@ -3384,25 +3902,25 @@ func (response GetVersion200JSONResponse) VisitGetVersionResponse(w http.Respons
 
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
-	// List metal and alien machine credentials (not implemented yet)
+	// List metal and alien machines (names and kinds only)
 	// (GET /v1/credentials/machines)
 	ListMachineCredentials(ctx context.Context, request ListMachineCredentialsRequestObject) (ListMachineCredentialsResponseObject, error)
-	// Delete a machine's credentials (not implemented yet)
+	// Delete a machine's record
 	// (DELETE /v1/credentials/machines/{name})
 	DeleteMachineCredential(ctx context.Context, request DeleteMachineCredentialRequestObject) (DeleteMachineCredentialResponseObject, error)
-	// A machine's credentials (not implemented yet)
+	// A machine's manifest and credentials
 	// (GET /v1/credentials/machines/{name})
 	GetMachineCredential(ctx context.Context, request GetMachineCredentialRequestObject) (GetMachineCredentialResponseObject, error)
-	// Store a machine's credentials (not implemented yet)
+	// Store a machine's manifest and credentials, replacing any record
 	// (PUT /v1/credentials/machines/{name})
 	PutMachineCredential(ctx context.Context, request PutMachineCredentialRequestObject) (PutMachineCredentialResponseObject, error)
-	// Delete a VM's credentials (not implemented yet)
+	// Delete a VM's credentials (whatever UUID they are for)
 	// (DELETE /v1/credentials/vms/{host}/{name})
 	DeleteVMCredential(ctx context.Context, request DeleteVMCredentialRequestObject) (DeleteVMCredentialResponseObject, error)
-	// A VM's credentials (not implemented yet)
+	// A VM's credentials, if the stored record is for this domain UUID
 	// (GET /v1/credentials/vms/{host}/{name})
 	GetVMCredential(ctx context.Context, request GetVMCredentialRequestObject) (GetVMCredentialResponseObject, error)
-	// Store a VM's credentials (not implemented yet)
+	// Store a VM's credentials, replacing any record for (host, name)
 	// (PUT /v1/credentials/vms/{host}/{name})
 	PutVMCredential(ctx context.Context, request PutVMCredentialRequestObject) (PutVMCredentialResponseObject, error)
 	// List images, ordered by name
@@ -3542,6 +4060,13 @@ func (sh *strictHandler) PutMachineCredential(w http.ResponseWriter, r *http.Req
 
 	request.Name = name
 
+	var body PutMachineCredentialJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
 		return sh.ssi.PutMachineCredential(ctx, request.(PutMachineCredentialRequestObject))
 	}
@@ -3590,11 +4115,12 @@ func (sh *strictHandler) DeleteVMCredential(w http.ResponseWriter, r *http.Reque
 }
 
 // GetVMCredential operation middleware
-func (sh *strictHandler) GetVMCredential(w http.ResponseWriter, r *http.Request, host Host, name Name) {
+func (sh *strictHandler) GetVMCredential(w http.ResponseWriter, r *http.Request, host Host, name Name, params GetVMCredentialParams) {
 	var request GetVMCredentialRequestObject
 
 	request.Host = host
 	request.Name = name
+	request.Params = params
 
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
 		return sh.ssi.GetVMCredential(ctx, request.(GetVMCredentialRequestObject))
@@ -3622,6 +4148,13 @@ func (sh *strictHandler) PutVMCredential(w http.ResponseWriter, r *http.Request,
 
 	request.Host = host
 	request.Name = name
+
+	var body PutVMCredentialJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
 
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
 		return sh.ssi.PutVMCredential(ctx, request.(PutVMCredentialRequestObject))
@@ -3851,45 +4384,57 @@ func (sh *strictHandler) GetVersion(w http.ResponseWriter, r *http.Request) {
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"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",
-	"wgaEwv8bAF5b0OwHKAAA",
+	"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",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

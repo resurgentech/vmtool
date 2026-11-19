@@ -9,8 +9,9 @@ info:
     Every operation except GET /version requires
     `Authorization: Bearer <token>`; the store checks the token's SHA-256
     against the named hashes in tokens.yaml and answers 401 otherwise. The
-    credential routes answer 501 until they are built. The one other
-    credential is a download ticket, accepted only on the image blob route.
+    credential routes carry secrets only in the body of a successful GET;
+    no other response and no log line does. The one other credential is a
+    download ticket, accepted only on the image blob route.
 servers:
   - url: /
 security:
@@ -234,64 +235,149 @@ paths:
       - $ref: "#/components/parameters/Name"
     get:
       operationId: getVMCredential
-      summary: A VM's credentials (not implemented yet)
+      summary: A VM's credentials, if the stored record is for this domain UUID
+      description: >
+        Answers 404 with `"stale": true` when a record exists for another
+        UUID (the VM was recreated); that answer carries no credential field.
+        A record whose UUID is not current is never used.
+      parameters:
+        - name: uuid
+          in: query
+          required: true
+          description: The domain UUID the caller holds now (canonical 8-4-4-4-12 hex).
+          schema:
+            type: string
       responses:
-        "501":
-          $ref: "#/components/responses/NotImplemented"
+        "200":
+          description: The record. The only response of the store that carries a secret.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VMCredential"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No record, or a record for another UUID (`stale`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CredentialNotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
     put:
       operationId: putVMCredential
-      summary: Store a VM's credentials (not implemented yet)
+      summary: Store a VM's credentials, replacing any record for (host, name)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VMCredentialInput"
       responses:
-        "501":
-          $ref: "#/components/responses/NotImplemented"
+        "200":
+          description: Stored. The body never echoes a secret.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VMCredentialRef"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "413":
+          $ref: "#/components/responses/TooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
     delete:
       operationId: deleteVMCredential
-      summary: Delete a VM's credentials (not implemented yet)
+      summary: Delete a VM's credentials (whatever UUID they are for)
       responses:
-        "501":
-          $ref: "#/components/responses/NotImplemented"
+        "204":
+          description: Deleted.
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /v1/credentials/machines:
     get:
       operationId: listMachineCredentials
-      summary: List metal and alien machine credentials (not implemented yet)
+      summary: List metal and alien machines (names and kinds only)
       responses:
-        "501":
-          $ref: "#/components/responses/NotImplemented"
+        "200":
+          description: Every machine record, ordered by name.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MachineList"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /v1/credentials/machines/{name}:
     parameters:
       - $ref: "#/components/parameters/Name"
     get:
       operationId: getMachineCredential
-      summary: A machine's credentials (not implemented yet)
+      summary: A machine's manifest and credentials
       responses:
-        "501":
-          $ref: "#/components/responses/NotImplemented"
+        "200":
+          description: The record. Carries secrets.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MachineCredential"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
     put:
       operationId: putMachineCredential
-      summary: Store a machine's credentials (not implemented yet)
+      summary: Store a machine's manifest and credentials, replacing any record
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MachineCredentialInput"
       responses:
-        "501":
-          $ref: "#/components/responses/NotImplemented"
+        "200":
+          description: Stored. The body never echoes a secret.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MachineRef"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "413":
+          $ref: "#/components/responses/TooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
     delete:
       operationId: deleteMachineCredential
-      summary: Delete a machine's credentials (not implemented yet)
+      summary: Delete a machine's record
       responses:
-        "501":
-          $ref: "#/components/responses/NotImplemented"
+        "204":
+          description: Deleted.
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
 components:
   securitySchemes:
     bearerAuth:
@@ -331,7 +417,7 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
     NotFound:
-      description: No such image.
+      description: No such image, VM record or machine.
       content:
         application/json:
           schema:
@@ -342,8 +428,8 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
-    NotImplemented:
-      description: Not implemented yet.
+    TooLarge:
+      description: The request body is over the size limit; the body is fixed text.
       content:
         application/json:
           schema:
@@ -393,6 +479,138 @@ components:
         size:
           type: integer
           format: int64
+    CredentialNotFound:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+        stale:
+          type: boolean
+          description: True only when a record exists for another UUID.
+    VMCredentialInput:
+      type: object
+      required: [uuid, username]
+      properties:
+        uuid:
+          type: string
+          description: The libvirt domain UUID these credentials belong to.
+        username:
+          type: string
+          maxLength: 65536
+        password:
+          type: string
+          maxLength: 65536
+        private_key:
+          type: string
+          maxLength: 65536
+        public_key:
+          type: string
+          maxLength: 65536
+    VMCredential:
+      type: object
+      required: [host, name, uuid, username, password, private_key, public_key, updated]
+      properties:
+        host:
+          type: string
+        name:
+          type: string
+        uuid:
+          type: string
+        username:
+          type: string
+        password:
+          type: string
+        private_key:
+          type: string
+        public_key:
+          type: string
+        updated:
+          type: string
+          format: date-time
+    VMCredentialRef:
+      type: object
+      required: [host, name, uuid, updated]
+      properties:
+        host:
+          type: string
+        name:
+          type: string
+        uuid:
+          type: string
+        updated:
+          type: string
+          format: date-time
+    MachineCredentialInput:
+      type: object
+      required: [kind, address, username]
+      properties:
+        kind:
+          type: string
+          enum: [metal, alien]
+        address:
+          type: string
+          maxLength: 1024
+        username:
+          type: string
+          maxLength: 65536
+        password:
+          type: string
+          maxLength: 65536
+        private_key:
+          type: string
+          maxLength: 65536
+        public_key:
+          type: string
+          maxLength: 65536
+    MachineCredential:
+      type: object
+      required: [name, kind, address, username, password, private_key, public_key, updated]
+      properties:
+        name:
+          type: string
+        kind:
+          type: string
+        address:
+          type: string
+        username:
+          type: string
+        password:
+          type: string
+        private_key:
+          type: string
+        public_key:
+          type: string
+        updated:
+          type: string
+          format: date-time
+    MachineRef:
+      type: object
+      required: [name, kind, updated]
+      properties:
+        name:
+          type: string
+        kind:
+          type: string
+        updated:
+          type: string
+          format: date-time
+    MachineSummary:
+      type: object
+      required: [name, kind]
+      properties:
+        name:
+          type: string
+        kind:
+          type: string
+    MachineList:
+      type: object
+      required: [machines]
+      properties:
+        machines:
+          type: array
+          items:
+            $ref: "#/components/schemas/MachineSummary"
     Version:
       type: object
       required: [version]

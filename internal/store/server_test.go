@@ -149,33 +149,6 @@ func TestWhoamiReturnsCallerName(t *testing.T) {
 	}
 }
 
-func TestStubsAnswer501(t *testing.T) {
-	ts, _ := testServer(t)
-	n := 0
-	for op, public := range specOps(t) {
-		if public || op == "GET /v1/whoami" || strings.Contains(op, "/v1/images") {
-			continue
-		}
-		method, p, _ := strings.Cut(op, " ")
-		resp, body := do(t, method, ts.URL+concrete(p), "Bearer "+tokA, `{"x":"PLACEHOLDER-body"}`)
-		if resp.StatusCode != 501 {
-			t.Errorf("%s = %d, want 501", op, resp.StatusCode)
-			continue
-		}
-		var e storeapi.Error
-		if err := json.Unmarshal([]byte(body), &e); err != nil || e.Error == "" {
-			t.Errorf("%s body %q is not a JSON error", op, body)
-		}
-		if strings.Contains(body, "PLACEHOLDER-body") {
-			t.Errorf("%s echoes the request body", op)
-		}
-		n++
-	}
-	if n != 7 {
-		t.Errorf("checked %d stubs, want 7", n)
-	}
-}
-
 func TestLogLine(t *testing.T) {
 	ts, logs := testServer(t)
 	do(t, "GET", ts.URL+"/v1/images/PLACEHOLDER-name?secret=PLACEHOLDER-query", "Bearer "+tokA, `{"password":"PLACEHOLDER-not-a-secret-2"}`)

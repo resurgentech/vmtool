@@ -963,3 +963,26 @@ are appended, never edited in; a hook refuses rewrites.
   after; two mutations (no spend, no RawPath check) made tests fail.
   `just check` green.
 - Commits: the S5 commit on `clone-identity`.
+
+## 2026-11-18 — S6 Credential and metal endpoints; nothing secret in logs
+
+- `spec/openapi/store.yaml`: `GET/PUT/DELETE
+  /v1/credentials/vms/{host}/{name}` (`uuid` required in the PUT body and
+  the GET query), `GET /v1/credentials/machines` (`{name, kind}` only),
+  `GET/PUT/DELETE /v1/credentials/machines/{name}`; a 404 body with
+  `stale`; 413; the 501 response is gone. `internal/storeapi` regenerated.
+- `internal/store/credentials.go`: a GET with another UUID answers 404
+  `"stale": true` and sends no credential field; PUT replaces the record
+  and answers 200 with no secret field; DELETE 204/404. Validation answers
+  400 `invalid field: <name>` and never the value (host without a dot,
+  names, UUID, kind `metal|alien`, address, secret lengths). Credential
+  PUTs need `application/json` and are capped at 1 MiB (413); decoder and
+  parameter errors answer fixed text.
+- Tests: round trip, stale, replace, delete, 13 validation cases, oversize
+  body, machines, bearer-only on all seven routes (a ticket answers 401),
+  `TestCredentialSecretsNeverLeak` (debug log and every response free of
+  the placeholders outside the 200 GET bodies) and
+  `TestNoRequestBodyLogging` (a source scan of the store). Red: the 501
+  stubs; green after. FOREMAN checked the secrecy test with a debug line
+  logging the password (it failed) and reverted. `just check` green.
+- Commits: the S6 commit on `clone-identity`.

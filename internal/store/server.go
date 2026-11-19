@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -48,14 +49,28 @@ func NewServer(c *Config, log *slog.Logger, d Deps) *Server {
 // Handler is the whole request pipeline: log -> auth -> generated routes.
 func (s *Server) Handler() http.Handler {
 	strict := storeapi.NewStrictHandlerWithOptions(&handlers{version: specVersion(), img: s.img}, nil, storeapi.StrictHTTPServerOptions{
+		// Fixed text only: a decoder error can quote the input, which may be a secret.
 		RequestErrorHandlerFunc:  func(w http.ResponseWriter, _ *http.Request, _ error) { writeError(w, 400, "bad request") },
 		ResponseErrorHandlerFunc: func(w http.ResponseWriter, _ *http.Request, _ error) { writeError(w, 500, "internal error") },
 	})
 	api := storeapi.HandlerWithOptions(strict, storeapi.StdHTTPServerOptions{
 		BaseRouter:       http.NewServeMux(),
-		ErrorHandlerFunc: func(w http.ResponseWriter, _ *http.Request, _ error) { writeError(w, 400, "bad request") },
+		ErrorHandlerFunc: paramError,
 	})
-	return s.logRequests(s.requireAuth(api))
+	return s.logRequests(s.requireAuth(guardCredentialBody(api)))
+}
+
+// paramError answers a request whose parameters the generated wrapper
+// rejected. A missing required parameter is named (the name comes from the
+// spec); anything else is fixed text, because the wrapper's other errors can
+// quote the value.
+func paramError(w http.ResponseWriter, _ *http.Request, err error) {
+	var req *storeapi.RequiredParamError
+	if errors.As(err, &req) {
+		writeError(w, 400, "invalid field: "+req.ParamName)
+		return
+	}
+	writeError(w, 400, "bad request")
 }
 
 // httpServer validates the listening rule again (a Config built by hand is
@@ -314,28 +329,4 @@ func (h *handlers) GetVersion(context.Context, storeapi.GetVersionRequestObject)
 
 func (h *handlers) Whoami(ctx context.Context, _ storeapi.WhoamiRequestObject) (storeapi.WhoamiResponseObject, error) {
 	return storeapi.Whoami200JSONResponse{Name: callerFrom(ctx)}, nil
-}
-
-var notImplemented = storeapi.NotImplementedJSONResponse{Error: "not implemented yet"}
-
-func (*handlers) GetVMCredential(context.Context, storeapi.GetVMCredentialRequestObject) (storeapi.GetVMCredentialResponseObject, error) {
-	return storeapi.GetVMCredential501JSONResponse{NotImplementedJSONResponse: notImplemented}, nil
-}
-func (*handlers) PutVMCredential(context.Context, storeapi.PutVMCredentialRequestObject) (storeapi.PutVMCredentialResponseObject, error) {
-	return storeapi.PutVMCredential501JSONResponse{NotImplementedJSONResponse: notImplemented}, nil
-}
-func (*handlers) DeleteVMCredential(context.Context, storeapi.DeleteVMCredentialRequestObject) (storeapi.DeleteVMCredentialResponseObject, error) {
-	return storeapi.DeleteVMCredential501JSONResponse{NotImplementedJSONResponse: notImplemented}, nil
-}
-func (*handlers) ListMachineCredentials(context.Context, storeapi.ListMachineCredentialsRequestObject) (storeapi.ListMachineCredentialsResponseObject, error) {
-	return storeapi.ListMachineCredentials501JSONResponse{NotImplementedJSONResponse: notImplemented}, nil
-}
-func (*handlers) GetMachineCredential(context.Context, storeapi.GetMachineCredentialRequestObject) (storeapi.GetMachineCredentialResponseObject, error) {
-	return storeapi.GetMachineCredential501JSONResponse{NotImplementedJSONResponse: notImplemented}, nil
-}
-func (*handlers) PutMachineCredential(context.Context, storeapi.PutMachineCredentialRequestObject) (storeapi.PutMachineCredentialResponseObject, error) {
-	return storeapi.PutMachineCredential501JSONResponse{NotImplementedJSONResponse: notImplemented}, nil
-}
-func (*handlers) DeleteMachineCredential(context.Context, storeapi.DeleteMachineCredentialRequestObject) (storeapi.DeleteMachineCredentialResponseObject, error) {
-	return storeapi.DeleteMachineCredential501JSONResponse{NotImplementedJSONResponse: notImplemented}, nil
 }
