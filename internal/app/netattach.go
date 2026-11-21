@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/jaredeh/vmtool/internal/storeclient"
 	"github.com/jaredeh/vmtool/pkg/vmtool"
 )
 
@@ -57,39 +58,128 @@ func ParseNetworkRequests(specs []string) ([]NetworkRequest, error) {
 // any MAC exists: the check reads only the network's reservations.
 const placeholderMAC = "52:54:00:00:00:00"
 
-// checkNetwork asks the host about a requested network and refuses, before
-// anything is created or reserved: a network that does not exist (not found), one
-// that is not vmtool's, an address that is taken, a name that already has a card
-// there or a full range (conflict), and an address outside the subnet or not an
-// address (invalid). The reservation itself is chosen by the host later.
-func checkNetwork(op string, m Manager, vm string, r NetworkRequest) error {
-	if r.Network == "" {
-		return invalid(op, fmt.Errorf("a network name is required"))
-	}
-	n, err := m.Network(r.Network)
-	if err != nil {
-		return netErr(op, err)
-	}
-	if n == nil || !n.Vmtool {
-		return conflict(op, fmt.Errorf("%w: network %q is not one vmtool made (its bridge is not %s plus six lowercase hex digits); vmtool leaves it alone", vmtool.ErrNetworkNotVmtool, r.Network, vmtool.BridgePrefix))
-	}
-	if _, err := vmtool.PlanReservation(*n, vm, placeholderMAC, r.IP, nil); err != nil {
-		return netErr(op, err)
-	}
-	return nil
+// cardSite is where a card's steps happen. A VM's card is attached on the VM's
+// own host; its reservation is made in the network's libvirt definition on the
+// network's home. On a network made on one host those are the same host. On a
+// network that spans hosts the VM's host holds only the member form (no
+// addresses), so the reservation is made on the home, which the registry names,
+// and the card is attached on the VM's host with the MAC the home picked.
+type cardSite struct {
+	vm      Manager // the VM's host: the card
+	resv    Manager // where the network's reservations are: vm, or the network's home
+	release func()  // releases resv when it is another host's
+	reg     *storeclient.Client
+	vmHost  string
 }
 
-// attachCard reserves an address and a name for a new card of vm on network and
-// attaches the card, in that order. If the card fails the reservation is
-// removed; if that fails too the error says which reservation is left.
-func attachCard(m Manager, vm, network, ip string) (*vmtool.NetAttachment, error) {
-	res, err := m.AddReservation(network, vm, "", ip)
+func (cs *cardSite) close() {
+	if cs != nil && cs.release != nil {
+		cs.release()
+	}
+}
+
+// openSite asks the host about a network and finds where its reservations are:
+// a network that does not exist (not found), or is not vmtool's (conflict), is
+// refused. The member form of a spanning network needs the store (to find the
+// home) and the home awake (unavailable otherwise). The returned NetworkInfo
+// is the network as the reservation host has it, with the subnet and the DHCP
+// range. reg, when the command is in store mode, records each reservation.
+func (s *Service) openSite(ctx context.Context, op string, m Manager, host, network string) (*cardSite, *vmtool.NetworkInfo, error) {
+	n, err := m.Network(network)
+	if err != nil {
+		return nil, nil, netErr(op, err)
+	}
+	if n == nil || !n.Vmtool {
+		return nil, nil, conflict(op, fmt.Errorf("%w: network %q is not one vmtool made (its bridge is not %s plus six lowercase hex digits); vmtool leaves it alone", vmtool.ErrNetworkNotVmtool, network, vmtool.BridgePrefix))
+	}
+	cs := &cardSite{vm: m, resv: m, vmHost: host, reg: s.Store.registryClient(ctx)}
+	if !n.IsMemberForm() {
+		return cs, n, nil
+	}
+	if cs.reg == nil {
+		return nil, nil, unavailable(op, fmt.Errorf("network %q on %s is the member form of a network that spans hosts: its reservations are on the home, which is found through the store, and this command has none (local mode)", network, host))
+	}
+	rn, err := s.registryNetwork(ctx, op, cs.reg, network)
+	if err != nil {
+		return nil, nil, err
+	}
+	if rn == nil {
+		return nil, nil, conflict(op, fmt.Errorf("network %q on %s is a member network but the registry has no such network; vmtool net leave %s %s removes it", network, host, host, network))
+	}
+	hm, release, err := s.openHost(rn.Home)
+	if err != nil {
+		return nil, nil, unavailable(op, fmt.Errorf("the home %s of network %q does not answer: %v; a card on it needs the home for its address and name", rn.Home, network, err))
+	}
+	hn, err := hm.Network(network)
+	if err != nil {
+		release()
+		return nil, nil, netErr(op, fmt.Errorf("home %s: %w", rn.Home, err))
+	}
+	cs.resv, cs.release = hm, release
+	return cs, hn, nil
+}
+
+// checkNetwork asks about a requested network and refuses, before anything is
+// created or reserved: what openSite refuses, an address that is taken, a name
+// that already has a card there or a full range (conflict), and an address
+// outside the subnet or not an address (invalid). The reservation itself is
+// chosen by the reservation host later. The caller closes the site.
+func (s *Service) checkNetwork(ctx context.Context, op string, m Manager, host, vm string, r NetworkRequest) (*cardSite, error) {
+	if r.Network == "" {
+		return nil, invalid(op, fmt.Errorf("a network name is required"))
+	}
+	cs, n, err := s.openSite(ctx, op, m, host, r.Network)
 	if err != nil {
 		return nil, err
 	}
-	att, err := m.AttachInterface(vm, network, res.MAC)
+	if _, err := vmtool.PlanReservation(*n, vm, placeholderMAC, r.IP, nil); err != nil {
+		cs.close()
+		return nil, netErr(op, err)
+	}
+	return cs, nil
+}
+
+// recordReservation keeps the registry's copy of a reservation (network, MAC,
+// address, host, VM). A network the registry does not have (made without a
+// store) records nothing; a registry that fails to answer is one line, never an
+// error: the reservation itself is made.
+func (s *Service) recordReservation(ctx context.Context, cs *cardSite, network, vm string, res vmtool.Reservation) {
+	if cs.reg == nil {
+		return
+	}
+	cctx, cancel := s.credCtx(ctx)
+	defer cancel()
+	_, err := cs.reg.PutNetworkReservation(cctx, network, res.MAC, storeclient.NetworkReservationInput{Ip: res.IP, Host: cs.vmHost, Vm: vm})
+	if err != nil && !errors.Is(err, storeclient.ErrNotFound) {
+		s.noter(nil)(fmt.Sprintf("the reservation of %s (%s) on network %q was made but the registry at %s could not record it: %v", res.IP, res.MAC, network, s.Store.Host(), err))
+	}
+}
+
+// forgetReservation removes the registry's copy of a reservation, as above.
+func (s *Service) forgetReservation(ctx context.Context, cs *cardSite, network, mac string) {
+	if cs.reg == nil {
+		return
+	}
+	cctx, cancel := s.credCtx(ctx)
+	defer cancel()
+	err := cs.reg.DeleteNetworkReservation(cctx, network, mac)
+	if err != nil && !errors.Is(err, storeclient.ErrNotFound) {
+		s.noter(nil)(fmt.Sprintf("the reservation of %s on network %q was removed but the registry at %s could not forget it: %v", mac, network, s.Store.Host(), err))
+	}
+}
+
+// attachCard reserves an address and a name for a new card of vm on network and
+// attaches the card, in that order: the reservation on the reservation host, the
+// card on the VM's. If the card fails the reservation is removed; if that fails
+// too the error says which reservation is left.
+func (s *Service) attachCard(ctx context.Context, cs *cardSite, vm, network, ip string) (*vmtool.NetAttachment, error) {
+	res, err := cs.resv.AddReservation(network, vm, "", ip)
 	if err != nil {
-		if uerr := m.RemoveReservation(network, res.MAC); uerr != nil && !vmtool.IsNotFound(uerr) {
+		return nil, err
+	}
+	att, err := cs.vm.AttachInterface(vm, network, res.MAC)
+	if err != nil {
+		if uerr := cs.resv.RemoveReservation(network, res.MAC); uerr != nil && !vmtool.IsNotFound(uerr) {
 			err = fmt.Errorf("%w; and the reservation of %s for %s on network %q could not be removed: %v", err, res.IP, res.MAC, network, uerr)
 		}
 		return nil, err
@@ -98,6 +188,7 @@ func attachCard(m Manager, vm, network, ip string) (*vmtool.NetAttachment, error
 		att = &vmtool.NetAttachment{Network: network, MAC: res.MAC}
 	}
 	att.IP = res.IP // the reservation just made is the card's address
+	s.recordReservation(ctx, cs, network, vm, *res)
 	return att, nil
 }
 
@@ -105,16 +196,17 @@ func attachCard(m Manager, vm, network, ip string) (*vmtool.NetAttachment, error
 // A reservation that is already gone is fine. If removing the reservation fails
 // the card is put back (so the reservation does not outlive its card's absence
 // unseen); if that fails too the error says so.
-func detachCard(m Manager, vm, network, mac string) error {
-	if err := m.DetachInterface(vm, mac); err != nil {
+func (s *Service) detachCard(ctx context.Context, cs *cardSite, vm, network, mac string) error {
+	if err := cs.vm.DetachInterface(vm, mac); err != nil {
 		return err
 	}
-	if err := m.RemoveReservation(network, mac); err != nil && !vmtool.IsNotFound(err) {
-		if _, rerr := m.AttachInterface(vm, network, mac); rerr != nil {
+	if err := cs.resv.RemoveReservation(network, mac); err != nil && !vmtool.IsNotFound(err) {
+		if _, rerr := cs.vm.AttachInterface(vm, network, mac); rerr != nil {
 			return fmt.Errorf("%w; and the card %s could not be put back: %v", err, mac, rerr)
 		}
 		return err
 	}
+	s.forgetReservation(ctx, cs, network, mac)
 	return nil
 }
 
@@ -123,7 +215,7 @@ func detachCard(m Manager, vm, network, mac string) error {
 // DHCP range) under the VM's name, then attaches the card, live and in the
 // config when the VM is running, in the config only when it is shut off. A
 // failed step undoes the one before it.
-func (s *Service) AttachNetwork(_ context.Context, m Manager, ref VMRef, network, ip string) (*vmtool.NetAttachment, error) {
+func (s *Service) AttachNetwork(ctx context.Context, m Manager, ref VMRef, network, ip string) (*vmtool.NetAttachment, error) {
 	const op = "net attach"
 	if err := validRef(op, ref); err != nil {
 		return nil, err
@@ -134,10 +226,12 @@ func (s *Service) AttachNetwork(_ context.Context, m Manager, ref VMRef, network
 	if _, err := m.Info(ref.Name); err != nil {
 		return nil, wrap(op, err)
 	}
-	if err := checkNetwork(op, m, ref.Name, NetworkRequest{Network: network, IP: ip}); err != nil {
+	cs, err := s.checkNetwork(ctx, op, m, ref.Host, ref.Name, NetworkRequest{Network: network, IP: ip})
+	if err != nil {
 		return nil, err
 	}
-	att, err := attachCard(m, ref.Name, network, ip)
+	defer cs.close()
+	att, err := s.attachCard(ctx, cs, ref.Name, network, ip)
 	if err != nil {
 		return nil, netErr(op, err)
 	}
@@ -148,7 +242,7 @@ func (s *Service) AttachNetwork(_ context.Context, m Manager, ref VMRef, network
 // or by the card's MAC (needed when the VM has more than one card on the
 // network), then the card's reservation. A failed reservation removal puts the
 // card back.
-func (s *Service) DetachNetwork(_ context.Context, m Manager, ref VMRef, network string) error {
+func (s *Service) DetachNetwork(ctx context.Context, m Manager, ref VMRef, network string) error {
 	const op = "net detach"
 	if err := validRef(op, ref); err != nil {
 		return err
@@ -178,7 +272,12 @@ func (s *Service) DetachNetwork(_ context.Context, m Manager, ref VMRef, network
 		}
 		return invalid(op, fmt.Errorf("%s has %d cards on network %q (%s); name one by its MAC", ref, len(hit), network, strings.Join(macs, ", ")))
 	}
-	return netErr(op, detachCard(m, ref.Name, hit[0].Network, hit[0].MAC))
+	cs, _, err := s.openSite(ctx, op, m, ref.Host, hit[0].Network)
+	if err != nil {
+		return err
+	}
+	defer cs.close()
+	return netErr(op, s.detachCard(ctx, cs, ref.Name, hit[0].Network, hit[0].MAC))
 }
 
 func cardList(cards []vmtool.NetAttachment) string {
@@ -193,14 +292,37 @@ func cardList(cards []vmtool.NetAttachment) string {
 }
 
 // removeReservations removes the reservation of each card from its network,
-// after the VM is gone. A reservation or a network that is already gone is
-// fine; any other failure is collected, naming the reservation left.
-func removeReservations(m Manager, cards []vmtool.NetAttachment) error {
+// after the VM is gone: on the network's home for a network that spans hosts.
+// A reservation or a network that is already gone is fine; any other failure
+// (a home that does not answer, say) is collected, naming the reservation left.
+func (s *Service) removeReservations(ctx context.Context, m Manager, host string, cards []vmtool.NetAttachment) error {
 	var errs []error
-	for _, c := range cards {
-		if err := m.RemoveReservation(c.Network, c.MAC); err != nil && !vmtool.IsNotFound(err) {
-			errs = append(errs, fmt.Errorf("the reservation of %s (%s) on network %q could not be removed: %w", c.IP, c.MAC, c.Network, err))
+	sites := map[string]*cardSite{}
+	defer func() {
+		for _, cs := range sites {
+			cs.close()
 		}
+	}()
+	for _, c := range cards {
+		cs, ok := sites[c.Network]
+		if !ok {
+			var err error
+			cs, _, err = s.openSite(ctx, "delete", m, host, c.Network)
+			if err != nil {
+				if !vmtool.IsNotFound(err) {
+					// %v: the site's error is an *Error, and the caller's wrap would
+					// otherwise swap this line for it.
+					errs = append(errs, fmt.Errorf("the reservation of %s (%s) on network %q could not be removed: %v", c.IP, c.MAC, c.Network, err))
+				}
+				continue
+			}
+			sites[c.Network] = cs
+		}
+		if err := cs.resv.RemoveReservation(c.Network, c.MAC); err != nil && !vmtool.IsNotFound(err) {
+			errs = append(errs, fmt.Errorf("the reservation of %s (%s) on network %q could not be removed: %w", c.IP, c.MAC, c.Network, err))
+			continue
+		}
+		s.forgetReservation(ctx, cs, c.Network, c.MAC)
 	}
 	return errors.Join(errs...)
 }

@@ -82,6 +82,15 @@ type Service struct {
 	ImageCachePath string
 	// Now is the clock create's elapsed stamps read; nil means time.Now.
 	Now func() time.Time
+	// OpenHost opens another host's Manager (hosts.Resolver.Resolve has this
+	// shape). The workflows of networks that span hosts use it to reach a
+	// network's home and its members; nil means this command cannot reach any
+	// host but the one it was given.
+	OpenHost HostOpener
+	// HostAddr is the address a host's daemon is reached at (config.yml
+	// hosts.<name>.address), "" for a host it does not know. A host joining a
+	// network asks the kernel which of its own addresses reaches the home's.
+	HostAddr func(host string) string
 }
 
 // WithTunnel returns a shallow copy of s that reaches guests through t. The

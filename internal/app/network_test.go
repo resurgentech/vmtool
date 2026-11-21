@@ -123,7 +123,9 @@ func (f *marksMgr) ListNetworks() ([]string, error) { return f.names, nil }
 func (f *marksMgr) Network(name string) (*vmtool.NetworkInfo, error) {
 	switch name {
 	case "net1":
-		return &vmtool.NetworkInfo{Name: name, Bridge: "vmt-000001", Vmtool: true}, nil
+		return &vmtool.NetworkInfo{Name: name, Bridge: "vmt-000001", Vmtool: true, Forward: "nat", Gateway: "10.77.1.1", Subnet: "10.77.1.0/24"}, nil
+	case "net2": // the member form of a network that spans hosts
+		return &vmtool.NetworkInfo{Name: name, Bridge: "vmt-002711", VNI: 10001, Vmtool: true, MTU: 1450}, nil
 	case "default":
 		return &vmtool.NetworkInfo{Name: name, Bridge: "virbr0"}, nil
 	}
@@ -132,11 +134,11 @@ func (f *marksMgr) Network(name string) (*vmtool.NetworkInfo, error) {
 
 func TestListNetworkMarks(t *testing.T) {
 	s := &Service{}
-	got, err := s.ListNetworkMarks(context.Background(), &marksMgr{names: []string{"default", "net1", "gone"}})
+	got, err := s.ListNetworkMarks(context.Background(), &marksMgr{names: []string{"default", "net1", "net2", "gone"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []NetworkMark{{Name: "default"}, {Name: "net1", Vmtool: true}, {Name: "gone"}}
+	want := []NetworkMark{{Name: "default"}, {Name: "net1", Vmtool: true}, {Name: "net2", Vmtool: true, Member: true}, {Name: "gone"}}
 	if len(got) != len(want) {
 		t.Fatalf("marks = %+v", got)
 	}

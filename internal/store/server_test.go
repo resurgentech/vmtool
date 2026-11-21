@@ -70,13 +70,14 @@ func specOps(t *testing.T) map[string]bool {
 
 func concrete(p string) string {
 	p = strings.ReplaceAll(p, "{name}", "PLACEHOLDER-name")
+	p = strings.ReplaceAll(p, "{mac}", "52:54:00:00:00:01")
 	return strings.ReplaceAll(p, "{host}", "hv1")
 }
 
 func TestAuthEveryOperation(t *testing.T) {
 	ts, _ := testServer(t)
 	ops := specOps(t)
-	if len(ops) != 27 {
+	if len(ops) != 30 {
 		t.Fatalf("only %d operations in the spec", len(ops))
 	}
 	for op, public := range ops {

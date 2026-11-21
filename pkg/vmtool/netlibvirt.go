@@ -5,6 +5,8 @@ import (
 	"net/netip"
 	"os"
 	"sort"
+	"sync"
+	"time"
 
 	"libvirt.org/go/libvirt"
 )
@@ -181,4 +183,139 @@ func (m *Manager) DeleteNetwork(name string) error {
 		return fmt.Errorf("undefining network %q: %w", name, err)
 	}
 	return nil
+}
+
+// The member form and the links of networks that span hosts (V5).
+
+// CreateNetworkMember defines, autostarts and starts the member form of the
+// network that has VNI vni: the home's name, bridge vmt-<vni hex> and the MTU,
+// with no address of its own. A name or a bridge the host already has is
+// refused (ErrNetworkExists).
+func (m *Manager) CreateNetworkMember(name string, vni uint32) (*NetworkInfo, error) {
+	existing, err := m.allNetworkInfos()
+	if err != nil {
+		return nil, err
+	}
+	spec, err := PlanMemberNetwork(name, vni, existing)
+	if err != nil {
+		return nil, err
+	}
+	x, err := BuildMemberNetworkXML(spec.Name, spec.Bridge)
+	if err != nil {
+		return nil, err
+	}
+	n, err := m.conn.NetworkDefineXML(x)
+	if err != nil {
+		return nil, fmt.Errorf("defining network %q: %w", name, err)
+	}
+	defer n.Free()
+	undo := func() { _ = n.Undefine() }
+	if err := n.SetAutostart(true); err != nil {
+		undo()
+		return nil, fmt.Errorf("setting network %q to autostart: %w", name, err)
+	}
+	if err := n.Create(); err != nil {
+		undo()
+		return nil, fmt.Errorf("starting network %q: %w", name, err)
+	}
+	return netInfo(n, nil)
+}
+
+// SetNetworkLinks makes this host's VXLAN device of the vmtool network name
+// (vx<VNI>, on the network's bridge) bound to localIP on dev and flooding to
+// exactly peers. A device already so is left alone. The network must be a
+// vmtool network and active: its bridge is made when libvirt starts it.
+func (m *Manager) SetNetworkLinks(name, localIP, dev string, peers []string) error {
+	info, err := m.Network(name)
+	if err != nil {
+		return err
+	}
+	if !info.Vmtool {
+		return fmt.Errorf("%w: network %q has bridge %q, not %s plus six lowercase hex digits; vmtool leaves it alone", ErrNetworkNotVmtool, name, info.Bridge, BridgePrefix)
+	}
+	if !info.Active {
+		return fmt.Errorf("network %q is not active, so its bridge %s does not exist yet; libvirt starts it (autostart) and vmtool links it then", name, info.Bridge)
+	}
+	_, err = (&NetHelper{}).EnsureLink(info.VNI, info.Bridge, localIP, dev, peers)
+	return err
+}
+
+// RemoveNetworkLink removes this host's VXLAN device of the vmtool network
+// name; none there is success.
+func (m *Manager) RemoveNetworkLink(name string) error {
+	info, err := m.Network(name)
+	if err != nil {
+		return err
+	}
+	if !info.Vmtool {
+		return fmt.Errorf("%w: network %q has bridge %q, not %s plus six lowercase hex digits; vmtool leaves it alone", ErrNetworkNotVmtool, name, info.Bridge, BridgePrefix)
+	}
+	return (&NetHelper{}).Unlink(info.VNI)
+}
+
+// Underlay is the address and interface this host reaches the IPv4 address to
+// with (ip route get).
+func (m *Manager) Underlay(to string) (*Underlay, error) {
+	u, err := FindUnderlay(to)
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+var (
+	eventLoopOnce sync.Once
+	eventLoopErr  error
+)
+
+// StartEventLoop registers libvirt's default event loop and runs it in the
+// background, once. libvirt wants the registration before the process opens its
+// first connection, so the daemon calls it before anything else touches libvirt;
+// WatchNetworkStarted calls it too (a second call does nothing).
+func StartEventLoop() error { return startEventLoop() }
+
+func startEventLoop() error {
+	eventLoopOnce.Do(func() {
+		if eventLoopErr = libvirt.EventRegisterDefaultImpl(); eventLoopErr != nil {
+			return
+		}
+		go func() {
+			for {
+				if err := libvirt.EventRunDefaultImpl(); err != nil {
+					time.Sleep(time.Second)
+				}
+			}
+		}()
+	})
+	return eventLoopErr
+}
+
+// WatchNetworkStarted calls fn with the name of each libvirt network that
+// starts (the bridge is made again, so a VXLAN device on it must be linked
+// again). It opens a connection of its own; stop deregisters and closes it. fn
+// runs on libvirt's event goroutine and must not block.
+func WatchNetworkStarted(fn func(name string)) (stop func(), err error) {
+	if err := startEventLoop(); err != nil {
+		return nil, fmt.Errorf("libvirt event loop: %w", err)
+	}
+	conn, err := libvirt.NewConnect("qemu:///system")
+	if err != nil {
+		return nil, fmt.Errorf("connecting to libvirt: %w", err)
+	}
+	id, err := conn.NetworkEventLifecycleRegister(nil, func(_ *libvirt.Connect, n *libvirt.Network, ev *libvirt.NetworkEventLifecycle) {
+		if ev.Event != libvirt.NETWORK_EVENT_STARTED {
+			return
+		}
+		if name, err := n.GetName(); err == nil {
+			fn(name)
+		}
+	})
+	if err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("watching libvirt networks: %w", err)
+	}
+	return func() {
+		_ = conn.NetworkEventDeregister(id)
+		_, _ = conn.Close()
+	}, nil
 }

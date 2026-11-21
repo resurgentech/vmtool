@@ -222,6 +222,17 @@ func (s *Server) ListenAndServe() error {
 	// After binding: holding the port means no other daemon on it is
 	// mid-upload, so its temporary files are stale.
 	r := hosts.New(s.Config)
+	// libvirt wants its event loop registered before the process opens its
+	// first connection (startCleanup is the first), so the link keeper's
+	// network events are set up first; its goroutine does the links.
+	if s.Config.Role == config.RoleHypervisor {
+		if err := vmtool.StartEventLoop(); err != nil {
+			slog.Warn("libvirt's event loop did not start, so a network that libvirt starts again is not re-linked until the daemon restarts: " + err.Error())
+		}
+	}
+	netCtx, stopNetLinks := context.WithCancel(context.Background())
+	defer stopNetLinks()
+	startNetLinks(netCtx, s.Config, r, slog.Default(), watchNetworkStarted)
 	startCleanup(s.Config.Role, r)
 	startThinCleanup(s.Config.Role, r)
 	tick := time.NewTicker(ExportExpiryInterval)

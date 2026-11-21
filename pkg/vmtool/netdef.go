@@ -51,6 +51,10 @@ var (
 	ErrNetworkNotVmtool = errors.New("not made by vmtool")
 	// ErrNetworkInUse wraps a refusal to delete a network VMs are attached to (409).
 	ErrNetworkInUse = errors.New("network in use")
+	// ErrUnderlay wraps a failure to find the address and interface that reach
+	// another host: no route, a route to the host's own address, or an answer
+	// that is no usable address and device (409).
+	ErrUnderlay = errors.New("no underlay")
 )
 
 // NetworkSpec is what BuildNetworkXML writes: the home form of a network.

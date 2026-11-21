@@ -2164,3 +2164,39 @@ are appended, never edited in; a hook refuses rewrites.
   passes it. Red: assertion failures (app, remote, server, cli); green;
   `just check` green.
 - Commits: the V3 commit on `clone-identity`.
+
+## 2026-11-21 — V5 Networks that span hosts
+
+- vmtool.yaml 2.7.0: `CreateNetworkRequest.member` (with `vni`), `PUT` and
+  `DELETE /v1/hosts/{host}/networks/{name}/peers`, `GET
+  /v1/hosts/{host}/underlay?to=` (the daemon's `ip route get`). store.yaml
+  1.2.0: network reservations routes (list, put, delete); migration 7.
+- `pkg/vmtool/netmember.go`: member form of the network XML (bridge
+  `vmt-<VNI hex>` with stp off, MTU 1450, nothing else, no `<metadata>`),
+  `ip route get` parsing, `EnsureLink` (compares through `ParseNetReport`,
+  links only when different); `netlibvirt.go`: `CreateNetworkMember`,
+  `SetNetworkLinks`, `RemoveNetworkLink`, `Underlay`, libvirt's event loop
+  and `WatchNetworkStarted`. V4's helper is now called by the daemon.
+- `internal/app/netspan.go`: `net join HOST NAME` (store mode only; a
+  local-mode network is registered on its first join with its bridge number,
+  or refused "recreate it with a store"; the home's and the member's LAN
+  rows recorded; the member defines and links; peers pushed to every member
+  concurrently, one line per one that does not answer) and `net leave`
+  (refused with VMs on it and for the home; unlinks, undefines, removes the
+  row, pushes the shorter list).
+- `internal/app/netlinks.go` `NetLinkKeeper`, started by the daemon in the
+  background: links each active vmtool network only when the registry's
+  network of that VNI has the same name and lists this host; store down:
+  backoff 30 s to 5 min, logged once; re-links on libvirt's network-started
+  event and logs the restart-libvirtd repair.
+- Attach on a member: reservation on the home, card on the member with that
+  MAC, either undone on failure; detach and delete remove the home's
+  reservation; reservations recorded in the registry (best effort).
+- CLI `net join`, `net leave`; `networks` and the TUI mark member networks
+  `(vmtool, member)`; `setup_host.yml` opens UDP 4789 from the LAN when ufw
+  is active.
+- Red: assertion failures for pkg/vmtool, store, app (join, cards, keeper),
+  server, TUI; compile-only for cli; no recorded red for storeclient, db,
+  hosts and the playbook test. Green; `just check` green; opt-in
+  `VMTOOL_TEST_ANSIBLE_SYNTAX=1 just test ./scripts/` green.
+- Commits: the V5 commit on `clone-identity`.

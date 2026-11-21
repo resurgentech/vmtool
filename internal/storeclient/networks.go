@@ -20,6 +20,7 @@ type (
 	NetworkMemberInput = storeapi.NetworkMemberInput
 	HostNetworks       = storeapi.HostNetworks
 	HostNetwork        = storeapi.HostNetwork
+	HostNetworkSelf    = storeapi.HostNetworkSelf
 	NetworkPeer        = storeapi.NetworkPeer
 )
 
@@ -125,4 +126,50 @@ func (c *Client) HostNetworks(ctx context.Context, host string) (*HostNetworks, 
 		return nil, registryErr("host networks", r.StatusCode())
 	}
 	return r.JSON200, nil
+}
+
+type (
+	NetworkReservation      = storeapi.NetworkReservation
+	NetworkReservationInput = storeapi.NetworkReservationInput
+)
+
+// PutNetworkReservation records that mac has an address on a network for a VM
+// of a host (PUT /v1/networks/{name}/reservations/{mac}); idempotent per MAC.
+// ErrNotFound when the network is not registered, ErrRegistryConflict when
+// another MAC holds the address.
+func (c *Client) PutNetworkReservation(ctx context.Context, network, mac string, in NetworkReservationInput) (*NetworkReservation, error) {
+	r, err := c.api.PutNetworkReservationWithResponse(ctx, network, mac, in)
+	if err != nil {
+		return nil, transportErr("put network reservation", err)
+	}
+	if r.StatusCode() != http.StatusOK || r.JSON200 == nil {
+		return nil, registryErr("put network reservation", r.StatusCode())
+	}
+	return r.JSON200, nil
+}
+
+// NetworkReservations lists a network's recorded reservations
+// (GET /v1/networks/{name}/reservations); ErrNotFound when it is not registered.
+func (c *Client) NetworkReservations(ctx context.Context, network string) ([]NetworkReservation, error) {
+	r, err := c.api.ListNetworkReservationsWithResponse(ctx, network)
+	if err != nil {
+		return nil, transportErr("list network reservations", err)
+	}
+	if r.StatusCode() != http.StatusOK || r.JSON200 == nil {
+		return nil, registryErr("list network reservations", r.StatusCode())
+	}
+	return r.JSON200.Reservations, nil
+}
+
+// DeleteNetworkReservation removes a recorded reservation
+// (DELETE /v1/networks/{name}/reservations/{mac}); ErrNotFound when there is none.
+func (c *Client) DeleteNetworkReservation(ctx context.Context, network, mac string) error {
+	r, err := c.api.DeleteNetworkReservationWithResponse(ctx, network, mac)
+	if err != nil {
+		return transportErr("delete network reservation", err)
+	}
+	if r.StatusCode() != http.StatusNoContent {
+		return registryErr("delete network reservation", r.StatusCode())
+	}
+	return nil
 }

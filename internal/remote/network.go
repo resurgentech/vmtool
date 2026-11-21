@@ -129,3 +129,52 @@ func (m *Manager) DeleteNetwork(name string) error {
 		return m.client.DeleteNetwork(ctx, m.name, name)
 	})
 }
+
+// CreateNetworkMember makes the member form of a network that spans hosts: the
+// network's name, bridge vmt-<vni hex> and the MTU (createNetwork with member).
+// A daemon that predates the field would make a home-form network: the caller
+// compares what comes back.
+func (m *Manager) CreateNetworkMember(name string, vni uint32) (*vmtool.NetworkInfo, error) {
+	var v api.NetworkInfo
+	n := int(vni)
+	member := true
+	req := api.CreateNetworkRequest{Name: name, Vni: &n, Member: &member}
+	err := m.call("createNetwork", m.timeout, &v, func(ctx context.Context) (*http.Response, error) {
+		return m.client.CreateNetwork(ctx, m.name, req)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return netFromAPI(v), nil
+}
+
+// SetNetworkLinks links the host's network to the hosts at peers
+// (setNetworkPeers).
+func (m *Manager) SetNetworkLinks(name, localIP, dev string, peers []string) error {
+	if peers == nil {
+		peers = []string{}
+	}
+	return m.call("setNetworkPeers", m.timeout, nil, func(ctx context.Context) (*http.Response, error) {
+		return m.client.SetNetworkPeers(ctx, m.name, name, api.NetworkPeers{LanIp: localIP, LanDev: dev, Peers: peers})
+	})
+}
+
+// RemoveNetworkLink removes the host's link of the network (deleteNetworkPeers).
+func (m *Manager) RemoveNetworkLink(name string) error {
+	return m.call("deleteNetworkPeers", m.timeout, nil, func(ctx context.Context) (*http.Response, error) {
+		return m.client.DeleteNetworkPeers(ctx, m.name, name)
+	})
+}
+
+// Underlay asks the host which of its addresses and interfaces reach the
+// address to (getUnderlay).
+func (m *Manager) Underlay(to string) (*vmtool.Underlay, error) {
+	var v api.Underlay
+	err := m.call("getUnderlay", m.timeout, &v, func(ctx context.Context) (*http.Response, error) {
+		return m.client.GetUnderlay(ctx, m.name, &api.GetUnderlayParams{To: to})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &vmtool.Underlay{IP: v.Ip, Dev: v.Dev}, nil
+}

@@ -64,7 +64,9 @@ func (m model) viewNetworks() string {
 		b.WriteString("  No active networks.\n")
 	default:
 		for _, n := range m.netMarks {
-			if n.Vmtool {
+			if n.Vmtool && n.Member {
+				b.WriteString("  " + n.Name + " (vmtool, member)\n")
+			} else if n.Vmtool {
 				b.WriteString("  " + n.Name + " (vmtool)\n")
 			} else {
 				b.WriteString("  " + n.Name + "\n")
@@ -72,7 +74,7 @@ func (m model) viewNetworks() string {
 		}
 	}
 	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("(vmtool) = made by vmtool; `vmtool net create|delete|show` manages them  r=refresh  esc=back"))
+	b.WriteString(helpStyle.Render("(vmtool) = made by vmtool, (member) = on another host's network; `vmtool net` manages them  r=refresh  esc=back"))
 	b.WriteString("\n")
 	return b.String()
 }

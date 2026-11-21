@@ -55,6 +55,18 @@ func (h *handlers) CreateNetwork(ctx context.Context, req api.CreateNetworkReque
 	v, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
 		// A primitive: the number, when given, is the caller's (the store's
 		// registry allocated it); this route never calls the store.
+		if req.Body.Member != nil && *req.Body.Member {
+			// The member form of a network that spans hosts: the bridge and the
+			// MTU only, so a subnet or a domain is a mistake, and the number is
+			// what makes it the home's network.
+			if req.Body.Vni == nil || req.Body.Subnet != nil || req.Body.Domain != nil {
+				return nil, &app.Error{Kind: app.KindInvalid, Op: "net create", Err: fmt.Errorf("a member network takes a vni and nothing else (no subnet, no domain)")}
+			}
+			if *req.Body.Vni < 1 || *req.Body.Vni > 1<<24-1 {
+				return nil, &app.Error{Kind: app.KindInvalid, Op: "net create", Err: fmt.Errorf("vni %d: want 1 to 16777215", *req.Body.Vni)}
+			}
+			return h.svc.CreateNetworkMember(ctx, m, req.Body.Name, uint32(*req.Body.Vni))
+		}
 		var vni uint32
 		if req.Body.Vni != nil {
 			if *req.Body.Vni < 1 || *req.Body.Vni > 1<<24-1 {
@@ -105,4 +117,60 @@ func (h *handlers) DeleteNetwork(ctx context.Context, req api.DeleteNetworkReque
 		return api.DeleteNetwork500JSONResponse(apiErr(err)), nil
 	}
 	return api.DeleteNetwork204Response{}, nil
+}
+
+func (h *handlers) SetNetworkPeers(ctx context.Context, req api.SetNetworkPeersRequestObject) (api.SetNetworkPeersResponseObject, error) {
+	if req.Body == nil {
+		return api.SetNetworkPeers400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: "a body with lan_ip, lan_dev and peers is required"}}, nil
+	}
+	_, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
+		return nil, h.svc.SetNetworkPeers(ctx, m, req.Name, req.Body.LanIp, req.Body.LanDev, req.Body.Peers)
+	})
+	if err != nil {
+		switch kindOf(err) {
+		case app.KindInvalid:
+			return api.SetNetworkPeers400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
+		case app.KindNotFound:
+			return api.SetNetworkPeers404JSONResponse(apiErr(err)), nil
+		case app.KindConflict:
+			return api.SetNetworkPeers409JSONResponse(apiErr(err)), nil
+		}
+		return api.SetNetworkPeers500JSONResponse(apiErr(err)), nil
+	}
+	return api.SetNetworkPeers204Response{}, nil
+}
+
+func (h *handlers) DeleteNetworkPeers(ctx context.Context, req api.DeleteNetworkPeersRequestObject) (api.DeleteNetworkPeersResponseObject, error) {
+	_, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
+		return nil, h.svc.DeleteNetworkPeers(ctx, m, req.Name)
+	})
+	if err != nil {
+		switch kindOf(err) {
+		case app.KindNotFound:
+			return api.DeleteNetworkPeers404JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
+		case app.KindConflict:
+			return api.DeleteNetworkPeers409JSONResponse(apiErr(err)), nil
+		}
+		return api.DeleteNetworkPeers500JSONResponse(apiErr(err)), nil
+	}
+	return api.DeleteNetworkPeers204Response{}, nil
+}
+
+func (h *handlers) GetUnderlay(ctx context.Context, req api.GetUnderlayRequestObject) (api.GetUnderlayResponseObject, error) {
+	v, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
+		return h.svc.Underlay(ctx, m, req.Params.To)
+	})
+	if err != nil {
+		switch kindOf(err) {
+		case app.KindInvalid:
+			return api.GetUnderlay400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
+		case app.KindNotFound:
+			return api.GetUnderlay404JSONResponse(apiErr(err)), nil
+		case app.KindConflict:
+			return api.GetUnderlay409JSONResponse(apiErr(err)), nil
+		}
+		return api.GetUnderlay500JSONResponse(apiErr(err)), nil
+	}
+	u := v.(*vmtool.Underlay)
+	return api.GetUnderlay200JSONResponse{Ip: u.IP, Dev: u.Dev}, nil
 }

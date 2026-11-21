@@ -175,6 +175,19 @@ var migrations = []string{
 		PRIMARY KEY (network, host)
 	);
 	CREATE INDEX network_members_host ON network_members(host);`,
+	// 7: the reservations of networks that span hosts: the copy the store
+	// keeps (network, MAC, address, host, VM) of what the home's daemon made.
+	// An address is held by one MAC per network. Nothing here is secret.
+	`CREATE TABLE network_reservations (
+		network TEXT NOT NULL,
+		mac     TEXT NOT NULL,
+		ip      TEXT NOT NULL,
+		host    TEXT NOT NULL,
+		vm      TEXT NOT NULL,
+		created TEXT NOT NULL,
+		PRIMARY KEY (network, mac),
+		UNIQUE (network, ip)
+	);`,
 }
 
 // DB is an open store database. It is safe for concurrent use.

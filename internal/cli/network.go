@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -20,9 +21,12 @@ func netCmd(e *env) *cobra.Command {
 		Long: `A vmtool network is a libvirt network vmtool made: NAT, DHCP and DNS on a /24
 of 10.77.0.0/16, a bridge called vmt- plus six hex digits, MTU 1450. vmtool
 writes nothing of its own into the network's definition; the bridge name is
-what marks it as vmtool's. vmtool leaves every other libvirt network alone.`,
+what marks it as vmtool's. vmtool leaves every other libvirt network alone.
+
+A network can span hosts: other hosts join it (net join) and their VMs then
+talk to the network's home and to each other over VXLAN. See net join.`,
 	}
-	cmd.AddCommand(netCreateCmd(e), netDeleteCmd(e), netShowCmd(e), netAttachCmd(e), netDetachCmd(e))
+	cmd.AddCommand(netCreateCmd(e), netDeleteCmd(e), netShowCmd(e), netAttachCmd(e), netDetachCmd(e), netJoinCmd(e), netLeaveCmd(e))
 	return cmd
 }
 
@@ -220,5 +224,92 @@ func writeNetwork(w io.Writer, n *vmtool.NetworkInfo) {
 			label = "reserved:"
 		}
 		fmt.Fprintf(w, "%-9s %s %s %s\n", label, r.IP, r.MAC, r.Name)
+	}
+}
+
+func netJoinCmd(e *env) *cobra.Command {
+	var home string
+	cmd := &cobra.Command{
+		Use:   "join <host> <name>",
+		Short: "Make a host a member of a vmtool network, so its VMs share it",
+		Long: `Make <host> a member of the vmtool network <name>: the network's home (the
+host whose libvirt network does the NAT, DHCP and DNS) keeps doing that, and
+<host> defines the same network with only a bridge and the MTU (no address of
+its own) and links to the home and to every other member with a VXLAN device
+(UDP port 4789 over the LAN). Attach a VM's card to it on <host> as on the home:
+the address and the name come from the home's DHCP.
+
+Joining needs the store: a network that spans hosts is registered there, with
+its members' LAN addresses. A network made without a store (bridge number 1 to
+9999) is registered by its first join, with its bridge number as its VNI, if
+the registry does not have that number yet (else: recreate it with a store);
+say which host is its home with --home. Only <host> (and, the first time, the
+home) must be awake; every other member that answers gets the new peer list
+and one that does not is skipped with a line: it reads the list from the store
+when its daemon starts.
+
+VXLAN is neither authenticated nor encrypted: anyone on the LAN can read the
+network's traffic and inject frames into it. Use it on a LAN you trust. The
+hosts' firewalls must pass UDP 4789 between them (just prereqs opens it from
+the LAN when ufw is active).
+
+  vmtool net join hv2 net1
+  vmtool net join hv2 lab --home hv1   # a network made without a store`,
+		Args: cobra.ExactArgs(2),
+	}
+	cmd.Flags().StringVar(&home, "home", "", "the network's home host; needed only when the network is not in the registry yet")
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		res, err := e.service("").JoinNetwork(cmd.Context(), args[0], args[1], home)
+		if err != nil {
+			return err
+		}
+		writeJoin(cmd.OutOrStdout(), res)
+		return nil
+	}
+	return cmd
+}
+
+func netLeaveCmd(e *env) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "leave <host> <name>",
+		Short: "Take a host out of a vmtool network",
+		Long: `Take <host> out of the vmtool network <name>: it unlinks, removes the member
+network and its registry entry, and every other member that answers gets the
+shorter peer list. Refused while VMs of <host> have a card on the network
+(detach it first: vmtool net detach), and for the network's home (delete the
+network instead). Needs the store.`,
+		Args: cobra.ExactArgs(2),
+	}
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		res, err := e.service("").LeaveNetwork(cmd.Context(), args[0], args[1])
+		if err != nil {
+			return err
+		}
+		writeLeave(cmd.OutOrStdout(), res)
+		return nil
+	}
+	return cmd
+}
+
+func writeJoin(w io.Writer, r *app.JoinResult) {
+	fmt.Fprintf(w, "Host %s joined network %q (VNI %d, home %s)\n", r.Host, r.Network, r.VNI, r.Home)
+	if r.Registered {
+		fmt.Fprintf(w, "Network %q was made without a store: it is registered now, with its bridge number %d as its VNI\n", r.Network, r.VNI)
+	}
+	fmt.Fprintf(w, "Link:      %s (%s)\n", r.LanIP, r.LanDev)
+	if len(r.Peers) == 0 {
+		fmt.Fprintln(w, "Peers:     no other host yet")
+	} else {
+		fmt.Fprintf(w, "Peers:     %s\n", strings.Join(r.Peers, ", "))
+	}
+	for _, l := range r.Skipped {
+		fmt.Fprintln(w, "Skipped:  ", l)
+	}
+}
+
+func writeLeave(w io.Writer, r *app.LeaveResult) {
+	fmt.Fprintf(w, "Host %s left network %q\n", r.Host, r.Network)
+	for _, l := range r.Skipped {
+		fmt.Fprintln(w, "Skipped:  ", l)
 	}
 }

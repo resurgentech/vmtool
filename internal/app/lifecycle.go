@@ -50,7 +50,7 @@ func (s *Service) DeleteVM(ctx context.Context, m Manager, ref VMRef, noclone bo
 	if err := m.Delete(ref.Name, noclone); err != nil {
 		return s.missingVM(ctx, m, ref, wrap("delete", err))
 	}
-	rerr := removeReservations(m, cards)
+	rerr := s.removeReservations(ctx, m, ref.Host, cards)
 	// One line for a store that is down, not one per call.
 	var said bool
 	note := func(line string) {

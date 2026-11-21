@@ -735,6 +735,90 @@ paths:
           $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
+  /v1/networks/{name}/reservations:
+    parameters:
+      - $ref: "#/components/parameters/Name"
+    get:
+      operationId: listNetworkReservations
+      summary: A network's recorded reservations
+      description: >
+        User tokens only. The copy the store keeps of the reservations of a
+        network that spans hosts (network, MAC, address, host, VM), so a client
+        can answer without reaching the home. The home's own DHCP
+        configuration is the source of truth; this is a record made when a
+        reservation is made or removed by a client.
+      responses:
+        "200":
+          description: The reservations, ordered by address.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NetworkReservationList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/networks/{name}/reservations/{mac}:
+    parameters:
+      - $ref: "#/components/parameters/Name"
+      - $ref: "#/components/parameters/Mac"
+    put:
+      operationId: putNetworkReservation
+      summary: Record a reservation of a network
+      description: >
+        User tokens only. Records that `mac` has `ip` on the network for VM
+        `vm` of `host`. Idempotent: a MAC already recorded takes the new
+        values. An address another MAC holds on the network is 409. The store
+        does not reach any host and does not make the reservation; the client
+        records what the home's daemon made. JSON only, at most 1 MiB.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NetworkReservationInput"
+      responses:
+        "200":
+          description: The reservation, as stored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NetworkReservation"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Another MAC holds that address on the network.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          $ref: "#/components/responses/TooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      operationId: deleteNetworkReservation
+      summary: Remove a recorded reservation
+      description: User tokens only.
+      responses:
+        "204":
+          description: The record is gone.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /v1/hosts/{host}/networks:
     parameters:
       - $ref: "#/components/parameters/Host"
@@ -786,6 +870,12 @@ components:
         type: string
     Host:
       name: host
+      in: path
+      required: true
+      schema:
+        type: string
+    Mac:
+      name: mac
       in: path
       required: true
       schema:
@@ -1350,6 +1440,45 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Network"
+    NetworkReservationInput:
+      type: object
+      required: [ip, host, vm]
+      properties:
+        ip:
+          type: string
+          description: The reserved IPv4 address.
+        host:
+          type: string
+          description: The host the VM with this card is on.
+        vm:
+          type: string
+          description: The VM's name.
+    NetworkReservation:
+      type: object
+      required: [network, mac, ip, host, vm, created]
+      properties:
+        network:
+          type: string
+        mac:
+          type: string
+          description: Lowercase, colon-separated.
+        ip:
+          type: string
+        host:
+          type: string
+        vm:
+          type: string
+        created:
+          type: string
+          format: date-time
+    NetworkReservationList:
+      type: object
+      required: [reservations]
+      properties:
+        reservations:
+          type: array
+          items:
+            $ref: "#/components/schemas/NetworkReservation"
     NetworkPeer:
       type: object
       required: [host, lan_ip]

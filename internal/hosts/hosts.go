@@ -502,6 +502,10 @@ func (h hypervisorPools) RefreshPool(pool string) error {
 	return nil
 }
 
+// Unwrap gives up the Manager this wraps, so app.AsNetMember finds its
+// network capabilities.
+func (h hypervisorPools) Unwrap() app.Manager { return h.Manager }
+
 // CreateNetworkVNI keeps app.VNICreator visible through the wrapper.
 func (h hypervisorPools) CreateNetworkVNI(name, subnet, domain string, vni uint32) (*vmtool.NetworkInfo, error) {
 	return app.ForwardCreateNetworkVNI(h.Manager, name, subnet, domain, vni)
@@ -587,6 +591,10 @@ func (d defaultPools) RefreshPool(pool string) error {
 	}
 	return nil
 }
+
+// Unwrap gives up the Manager this wraps, so app.AsNetMember finds its
+// network capabilities.
+func (d defaultPools) Unwrap() app.Manager { return d.Manager }
 
 // CreateNetworkVNI keeps app.VNICreator visible through the wrapper.
 func (d defaultPools) CreateNetworkVNI(name, subnet, domain string, vni uint32) (*vmtool.NetworkInfo, error) {

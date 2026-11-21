@@ -207,14 +207,22 @@ func (s *Service) CreateVM(ctx context.Context, m Manager, in CreateVMInput) (*v
 	// created: a network that does not exist or is not vmtool's, a taken or
 	// outside address, a network named twice.
 	seenNet := map[string]bool{}
+	sites := map[string]*cardSite{}
+	defer func() {
+		for _, cs := range sites {
+			cs.close()
+		}
+	}()
 	for _, r := range in.Networks {
 		if seenNet[r.Network] {
 			return nil, invalid("create", fmt.Errorf("network %q is named twice; one card per network", r.Network))
 		}
 		seenNet[r.Network] = true
-		if err := checkNetwork("create", m, in.Name, r); err != nil {
+		cs, err := s.checkNetwork(ctx, "create", m, ref.Host, in.Name, r)
+		if err != nil {
 			return nil, err
 		}
+		sites[r.Network] = cs
 	}
 
 	// The vmexp- prefix belongs to export volumes in the array's volume group;
@@ -384,10 +392,10 @@ func (s *Service) CreateVM(ctx context.Context, m Manager, in CreateVMInput) (*v
 	var cards []vmtool.NetAttachment
 	for _, r := range in.Networks {
 		emit(in, "network", "start", "attaching a card on network "+r.Network, "")
-		att, err := attachCard(m, cfg.Name, r.Network, r.IP)
+		att, err := s.attachCard(ctx, sites[r.Network], cfg.Name, r.Network, r.IP)
 		if err != nil {
 			for i := len(cards) - 1; i >= 0; i-- {
-				if uerr := detachCard(m, cfg.Name, cards[i].Network, cards[i].MAC); uerr != nil {
+				if uerr := s.detachCard(ctx, sites[cards[i].Network], cfg.Name, cards[i].Network, cards[i].MAC); uerr != nil {
 					err = fmt.Errorf("%w; and the card %s on network %q could not be taken back: %v", err, cards[i].MAC, cards[i].Network, uerr)
 				}
 			}

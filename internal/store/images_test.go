@@ -584,7 +584,7 @@ func TestTicketRefusedOnEveryOtherRoute(t *testing.T) {
 			continue
 		}
 		method, p, _ := strings.Cut(op, " ")
-		p = strings.ReplaceAll(strings.ReplaceAll(p, "{name}", "A"), "{host}", "hv1")
+		p = strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(p, "{name}", "A"), "{host}", "hv1"), "{mac}", "52:54:00:00:00:01")
 		hdr := map[string]string{"X-Image-SHA256": sum(body)}
 		resp, b := e.call(t, method, p, "Ticket "+tk.Ticket, bytes.NewReader(body), hdr)
 		if resp.StatusCode != 401 {
@@ -592,8 +592,8 @@ func TestTicketRefusedOnEveryOtherRoute(t *testing.T) {
 		}
 		n++
 	}
-	if n != 25 {
-		t.Errorf("checked %d routes, want 25", n)
+	if n != 28 {
+		t.Errorf("checked %d routes, want 28", n)
 	}
 	// none of that spent the ticket, and A is untouched
 	resp, got := e.blobWith(t, "A", "Ticket "+tk.Ticket)

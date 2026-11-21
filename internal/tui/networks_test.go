@@ -13,10 +13,13 @@ import (
 
 type netFake struct{ app.Manager }
 
-func (netFake) ListNetworks() ([]string, error) { return []string{"default", "net1"}, nil }
+func (netFake) ListNetworks() ([]string, error) { return []string{"default", "net1", "net2"}, nil }
 func (netFake) Network(name string) (*vmtool.NetworkInfo, error) {
-	if name == "net1" {
-		return &vmtool.NetworkInfo{Name: name, Bridge: "vmt-000001", Vmtool: true}, nil
+	switch name {
+	case "net1":
+		return &vmtool.NetworkInfo{Name: name, Bridge: "vmt-000001", Vmtool: true, Forward: "nat", Gateway: "10.77.1.1"}, nil
+	case "net2": // the member form of a network that spans hosts
+		return &vmtool.NetworkInfo{Name: name, Bridge: "vmt-002711", Vmtool: true, VNI: 10001}, nil
 	}
 	return &vmtool.NetworkInfo{Name: name, Bridge: "virbr0"}, nil
 }
@@ -34,7 +37,7 @@ func TestNetworkListMarksVmtoolNetworks(t *testing.T) {
 	next, _ = m.Update(cmd())
 	m = next.(model)
 	out := m.View()
-	for _, want := range []string{"Networks on hv1", "  default\n", "  net1 (vmtool)\n", "esc=back"} {
+	for _, want := range []string{"Networks on hv1", "  default\n", "  net1 (vmtool)\n", "  net2 (vmtool, member)\n", "esc=back"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("view lacks %q:\n%s", want, out)
 		}

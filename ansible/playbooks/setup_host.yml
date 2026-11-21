@@ -76,6 +76,18 @@
     # nothing; `just prereqs <host>` sets 9473.
     vmtool_daemon_port: ""
 
+    # Networks that span hosts link their hosts with VXLAN over this UDP port.
+    # When ufw is active it is opened for the LAN the host's default route is
+    # on (vmtool_vxlan_from: that LAN's network address and prefix; empty when
+    # there is no default route, which opens nothing). VXLAN is neither
+    # authenticated nor encrypted: open it only on a LAN you trust.
+    vmtool_vxlan_port: 4789
+    vmtool_vxlan_from: >-
+      {{ (ansible_facts.default_ipv4.network ~ '/' ~ ansible_facts.default_ipv4.prefix)
+         if ((ansible_facts.default_ipv4 | default({})).network is defined
+             and (ansible_facts.default_ipv4 | default({})).prefix is defined)
+         else '' }}
+
     # Off by default. On Debian/Ubuntu this installs the upstream Go tarball
     # (only when the Go that `deploy` would use is missing or older than
     # vmtool_go_min); on Arch it means pacman's `go`.
@@ -530,6 +542,20 @@
       changed_when: "'Skipping' not in vmtool_ufw_daemon.stdout"
       when:
         - vmtool_daemon_port | string | length > 0
+        - vmtool_ufw.rc | default(1) == 0
+        - vmtool_ufw.stdout | default('') is search('Status:\s+active')
+
+    # The other hosts of a network that spans hosts send this host their VMs'
+    # frames inside UDP; ufw's default-deny would drop them. Only the LAN gets
+    # in (the source is the network of the default route), and only when ufw is
+    # active.
+    - name: Allow VXLAN through ufw from the LAN
+      ansible.builtin.command: "ufw allow from {{ vmtool_vxlan_from | trim }} to any port {{ vmtool_vxlan_port }} proto udp comment 'vmtool VXLAN'"
+      register: vmtool_ufw_vxlan
+      changed_when: "'Skipping' not in vmtool_ufw_vxlan.stdout"
+      when:
+        - vmtool_configure_firewall | bool
+        - vmtool_vxlan_from | trim | length > 0
         - vmtool_ufw.rc | default(1) == 0
         - vmtool_ufw.stdout | default('') is search('Status:\s+active')
 

@@ -710,6 +710,12 @@ paths:
         already on the host is 409. Omitted, the host numbers the bridge
         itself, the lowest free number from 1. The daemon never calls the
         store for this: it is a primitive. Needs no store.
+        `member: true` makes the member form for a network that spans hosts
+        instead: the home's `name`, bridge `vmt-%06x` of the required `vni`
+        and MTU 1450, with no address, NAT, DHCP or DNS of its own, autostart,
+        started; `subnet` and `domain` are refused (400), a name or a bridge
+        number the host already has is 409. A host that predates `member`
+        would make a home-form network: the caller compares the answer.
       requestBody:
         required: true
         content:
@@ -823,6 +829,80 @@ paths:
         network is 404; a network that is not vmtool's is 409.
       responses:
         '204': { description: removed }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+  /v1/hosts/{host}/networks/{name}/peers:
+    parameters:
+      - $ref: '#/components/parameters/HostName'
+      - name: name
+        in: path
+        required: true
+        schema: { type: string }
+    put:
+      operationId: setNetworkPeers
+      summary: Link a vmtool network to the other hosts of it
+      description: >
+        Daemon primitive (API 2.7.0). Makes this host's VXLAN device of the
+        network (`vx<VNI>`, UDP port 4789, bound to `lan_ip` on `lan_dev`,
+        mastered to the network's bridge) with one flood entry per address of
+        `peers`, and removes any other entry, through the root helper
+        `vmtool-net`. A device that is already so is left alone. The
+        arguments are what the store's registry gives this host (its own
+        `lan_ip` and `lan_dev`, its peers' `lan_ip`); the daemon trusts the
+        caller for them and the helper checks each (IPv4 unicast, an
+        existing physical interface). An empty `peers` is allowed. Only a
+        vmtool network (bridge `vmt-` plus six lowercase hex digits) that is
+        active is linked: any other is 409. Needs no store.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NetworkPeers' }
+      responses:
+        '204': { description: linked }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+    delete:
+      operationId: deleteNetworkPeers
+      summary: Remove this host's link of a vmtool network
+      description: >
+        Daemon primitive (API 2.7.0). Removes the VXLAN device `vx<VNI>` of
+        the network (`vmtool-net unlink`); none there is success. The
+        network itself stays. A network that is not vmtool's is 409.
+      responses:
+        '204': { description: unlinked }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+  /v1/hosts/{host}/underlay:
+    parameters:
+      - $ref: '#/components/parameters/HostName'
+      - name: to
+        in: query
+        required: true
+        description: an IPv4 address of another host (not loopback, not multicast)
+        schema: { type: string }
+    get:
+      operationId: getUnderlay
+      summary: The LAN address and interface this host reaches another address with
+      description: >
+        Daemon primitive (API 2.7.0). Runs `ip route get <to>` (no root) and
+        answers the source address and the device. A route to the host's own
+        address, or an answer that is no usable address and device, is 409.
+        A `to` that is not an IPv4 address is 400.
+      responses:
+        '200':
+          description: the underlay toward `to`
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Underlay' }
+        '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
@@ -2640,6 +2720,23 @@ components:
         subnet: { type: string, description: "a /24 CIDR such as 10.77.1.0/24; omitted picks the first free /24 of 10.77.0.0/16" }
         domain: { type: string, description: "DNS domain; omitted is <name>.test" }
         vni: { type: integer, minimum: 1, maximum: 16777215, description: "the network number; the bridge is vmt-%06x of it. Omitted, the host picks the lowest free number from 1. A host that predates this field ignores it and numbers the bridge itself" }
+        member: { type: boolean, description: "make the member form of a network that spans hosts (the bridge and the MTU only); needs vni, refuses subnet and domain. A host that predates this field ignores it" }
+    NetworkPeers:
+      type: object
+      required: [lan_ip, lan_dev, peers]
+      properties:
+        lan_ip: { type: string, description: "this host's LAN address, an IPv4 unicast address" }
+        lan_dev: { type: string, description: "the interface that address is on" }
+        peers:
+          type: array
+          description: "the LAN addresses of the other hosts of the network (IPv4 unicast); one flood entry each"
+          items: { type: string }
+    Underlay:
+      type: object
+      required: [ip, dev]
+      properties:
+        ip: { type: string, description: "this host's source address toward the asked address" }
+        dev: { type: string, description: "the interface it is on" }
     NetworkInfo:
       type: object
       required: [name, vmtool, active, autostart, vms]

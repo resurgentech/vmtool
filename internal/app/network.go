@@ -32,7 +32,7 @@ func netErr(op string, err error) error {
 		return invalid(op, err)
 	case errors.Is(err, vmtool.ErrNetworkExists), errors.Is(err, vmtool.ErrNoFreeSubnet),
 		errors.Is(err, vmtool.ErrNetworkNotVmtool), errors.Is(err, vmtool.ErrNetworkInUse),
-		errors.Is(err, vmtool.ErrAddressTaken):
+		errors.Is(err, vmtool.ErrAddressTaken), errors.Is(err, vmtool.ErrUnderlay):
 		return conflict(op, err)
 	}
 	return wrap(op, err)
@@ -53,11 +53,13 @@ func (s *Service) CreateNetwork(_ context.Context, m Manager, name, subnet, doma
 	return n, nil
 }
 
-// NetworkMark is one entry of the networks listing: a name, and whether the
-// network is vmtool's.
+// NetworkMark is one entry of the networks listing: a name, whether the
+// network is vmtool's, and whether it is the member form (a bridge and no
+// address: this host is a member of a network that spans hosts).
 type NetworkMark struct {
 	Name   string
 	Vmtool bool
+	Member bool
 }
 
 // ListNetworkMarks lists the host's active libvirt networks and marks the
@@ -73,6 +75,7 @@ func (s *Service) ListNetworkMarks(ctx context.Context, m Manager) ([]NetworkMar
 		mk := NetworkMark{Name: n}
 		if info, err := m.Network(n); err == nil && info != nil {
 			mk.Vmtool = info.Vmtool
+			mk.Member = info.IsMemberForm()
 		}
 		out = append(out, mk)
 	}

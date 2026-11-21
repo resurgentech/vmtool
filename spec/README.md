@@ -432,9 +432,26 @@ bump costs nothing if it was).
   that is not a member) and `peers`: the other members' host names and LAN
   addresses, nothing else. A host with none gets an empty list.
 - **The home is not a member by being the home.** A member row is the host's
-  LAN address and interface for its VXLAN link; the host's daemon adds it when
-  it links (a later step), so until then a network has no members and delete
-  works.
+  LAN address and interface for its VXLAN link. `createNetwork` adds none, so
+  a one-host network has no members and delete works. The first `vmtool net
+  join` of a network adds the home's row too (found by the home's daemon,
+  `getUnderlay`), so every host's peers are the other rows; the registry
+  refuses to delete a network that still has members.
+- **Reservations** (migration 7, `network_reservations`: `network`, `mac`,
+  `ip`, `host`, `vm`, `created`; primary key (network, mac), unique (network,
+  ip)). User-token routes `listNetworkReservations` (`GET
+  /v1/networks/{name}/reservations`, in address order, `404` for an unknown
+  network), `putNetworkReservation` (`PUT …/reservations/{mac}`: `ip`, `host`,
+  `vm`; idempotent per MAC; `409` when another MAC holds the address; `404`
+  for an unknown network) and `deleteNetworkReservation` (`DELETE
+  …/reservations/{mac}`, `404` when none). The store keeps a copy of what the
+  home's daemon made, written by the client that made or removed the
+  reservation (never by a daemon, whose host token has none of these routes), so
+  a client can answer without reaching the home; the home's own libvirt DHCP
+  configuration stays the truth. A network that is registered has its
+  reservations recorded, a network that is not (made without a store) has none.
+  Deleting a network deletes its records. Version stays 1.2.0 (deployed
+  nowhere).
 - **Store mode and local mode.** `vmtool net create HOST NAME` in store mode
   has the registry allocate the VNI and subnet (home = HOST) and then has the
   host define the network on bridge `vmt-<VNI>`; if the host refuses, the
@@ -873,6 +890,76 @@ card and nothing else.
   network's DHCP host entries. The inventory report and the store's
   `InventoryVM.networks` carry the same `{network, mac, ip}` (store migration
   5; store.yaml stays 1.1.0 while nothing is deployed).
+
+### Networks that span hosts (API 2.7.0, same version)
+
+A network's *home* (the host whose libvirt network does the NAT, DHCP and DNS)
+keeps its full definition; another host is a *member* of it: it defines the
+same name with the same bridge `vmt-NNNNNN` and the MTU and nothing else (no
+`<forward>`, no `<ip>`, no `<domain>`, no `<metadata>`), and a VXLAN device
+`vx<VNI>` (UDP 4789, bound to the host's LAN address, mastered to the bridge)
+floods to every other host's LAN address. The overlay is neither authenticated
+nor encrypted. The registry (store.yaml, "Networks") holds the members and
+their LAN addresses, so joining needs the store.
+
+- **Daemon primitives** (none calls the store; the client app orders them):
+  - `createNetwork` with `member: true` makes the member form: `vni` is
+    required, `subnet` and `domain` are `400`, a name or a bridge number the
+    host already has is `409`. A daemon that predates `member` would make a
+    home-form network; the client compares what comes back.
+  - `PUT /v1/hosts/{host}/networks/{name}/peers` (`setNetworkPeers`: `lan_ip`,
+    `lan_dev`, `peers`) makes the host's VXLAN device flood to exactly those
+    addresses, through the root helper `vmtool-net` (`NetHelper.EnsureLink`: it
+    reads the helper's report and links only when the device differs, because
+    the helper re-makes the device and that drops the network's cross-host
+    traffic for a moment). `404` for an unknown network, `409` for one that is
+    not vmtool's, `400` for an argument the helper would refuse; `DELETE` of
+    the same path (`deleteNetworkPeers`) removes the device.
+  - `GET /v1/hosts/{host}/underlay?to=IP` (`getUnderlay`) runs `ip route get`
+    (no root) and answers the host's source address and interface toward `to`.
+    `409` for a route to the host's own address or an unusable answer.
+- **Join** (`vmtool net join HOST NAME [--home H]`, `internal/app`
+  `JoinNetwork`; store mode only, else it refuses with the reason): reads the
+  registry; the member asks its route to the home (the home's registered LAN
+  address, else the address of the home in `config.yml hosts:`: the *client*
+  resolves the home's address, the member's daemon looks the route up); on the
+  first join the home answers the same lookup toward the member and is
+  recorded as a member too; the member defines the bridge-only network, is
+  recorded, and links to every other row; then every other member that answers
+  (the home included) gets its new peer list; one that does not is skipped
+  with one line (it reads the registry when its daemon starts). A network made
+  without a store (bridge number 1 to 9999) is registered by its first join
+  with its bridge number as its VNI and its subnet and domain from the home
+  (`--home` names the home), its reservations recorded as the home's VMs'; a
+  number the registry already has is a `409` ("recreate it with a store"). A
+  step that fails takes back the ones before it.
+- **Leave** (`vmtool net leave HOST NAME`): refused while a VM of the host has a
+  card on the network and for the home; unlinks, undefines, removes the member,
+  pushes the shorter list to the others.
+- **The daemon keeps links up** (`internal/app` `NetLinkKeeper`, started by
+  `vmtool server` on a hypervisor after the bind): for each vmtool network
+  active on the host (bridge `vmt-` plus six hex digits, whose digits are the
+  VNI) it reads the host's own networks from the store with the host token
+  (`getHostNetworks`) and links, but only when the registry's network of that
+  VNI has the same name and lists this host (VNIs of deleted networks are
+  reused); otherwise it leaves the bridge unlinked and logs one line. With the
+  store unreachable it links nothing, logs once and retries on the inventory
+  reporter's backoff (30 s doubling to 5 min). It never delays serving. libvirt's
+  "network started" event links that network again and logs how to repair the
+  cards (restart libvirtd; vmtool never restarts it).
+- **A card on a member** (`attach`, `detach`, `create --network`, `delete`): the
+  reservation is made on the home (`createReservation` picks the MAC and the
+  address; the home must be awake and the store must answer, to find it), then
+  the card is attached on the VM's host with that MAC (`attachInterface`); a
+  failure undoes the other step. `detach` removes the card, then the home's
+  reservation. `delete` removes the reservations on the home after the VM (the
+  VM is deleted even if the home does not answer, and the error names what is
+  left). Each reservation is also recorded in the registry when made and
+  removed. The address and the name reach the guest from the home's DHCP over
+  the link. `VMInfo.networks` for a card on a member has no address (the
+  reservation is on the home).
+- **Firewall.** `just prereqs` opens UDP 4789 from the LAN of the host's
+  default route when ufw is active.
 
 ## GET / pattern
 

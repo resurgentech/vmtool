@@ -55,7 +55,7 @@ func (n *NetHelper) run(verb string, args ...string) ([]byte, error) {
 
 func netCheckVNI(vni uint32) error {
 	if vni < 1 || vni > maxVNI {
-		return fmt.Errorf("invalid VNI %d", vni)
+		return invalidNetwork("invalid VNI %d", vni)
 	}
 	return nil
 }
@@ -64,18 +64,18 @@ func netCheckVNI(vni uint32) error {
 func netCheckIPv4(what, s string) error {
 	a, err := netip.ParseAddr(s)
 	if err != nil || !a.Is4() || a.String() != s || a.IsUnspecified() || a.IsLoopback() || a.IsMulticast() || a.As4()[0] >= 224 {
-		return fmt.Errorf("invalid %s %q", what, s)
+		return invalidNetwork("invalid %s %q", what, s)
 	}
 	return nil
 }
 
 func netCheckDev(dev string) error {
 	if !netDevRE.MatchString(dev) || dev == "lo" {
-		return fmt.Errorf("invalid interface %q", dev)
+		return invalidNetwork("invalid interface %q", dev)
 	}
 	for _, p := range []string{"vmt-", "vx", "virbr", "vnet"} {
 		if strings.HasPrefix(dev, p) {
-			return fmt.Errorf("interface %q not allowed", dev)
+			return invalidNetwork("interface %q not allowed", dev)
 		}
 	}
 	return nil
@@ -89,7 +89,7 @@ func (n *NetHelper) Link(vni uint32, bridge, localIP, dev string, peers []string
 		return err
 	}
 	if v, ok := BridgeVNI(bridge); !ok || v != vni {
-		return fmt.Errorf("bridge %q is not the bridge of VNI %d", bridge, vni)
+		return invalidNetwork("bridge %q is not the bridge of VNI %d", bridge, vni)
 	}
 	if err := netCheckIPv4("local address", localIP); err != nil {
 		return err
@@ -103,7 +103,7 @@ func (n *NetHelper) Link(vni uint32, bridge, localIP, dev string, peers []string
 			return err
 		}
 		if p == localIP {
-			return fmt.Errorf("peer %q is the local address", p)
+			return invalidNetwork("peer %q is the local address", p)
 		}
 		args = append(args, p)
 	}

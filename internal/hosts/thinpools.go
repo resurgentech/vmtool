@@ -66,6 +66,10 @@ func (t ThinPools) ListPools() ([]vmtool.PoolInfo, error) {
 	return pools, nil
 }
 
+// Unwrap gives up the Manager this wraps, so app.AsNetMember finds its
+// network capabilities.
+func (t ThinPools) Unwrap() app.Manager { return t.Manager }
+
 // CreateNetworkVNI keeps app.VNICreator visible through the wrapper.
 func (t ThinPools) CreateNetworkVNI(name, subnet, domain string, vni uint32) (*vmtool.NetworkInfo, error) {
 	return app.ForwardCreateNetworkVNI(t.Manager, name, subnet, domain, vni)

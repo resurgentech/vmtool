@@ -280,6 +280,35 @@ type NetworkPeer struct {
 	LanIp string `json:"lan_ip"`
 }
 
+// NetworkReservation defines model for NetworkReservation.
+type NetworkReservation struct {
+	Created time.Time `json:"created"`
+	Host    string    `json:"host"`
+	Ip      string    `json:"ip"`
+
+	// Mac Lowercase, colon-separated.
+	Mac     string `json:"mac"`
+	Network string `json:"network"`
+	Vm      string `json:"vm"`
+}
+
+// NetworkReservationInput defines model for NetworkReservationInput.
+type NetworkReservationInput struct {
+	// Host The host the VM with this card is on.
+	Host string `json:"host"`
+
+	// Ip The reserved IPv4 address.
+	Ip string `json:"ip"`
+
+	// Vm The VM's name.
+	Vm string `json:"vm"`
+}
+
+// NetworkReservationList defines model for NetworkReservationList.
+type NetworkReservationList struct {
+	Reservations []NetworkReservation `json:"reservations"`
+}
+
 // ReportResult defines model for ReportResult.
 type ReportResult struct {
 	Listed    int `json:"listed"`
@@ -415,6 +444,9 @@ type WhoamiKind string
 // Host defines model for Host.
 type Host = string
 
+// Mac defines model for Mac.
+type Mac = string
+
 // Name defines model for Name.
 type Name = string
 
@@ -483,6 +515,9 @@ type CreateNetworkJSONRequestBody = NetworkInput
 
 // PutNetworkMemberJSONRequestBody defines body for PutNetworkMember for application/json ContentType.
 type PutNetworkMemberJSONRequestBody = NetworkMemberInput
+
+// PutNetworkReservationJSONRequestBody defines body for PutNetworkReservation for application/json ContentType.
+type PutNetworkReservationJSONRequestBody = NetworkReservationInput
 
 // RequestEditorFn  is the function signature for the RequestEditor callback function
 type RequestEditorFn func(ctx context.Context, req *http.Request) error
@@ -643,6 +678,17 @@ type ClientInterface interface {
 	PutNetworkMemberWithBody(ctx context.Context, name Name, host Host, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	PutNetworkMember(ctx context.Context, name Name, host Host, body PutNetworkMemberJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListNetworkReservations request
+	ListNetworkReservations(ctx context.Context, name Name, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteNetworkReservation request
+	DeleteNetworkReservation(ctx context.Context, name Name, mac Mac, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PutNetworkReservationWithBody request with any body
+	PutNetworkReservationWithBody(ctx context.Context, name Name, mac Mac, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	PutNetworkReservation(ctx context.Context, name Name, mac Mac, body PutNetworkReservationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// Whoami request
 	Whoami(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1013,6 +1059,54 @@ func (c *Client) PutNetworkMemberWithBody(ctx context.Context, name Name, host H
 
 func (c *Client) PutNetworkMember(ctx context.Context, name Name, host Host, body PutNetworkMemberJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPutNetworkMemberRequest(c.Server, name, host, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListNetworkReservations(ctx context.Context, name Name, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListNetworkReservationsRequest(c.Server, name)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DeleteNetworkReservation(ctx context.Context, name Name, mac Mac, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteNetworkReservationRequest(c.Server, name, mac)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PutNetworkReservationWithBody(ctx context.Context, name Name, mac Mac, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutNetworkReservationRequestWithBody(c.Server, name, mac, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PutNetworkReservation(ctx context.Context, name Name, mac Mac, body PutNetworkReservationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutNetworkReservationRequest(c.Server, name, mac, body)
 	if err != nil {
 		return nil, err
 	}
@@ -2096,6 +2190,135 @@ func NewPutNetworkMemberRequestWithBody(server string, name Name, host Host, con
 	return req, nil
 }
 
+// NewListNetworkReservationsRequest generates requests for ListNetworkReservations
+func NewListNetworkReservationsRequest(server string, name Name) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "name", runtime.ParamLocationPath, name)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/networks/%s/reservations", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewDeleteNetworkReservationRequest generates requests for DeleteNetworkReservation
+func NewDeleteNetworkReservationRequest(server string, name Name, mac Mac) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "name", runtime.ParamLocationPath, name)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "mac", runtime.ParamLocationPath, mac)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/networks/%s/reservations/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewPutNetworkReservationRequest calls the generic PutNetworkReservation builder with application/json body
+func NewPutNetworkReservationRequest(server string, name Name, mac Mac, body PutNetworkReservationJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPutNetworkReservationRequestWithBody(server, name, mac, "application/json", bodyReader)
+}
+
+// NewPutNetworkReservationRequestWithBody generates requests for PutNetworkReservation with any type of body
+func NewPutNetworkReservationRequestWithBody(server string, name Name, mac Mac, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "name", runtime.ParamLocationPath, name)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "mac", runtime.ParamLocationPath, mac)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/networks/%s/reservations/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PUT", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewWhoamiRequest generates requests for Whoami
 func NewWhoamiRequest(server string) (*http.Request, error) {
 	var err error
@@ -2279,6 +2502,17 @@ type ClientWithResponsesInterface interface {
 	PutNetworkMemberWithBodyWithResponse(ctx context.Context, name Name, host Host, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutNetworkMemberResponse, error)
 
 	PutNetworkMemberWithResponse(ctx context.Context, name Name, host Host, body PutNetworkMemberJSONRequestBody, reqEditors ...RequestEditorFn) (*PutNetworkMemberResponse, error)
+
+	// ListNetworkReservationsWithResponse request
+	ListNetworkReservationsWithResponse(ctx context.Context, name Name, reqEditors ...RequestEditorFn) (*ListNetworkReservationsResponse, error)
+
+	// DeleteNetworkReservationWithResponse request
+	DeleteNetworkReservationWithResponse(ctx context.Context, name Name, mac Mac, reqEditors ...RequestEditorFn) (*DeleteNetworkReservationResponse, error)
+
+	// PutNetworkReservationWithBodyWithResponse request with any body
+	PutNetworkReservationWithBodyWithResponse(ctx context.Context, name Name, mac Mac, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutNetworkReservationResponse, error)
+
+	PutNetworkReservationWithResponse(ctx context.Context, name Name, mac Mac, body PutNetworkReservationJSONRequestBody, reqEditors ...RequestEditorFn) (*PutNetworkReservationResponse, error)
 
 	// WhoamiWithResponse request
 	WhoamiWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*WhoamiResponse, error)
@@ -2931,6 +3165,85 @@ func (r PutNetworkMemberResponse) StatusCode() int {
 	return 0
 }
 
+type ListNetworkReservationsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *NetworkReservationList
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON404      *NotFound
+	JSON500      *InternalError
+}
+
+// Status returns HTTPResponse.Status
+func (r ListNetworkReservationsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListNetworkReservationsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type DeleteNetworkReservationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON404      *NotFound
+	JSON500      *InternalError
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteNetworkReservationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteNetworkReservationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type PutNetworkReservationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *NetworkReservation
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON404      *NotFound
+	JSON409      *Error
+	JSON413      *TooLarge
+	JSON500      *InternalError
+}
+
+// Status returns HTTPResponse.Status
+func (r PutNetworkReservationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PutNetworkReservationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type WhoamiResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -3247,6 +3560,41 @@ func (c *ClientWithResponses) PutNetworkMemberWithResponse(ctx context.Context, 
 		return nil, err
 	}
 	return ParsePutNetworkMemberResponse(rsp)
+}
+
+// ListNetworkReservationsWithResponse request returning *ListNetworkReservationsResponse
+func (c *ClientWithResponses) ListNetworkReservationsWithResponse(ctx context.Context, name Name, reqEditors ...RequestEditorFn) (*ListNetworkReservationsResponse, error) {
+	rsp, err := c.ListNetworkReservations(ctx, name, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListNetworkReservationsResponse(rsp)
+}
+
+// DeleteNetworkReservationWithResponse request returning *DeleteNetworkReservationResponse
+func (c *ClientWithResponses) DeleteNetworkReservationWithResponse(ctx context.Context, name Name, mac Mac, reqEditors ...RequestEditorFn) (*DeleteNetworkReservationResponse, error) {
+	rsp, err := c.DeleteNetworkReservation(ctx, name, mac, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteNetworkReservationResponse(rsp)
+}
+
+// PutNetworkReservationWithBodyWithResponse request with arbitrary body returning *PutNetworkReservationResponse
+func (c *ClientWithResponses) PutNetworkReservationWithBodyWithResponse(ctx context.Context, name Name, mac Mac, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutNetworkReservationResponse, error) {
+	rsp, err := c.PutNetworkReservationWithBody(ctx, name, mac, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutNetworkReservationResponse(rsp)
+}
+
+func (c *ClientWithResponses) PutNetworkReservationWithResponse(ctx context.Context, name Name, mac Mac, body PutNetworkReservationJSONRequestBody, reqEditors ...RequestEditorFn) (*PutNetworkReservationResponse, error) {
+	rsp, err := c.PutNetworkReservation(ctx, name, mac, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutNetworkReservationResponse(rsp)
 }
 
 // WhoamiWithResponse request returning *WhoamiResponse
@@ -4575,6 +4923,175 @@ func ParsePutNetworkMemberResponse(rsp *http.Response) (*PutNetworkMemberRespons
 	return response, nil
 }
 
+// ParseListNetworkReservationsResponse parses an HTTP response from a ListNetworkReservationsWithResponse call
+func ParseListNetworkReservationsResponse(rsp *http.Response) (*ListNetworkReservationsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListNetworkReservationsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest NetworkReservationList
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteNetworkReservationResponse parses an HTTP response from a DeleteNetworkReservationWithResponse call
+func ParseDeleteNetworkReservationResponse(rsp *http.Response) (*DeleteNetworkReservationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteNetworkReservationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePutNetworkReservationResponse parses an HTTP response from a PutNetworkReservationWithResponse call
+func ParsePutNetworkReservationResponse(rsp *http.Response) (*PutNetworkReservationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PutNetworkReservationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest NetworkReservation
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest TooLarge
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseWhoamiResponse parses an HTTP response from a WhoamiWithResponse call
 func ParseWhoamiResponse(rsp *http.Response) (*WhoamiResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -4711,6 +5228,15 @@ type ServerInterface interface {
 	// Add a host to a network, or update its LAN address
 	// (PUT /v1/networks/{name}/members/{host})
 	PutNetworkMember(w http.ResponseWriter, r *http.Request, name Name, host Host)
+	// A network's recorded reservations
+	// (GET /v1/networks/{name}/reservations)
+	ListNetworkReservations(w http.ResponseWriter, r *http.Request, name Name)
+	// Remove a recorded reservation
+	// (DELETE /v1/networks/{name}/reservations/{mac})
+	DeleteNetworkReservation(w http.ResponseWriter, r *http.Request, name Name, mac Mac)
+	// Record a reservation of a network
+	// (PUT /v1/networks/{name}/reservations/{mac})
+	PutNetworkReservation(w http.ResponseWriter, r *http.Request, name Name, mac Mac)
 	// The name of the calling token
 	// (GET /v1/whoami)
 	Whoami(w http.ResponseWriter, r *http.Request)
@@ -5626,6 +6152,117 @@ func (siw *ServerInterfaceWrapper) PutNetworkMember(w http.ResponseWriter, r *ht
 	handler.ServeHTTP(w, r)
 }
 
+// ListNetworkReservations operation middleware
+func (siw *ServerInterfaceWrapper) ListNetworkReservations(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "name" -------------
+	var name Name
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListNetworkReservations(w, r, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteNetworkReservation operation middleware
+func (siw *ServerInterfaceWrapper) DeleteNetworkReservation(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "name" -------------
+	var name Name
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "mac" -------------
+	var mac Mac
+
+	err = runtime.BindStyledParameterWithOptions("simple", "mac", r.PathValue("mac"), &mac, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "mac", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteNetworkReservation(w, r, name, mac)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutNetworkReservation operation middleware
+func (siw *ServerInterfaceWrapper) PutNetworkReservation(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "name" -------------
+	var name Name
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "mac" -------------
+	var mac Mac
+
+	err = runtime.BindStyledParameterWithOptions("simple", "mac", r.PathValue("mac"), &mac, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "mac", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutNetworkReservation(w, r, name, mac)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // Whoami operation middleware
 func (siw *ServerInterfaceWrapper) Whoami(w http.ResponseWriter, r *http.Request) {
 
@@ -5805,6 +6442,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("GET "+options.BaseURL+"/v1/networks/{name}", wrapper.GetNetwork)
 	m.HandleFunc("DELETE "+options.BaseURL+"/v1/networks/{name}/members/{host}", wrapper.DeleteNetworkMember)
 	m.HandleFunc("PUT "+options.BaseURL+"/v1/networks/{name}/members/{host}", wrapper.PutNetworkMember)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/networks/{name}/reservations", wrapper.ListNetworkReservations)
+	m.HandleFunc("DELETE "+options.BaseURL+"/v1/networks/{name}/reservations/{mac}", wrapper.DeleteNetworkReservation)
+	m.HandleFunc("PUT "+options.BaseURL+"/v1/networks/{name}/reservations/{mac}", wrapper.PutNetworkReservation)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/whoami", wrapper.Whoami)
 	m.HandleFunc("GET "+options.BaseURL+"/version", wrapper.GetVersion)
 
@@ -7181,6 +7821,185 @@ func (response PutNetworkMember500JSONResponse) VisitPutNetworkMemberResponse(w 
 	return json.NewEncoder(w).Encode(response)
 }
 
+type ListNetworkReservationsRequestObject struct {
+	Name Name `json:"name"`
+}
+
+type ListNetworkReservationsResponseObject interface {
+	VisitListNetworkReservationsResponse(w http.ResponseWriter) error
+}
+
+type ListNetworkReservations200JSONResponse NetworkReservationList
+
+func (response ListNetworkReservations200JSONResponse) VisitListNetworkReservationsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ListNetworkReservations400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response ListNetworkReservations400JSONResponse) VisitListNetworkReservationsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ListNetworkReservations401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response ListNetworkReservations401JSONResponse) VisitListNetworkReservationsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ListNetworkReservations404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response ListNetworkReservations404JSONResponse) VisitListNetworkReservationsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ListNetworkReservations500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response ListNetworkReservations500JSONResponse) VisitListNetworkReservationsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteNetworkReservationRequestObject struct {
+	Name Name `json:"name"`
+	Mac  Mac  `json:"mac"`
+}
+
+type DeleteNetworkReservationResponseObject interface {
+	VisitDeleteNetworkReservationResponse(w http.ResponseWriter) error
+}
+
+type DeleteNetworkReservation204Response struct {
+}
+
+func (response DeleteNetworkReservation204Response) VisitDeleteNetworkReservationResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteNetworkReservation400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response DeleteNetworkReservation400JSONResponse) VisitDeleteNetworkReservationResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteNetworkReservation401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response DeleteNetworkReservation401JSONResponse) VisitDeleteNetworkReservationResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteNetworkReservation404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response DeleteNetworkReservation404JSONResponse) VisitDeleteNetworkReservationResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteNetworkReservation500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response DeleteNetworkReservation500JSONResponse) VisitDeleteNetworkReservationResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutNetworkReservationRequestObject struct {
+	Name Name `json:"name"`
+	Mac  Mac  `json:"mac"`
+	Body *PutNetworkReservationJSONRequestBody
+}
+
+type PutNetworkReservationResponseObject interface {
+	VisitPutNetworkReservationResponse(w http.ResponseWriter) error
+}
+
+type PutNetworkReservation200JSONResponse NetworkReservation
+
+func (response PutNetworkReservation200JSONResponse) VisitPutNetworkReservationResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutNetworkReservation400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PutNetworkReservation400JSONResponse) VisitPutNetworkReservationResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutNetworkReservation401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PutNetworkReservation401JSONResponse) VisitPutNetworkReservationResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutNetworkReservation404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response PutNetworkReservation404JSONResponse) VisitPutNetworkReservationResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutNetworkReservation409JSONResponse Error
+
+func (response PutNetworkReservation409JSONResponse) VisitPutNetworkReservationResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutNetworkReservation413JSONResponse struct{ TooLargeJSONResponse }
+
+func (response PutNetworkReservation413JSONResponse) VisitPutNetworkReservationResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(413)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutNetworkReservation500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response PutNetworkReservation500JSONResponse) VisitPutNetworkReservationResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
 type WhoamiRequestObject struct {
 }
 
@@ -7299,6 +8118,15 @@ type StrictServerInterface interface {
 	// Add a host to a network, or update its LAN address
 	// (PUT /v1/networks/{name}/members/{host})
 	PutNetworkMember(ctx context.Context, request PutNetworkMemberRequestObject) (PutNetworkMemberResponseObject, error)
+	// A network's recorded reservations
+	// (GET /v1/networks/{name}/reservations)
+	ListNetworkReservations(ctx context.Context, request ListNetworkReservationsRequestObject) (ListNetworkReservationsResponseObject, error)
+	// Remove a recorded reservation
+	// (DELETE /v1/networks/{name}/reservations/{mac})
+	DeleteNetworkReservation(ctx context.Context, request DeleteNetworkReservationRequestObject) (DeleteNetworkReservationResponseObject, error)
+	// Record a reservation of a network
+	// (PUT /v1/networks/{name}/reservations/{mac})
+	PutNetworkReservation(ctx context.Context, request PutNetworkReservationRequestObject) (PutNetworkReservationResponseObject, error)
 	// The name of the calling token
 	// (GET /v1/whoami)
 	Whoami(ctx context.Context, request WhoamiRequestObject) (WhoamiResponseObject, error)
@@ -8033,6 +8861,93 @@ func (sh *strictHandler) PutNetworkMember(w http.ResponseWriter, r *http.Request
 	}
 }
 
+// ListNetworkReservations operation middleware
+func (sh *strictHandler) ListNetworkReservations(w http.ResponseWriter, r *http.Request, name Name) {
+	var request ListNetworkReservationsRequestObject
+
+	request.Name = name
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListNetworkReservations(ctx, request.(ListNetworkReservationsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListNetworkReservations")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListNetworkReservationsResponseObject); ok {
+		if err := validResponse.VisitListNetworkReservationsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteNetworkReservation operation middleware
+func (sh *strictHandler) DeleteNetworkReservation(w http.ResponseWriter, r *http.Request, name Name, mac Mac) {
+	var request DeleteNetworkReservationRequestObject
+
+	request.Name = name
+	request.Mac = mac
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteNetworkReservation(ctx, request.(DeleteNetworkReservationRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteNetworkReservation")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteNetworkReservationResponseObject); ok {
+		if err := validResponse.VisitDeleteNetworkReservationResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PutNetworkReservation operation middleware
+func (sh *strictHandler) PutNetworkReservation(w http.ResponseWriter, r *http.Request, name Name, mac Mac) {
+	var request PutNetworkReservationRequestObject
+
+	request.Name = name
+	request.Mac = mac
+
+	var body PutNetworkReservationJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PutNetworkReservation(ctx, request.(PutNetworkReservationRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PutNetworkReservation")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PutNetworkReservationResponseObject); ok {
+		if err := validResponse.VisitPutNetworkReservationResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // Whoami operation middleware
 func (sh *strictHandler) Whoami(w http.ResponseWriter, r *http.Request) {
 	var request WhoamiRequestObject
@@ -8084,132 +8999,139 @@ func (sh *strictHandler) GetVersion(w http.ResponseWriter, r *http.Request) {
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"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",
-	"ANggum4DjwAA",
+	"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",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

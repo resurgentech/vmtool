@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/netip"
+	"sort"
 	"time"
 )
 
@@ -254,6 +256,10 @@ func (d *DB) DeleteNetwork(ctx context.Context, name string) error {
 	if n > 0 {
 		return ErrNetworkHasMembers
 	}
+	// A network with no members has no VMs on other hosts: its records go too.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM network_reservations WHERE network=?`, name); err != nil {
+		return fmt.Errorf("delete network: %w", err)
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM networks WHERE name=?`, name); err != nil {
 		return fmt.Errorf("delete network: %w", err)
 	}
@@ -299,4 +305,105 @@ func (d *DB) PutNetworkMember(ctx context.Context, network string, m NetworkMemb
 // DeleteNetworkMember removes host from the network, or returns ErrNotFound.
 func (d *DB) DeleteNetworkMember(ctx context.Context, network, host string) error {
 	return affected(d.sql.ExecContext(ctx, `DELETE FROM network_members WHERE network=? AND host=?`, network, host))
+}
+
+// ErrAddressTaken: another MAC holds that address on the network.
+var ErrAddressTaken = errors.New("address is taken")
+
+// NetworkReservation is the store's copy of one reservation of a network that
+// spans hosts: MAC (lower case) and address on a network, for a VM of a host.
+type NetworkReservation struct {
+	Network string
+	MAC     string
+	IP      string
+	Host    string
+	VM      string
+	Created time.Time
+}
+
+// PutNetworkReservation records r (idempotent per MAC: the same MAC takes the
+// new values and keeps its created time). ErrNotFound if there is no such
+// network; ErrAddressTaken if another MAC holds r.IP on it. r.Created is
+// ignored; the record is returned as stored.
+func (d *DB) PutNetworkReservation(ctx context.Context, r NetworkReservation) (NetworkReservation, error) {
+	tx, err := d.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return NetworkReservation{}, fmt.Errorf("put network reservation: %w", err)
+	}
+	defer tx.Rollback()
+	var n int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM networks WHERE name=?`, r.Network).Scan(&n); err != nil {
+		return NetworkReservation{}, fmt.Errorf("put network reservation: %w", err)
+	}
+	if n == 0 {
+		return NetworkReservation{}, ErrNotFound
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM network_reservations WHERE network=? AND ip=? AND mac<>?`, r.Network, r.IP, r.MAC).Scan(&n); err != nil {
+		return NetworkReservation{}, fmt.Errorf("put network reservation: %w", err)
+	}
+	if n > 0 {
+		return NetworkReservation{}, ErrAddressTaken
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO network_reservations(network, mac, ip, host, vm, created) VALUES (?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(network, mac) DO UPDATE SET ip=excluded.ip, host=excluded.host, vm=excluded.vm`,
+		r.Network, r.MAC, r.IP, r.Host, r.VM, d.stamp()); err != nil {
+		return NetworkReservation{}, fmt.Errorf("put network reservation: %w", err)
+	}
+	var created string
+	if err := tx.QueryRowContext(ctx, `SELECT created FROM network_reservations WHERE network=? AND mac=?`, r.Network, r.MAC).Scan(&created); err != nil {
+		return NetworkReservation{}, fmt.Errorf("put network reservation: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return NetworkReservation{}, fmt.Errorf("put network reservation: %w", err)
+	}
+	r.Created = parseTime(created)
+	return r, nil
+}
+
+// NetworkReservations lists a network's recorded reservations in address
+// order, or ErrNotFound if there is no such network.
+func (d *DB) NetworkReservations(ctx context.Context, network string) ([]NetworkReservation, error) {
+	var n int
+	if err := d.sql.QueryRowContext(ctx, `SELECT count(*) FROM networks WHERE name=?`, network).Scan(&n); err != nil {
+		return nil, fmt.Errorf("network reservations: %w", err)
+	}
+	if n == 0 {
+		return nil, ErrNotFound
+	}
+	rows, err := d.sql.QueryContext(ctx, `SELECT mac, ip, host, vm, created FROM network_reservations WHERE network=?`, network)
+	if err != nil {
+		return nil, fmt.Errorf("network reservations: %w", err)
+	}
+	defer rows.Close()
+	out := []NetworkReservation{}
+	for rows.Next() {
+		r := NetworkReservation{Network: network}
+		var created string
+		if err := rows.Scan(&r.MAC, &r.IP, &r.Host, &r.VM, &created); err != nil {
+			return nil, fmt.Errorf("network reservations: %w", err)
+		}
+		r.Created = parseTime(created)
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("network reservations: %w", err)
+	}
+	sort.Slice(out, func(i, j int) bool { return addrLess(out[i].IP, out[j].IP) })
+	return out, nil
+}
+
+// addrLess orders IPv4 addresses numerically (so .9 is before .10).
+func addrLess(a, b string) bool {
+	pa, ea := netip.ParseAddr(a)
+	pb, eb := netip.ParseAddr(b)
+	if ea != nil || eb != nil {
+		return a < b
+	}
+	return pa.Less(pb)
+}
+
+// DeleteNetworkReservation removes the record of mac, or returns ErrNotFound.
+func (d *DB) DeleteNetworkReservation(ctx context.Context, network, mac string) error {
+	return affected(d.sql.ExecContext(ctx, `DELETE FROM network_reservations WHERE network=? AND mac=?`, network, mac))
 }

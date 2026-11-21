@@ -369,11 +369,23 @@ func (e *env) service(inventory string) *app.Service {
 		HostNames:     e.resolver().AllNames(),
 		Images:        app.LocalImages{Dir: e.imageDir(), Pools: e.localImages},
 		Store:         e.session(),
+		// Networks that span hosts reach a network's home and its other members.
+		OpenHost: e.resolver().Resolve,
+		HostAddr: e.hostAddr,
 		// create's waits come from the workstation's config.yml (nil: 120s).
 		IPTimeout:  e.cfg.IPWait(),
 		SSHTimeout: e.cfg.SSHWait(),
 		Now:        e.now,
 	}).WithTunnel(t)
+}
+
+// hostAddr is the address config.yml gives host's daemon ("" for a host it does
+// not list).
+func (e *env) hostAddr(host string) string {
+	if e.cfg == nil {
+		return ""
+	}
+	return e.cfg.Hosts[host].Address
 }
 
 // imageDir is the config's resolved image_dir; "" when unset.
@@ -1062,7 +1074,7 @@ func interactiveCmd(e *env) *cobra.Command {
 func networksCmd(e *env) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "networks",
-		Short: "List available libvirt networks (vmtool's are marked)",
+		Short: "List available libvirt networks (vmtool's are marked, member forms too)",
 	}
 	host := hostFlag(cmd)
 	cmd.RunE = withHost(e, host, func(m app.Manager, cmd *cobra.Command, args []string) error {
@@ -1071,7 +1083,9 @@ func networksCmd(e *env) *cobra.Command {
 			return err
 		}
 		for _, n := range nets {
-			if n.Vmtool {
+			if n.Vmtool && n.Member {
+				fmt.Fprintf(cmd.OutOrStdout(), "%s (vmtool, member)\n", n.Name)
+			} else if n.Vmtool {
 				fmt.Fprintf(cmd.OutOrStdout(), "%s (vmtool)\n", n.Name)
 			} else {
 				fmt.Fprintln(cmd.OutOrStdout(), n.Name)
