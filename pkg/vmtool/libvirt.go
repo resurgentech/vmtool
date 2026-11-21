@@ -22,7 +22,7 @@ type Manager struct {
 // NewManager opens a connection to the local libvirt daemon and ensures
 // the default NAT network exists and is active.
 func NewManager() (*Manager, error) {
-	conn, err := libvirt.NewConnect("qemu:///system")
+	conn, err := connect("qemu:///system")
 	if err != nil {
 		return nil, fmt.Errorf("connecting to libvirt: %w", err)
 	}

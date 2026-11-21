@@ -295,10 +295,14 @@ func startEventLoop() error {
 // again). It opens a connection of its own; stop deregisters and closes it. fn
 // runs on libvirt's event goroutine and must not block.
 func WatchNetworkStarted(fn func(name string)) (stop func(), err error) {
+	// Refused under go test before the event loop touches the binding.
+	if err := refuseLibvirtInTest("qemu:///system"); err != nil {
+		return nil, err
+	}
 	if err := startEventLoop(); err != nil {
 		return nil, fmt.Errorf("libvirt event loop: %w", err)
 	}
-	conn, err := libvirt.NewConnect("qemu:///system")
+	conn, err := connect("qemu:///system")
 	if err != nil {
 		return nil, fmt.Errorf("connecting to libvirt: %w", err)
 	}
