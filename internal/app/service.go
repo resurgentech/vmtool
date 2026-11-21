@@ -57,6 +57,8 @@ type Service struct {
 	IPTimeout     time.Duration
 	// SSHTimeout bounds create's wait_ssh stage; zero means 120s.
 	SSHTimeout time.Duration
+	// SSHSleep replaces time.Sleep between SSH probes; tests pair it with Now.
+	SSHSleep func(time.Duration)
 	// HostNames are the local host and the configured hosts. Their
 	// .machines/<name>/ directories hold VM credentials, so AddMachine
 	// refuses them as machine names and migration leaves them alone.

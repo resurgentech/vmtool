@@ -37,15 +37,11 @@ func Stub(t *testing.T, scripts map[string]string) string {
 }
 
 // ansibleScript is the stub `ansible` and `ansible-playbook`. Each call appends
-// one line to the log (@LOG@): "wait <argv>" for wait_for_connection, "grow" for
-// the grow-disk shell command, "other <argv>" for anything else.
-// STUB_WAIT_FAIL / STUB_GROW_FAIL make the matching call exit 4 / 2 with
-// output; STUB_GROW_OUT is what a failing grow prints.
+// one line to the log (@LOG@): "grow" for the grow-disk shell command, "other
+// <argv>" for anything else. STUB_GROW_FAIL makes a grow exit 2 with output;
+// STUB_GROW_OUT is what it prints.
 const ansibleScript = `#!/bin/sh
 case "$*" in
-*wait_for_connection*)
-  echo "wait $*" >> '@LOG@'
-  if [ -n "$STUB_WAIT_FAIL" ]; then echo "wait boom: sshd not answering"; exit 4; fi ;;
 *growpart*)
   echo "grow" >> '@LOG@'
   if [ -n "$STUB_GROW_FAIL" ]; then echo "$STUB_GROW_OUT"; exit 2; fi ;;
@@ -55,12 +51,34 @@ esac
 exit 0
 `
 
-// Ansible installs stub `ansible` and `ansible-playbook` (see ansibleScript)
-// with Stub and returns the path of their call log.
+// sshScript is the stub `ssh`, the SSH wait's probe. Each call appends
+// "probe <argv>" to the log (@LOG@), or "probe (sshpass) <argv>" when SSHPASS
+// is set (it came through sshpass -e), and exits 0; with STUB_WAIT_FAIL set it
+// prints "wait boom: sshd not answering" and exits 255. sshpassScript runs
+// the stub ssh with the arguments after "-e ssh".
+const sshScript = `#!/bin/sh
+echo "probe ${SSHPASS:+(sshpass) }$*" >> '@LOG@'
+if [ -n "$STUB_WAIT_FAIL" ]; then echo "wait boom: sshd not answering"; exit 255; fi
+exit 0
+`
+
+const sshpassScript = `#!/bin/sh
+shift 2
+exec ssh "$@"
+`
+
+// Ansible installs stub `ansible`, `ansible-playbook`, `ssh` and `sshpass`
+// (see ansibleScript, sshScript) with Stub and returns the path of their
+// shared call log.
 func Ansible(t *testing.T) string {
 	t.Helper()
 	log := filepath.Join(t.TempDir(), "calls.log")
 	script := strings.ReplaceAll(ansibleScript, "@LOG@", log)
-	Stub(t, map[string]string{"ansible": script, "ansible-playbook": script})
+	Stub(t, map[string]string{
+		"ansible":          script,
+		"ansible-playbook": script,
+		"ssh":              strings.ReplaceAll(sshScript, "@LOG@", log),
+		"sshpass":          strings.ReplaceAll(sshpassScript, "@LOG@", log),
+	})
 	return log
 }

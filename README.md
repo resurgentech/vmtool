@@ -1091,7 +1091,9 @@ vmtool delete hv1/vm1                                      # removes vm1 and vm1
   says how to take one to another host.
 - **Timings.** `create` ends with one stdout line such as `timings: clone
   0.3s, start 1.1s, wait_ip 2.0s, wait_ssh 7.0s, grow_disk 0.6s, total 11.0s`
-  (the stages that ran; also after a failure). REST callers of `createVM` get
+  (the stages that ran; also after a failure). `wait_ssh` is a direct
+  `ssh ... true` through the tunnel (a login, not an open port; retried every
+  second up to `ssh_wait_seconds`), so it adds no Ansible start. REST callers of `createVM` get
   none: that route is a plain JSON call with no progress stream.
 
 ### Templates: save, export, pull
@@ -1273,8 +1275,8 @@ alone; it breaks when the VM is customised.
    extend to the end of the disk, ext4 or btrfs (xfs is not handled), with
    `growpart`, `findmnt`, `lsblk` and `resize2fs` (or `btrfs`) present
    (`growDiskCommand`, `pkg/vmtool/ansible.go`), and `python3`, which Ansible
-   needs for every step create runs after the address wait, the SSH wait
-   included. `--disk-size` grows the volume and then the guest; create's own
+   needs for every Ansible step create runs after the SSH wait (the wait is a
+   direct `ssh ... true`, not Ansible). `--disk-size` grows the volume and then the guest; create's own
    grow step runs only when `--disk-size` is given and not with `--no-wait`,
    and cloud-init's `growpart` does the same at first boot. *If not met:*
    create fails at `grow_disk` (`vmtool grow: cannot find root partition ...`

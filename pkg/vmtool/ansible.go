@@ -8,7 +8,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"time"
 )
 
 // extraVarPrefix names the environment variables that carry extra-var values.
@@ -189,26 +188,4 @@ func GrowDisk(t Tunnel, inventoryPath string) (string, error) {
 		return out, fmt.Errorf("growing disk: %w", err)
 	}
 	return out, nil
-}
-
-// WaitSSH blocks until ansible can reach the guest over SSH, for at most
-// timeout (`ansible all -m wait_for_connection -a timeout=<seconds>`). It uses
-// the same Tunnel environment and inventory as GrowDisk and returns ansible's
-// combined output, on failure too.
-func WaitSSH(t Tunnel, inventoryPath string, timeout time.Duration) (string, error) {
-	secs := int(timeout / time.Second)
-	if secs < 1 {
-		secs = 1
-	}
-	cmd, _ := command("ansible", "all",
-		"--inventory", inventoryPath,
-		"--module-name", "wait_for_connection",
-		"--args", fmt.Sprintf("timeout=%d", secs),
-	)
-	cmd.Env = ansibleEnv(t)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return string(out), fmt.Errorf("waiting for SSH: %w", err)
-	}
-	return string(out), nil
 }

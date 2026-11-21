@@ -2396,3 +2396,27 @@ are appended, never edited in; a hook refuses rewrites.
 - Red: pickIP returned 10.77.1.100 / 10.77.0.100 from card 2. Green; `just
   check` green.
 - Commits: the K1 commit on `clone-identity` (this entry rides in it).
+
+## 2026-11-21 — T12 Wait for SSH without starting Ansible
+
+- `wait_ssh` is now a direct login: `vmtool.WaitSSH(t, host, name, auth,
+  timeout, SSHClock)` (`pkg/vmtool/sshwait.go`) runs `ProbeSSH`, one `ssh
+  ... true` through the tunnel's ProxyCommand with create's `auth`, the
+  inventory's host-key options, `ConnectTimeout=2`, and `BatchMode=yes` for
+  a key login or `NumberOfPasswordPrompts=1` through `sshpass -e` for a
+  password login; retried every 1 s until `ssh_wait_seconds`; the last
+  attempt's output is kept. The Ansible `wait_for_connection` WaitSSH is
+  removed; create makes no temporary inventory for the wait (grow_disk and
+  the playbook still do). Error text and `Op: wait_ssh` unchanged.
+  `Service.SSHSleep` pairs with `Service.Now` as the wait's clock.
+- `testexec.Ansible` also stubs `ssh` and `sshpass` (log lines `probe
+  ...`; `STUB_WAIT_FAIL` makes ssh exit 255).
+- Tests: `pkg/vmtool/sshwait_test.go` (retries then succeeds, sshpass with
+  the password only in SSHPASS, timeout keeps last output, no ansible
+  started, bad tunnel/name refused); app tests for the password login, the
+  120 s default on a fake clock, failure text and Op, one probe shared by
+  grow and playbook. README timings note.
+- Red: app tests failing after the create.go switch; probe tests red with
+  the retry disabled (`attempts`, `sleeps = 0, want 2`). Green; `just
+  check` green.
+- Commits: the T12 commit on `clone-identity` (this entry rides in it).

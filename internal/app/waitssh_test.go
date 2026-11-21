@@ -60,29 +60,61 @@ func TestCreateWaitsForSSHBeforeGrow(t *testing.T) {
 	}
 	b, _ := os.ReadFile(log)
 	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
-	if len(lines) != 2 || !strings.HasPrefix(lines[0], "wait ") || !strings.Contains(lines[0], "timeout=45") || lines[1] != "grow" {
+	if len(lines) != 2 || !strings.HasPrefix(lines[0], "probe ") || !strings.HasSuffix(lines[0], " true") || lines[1] != "grow" {
 		t.Fatalf("calls = %q", lines)
+	}
+	if strings.Contains(lines[0], "wait_for_connection") {
+		t.Errorf("the wait went through ansible: %q", lines[0])
 	}
 	if got := stageSeq(evs); !strings.Contains(got, "wait_ip,wait_ssh") || !strings.HasSuffix(got, "wait_ssh,grow_disk") {
 		t.Errorf("stages = %s, want wait_ip then wait_ssh then grow_disk", got)
 	}
 }
 
+// fakeSSHTime gives svc a clock that advances only when the SSH wait sleeps,
+// and counts the sleeps.
+func fakeSSHTime(svc *Service) *int {
+	now := time.Unix(1000, 0)
+	n := new(int)
+	svc.Now = func() time.Time { return now }
+	svc.SSHSleep = func(d time.Duration) { now = now.Add(d); *n++ }
+	return n
+}
+
 func TestCreateDefaultSSHTimeout120(t *testing.T) {
+	sshStub(t)
+	t.Setenv("STUB_WAIT_FAIL", "1")
+	svc := &Service{}
+	sleeps := fakeSSHTime(svc)
+	err, _ := sshCreate(t, svc, CreateVMInput{DiskSizeGB: 20})
+	if err == nil || !strings.Contains(err.Error(), "within 2m0s") {
+		t.Fatalf("err = %v", err)
+	}
+	if *sleeps != 119 {
+		t.Errorf("sleeps = %d, want 119 (1 s retries over 120 s)", *sleeps)
+	}
+}
+
+// The probe uses the login create resolves from the config and the
+// credentials folder: a password goes through sshpass -e, never argv.
+func TestCreateWaitSSHPasswordLoginUsesSSHPass(t *testing.T) {
 	log := sshStub(t)
-	if err, _ := sshCreate(t, &Service{}, CreateVMInput{DiskSizeGB: 20}); err != nil {
+	if err, _ := sshCreate(t, &Service{}, CreateVMInput{SSHUser: "ops", SSHPass: "hunter2pw"}); err != nil {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(log)
-	if !strings.Contains(string(b), "timeout=120") {
-		t.Fatalf("calls = %q", b)
+	s := string(b)
+	if !strings.Contains(s, "probe (sshpass) ") || !strings.Contains(s, "-l ops") || strings.Contains(s, "hunter2pw") {
+		t.Fatalf("calls = %q", s)
 	}
 }
 
 func TestCreateWaitSSHFailureNamesVMAndWait(t *testing.T) {
 	log := sshStub(t)
 	t.Setenv("STUB_WAIT_FAIL", "1")
-	err, evs := sshCreate(t, &Service{SSHTimeout: 30 * time.Second}, CreateVMInput{DiskSizeGB: 20})
+	svc := &Service{SSHTimeout: 30 * time.Second}
+	fakeSSHTime(svc)
+	err, evs := sshCreate(t, svc, CreateVMInput{DiskSizeGB: 20})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -138,7 +170,7 @@ func TestCreateWithoutGrowOrPlaybookWaitsForSSH(t *testing.T) {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(log)
-	if lines := strings.Split(strings.TrimSpace(string(b)), "\n"); len(lines) != 1 || !strings.HasPrefix(lines[0], "wait ") {
+	if lines := strings.Split(strings.TrimSpace(string(b)), "\n"); len(lines) != 1 || !strings.HasPrefix(lines[0], "probe ") {
 		t.Errorf("calls = %q", lines)
 	}
 	if !strings.Contains(stageSeq(evs), "wait_ip,wait_ssh") {
@@ -158,7 +190,7 @@ func TestCreateWaitsForSSHBeforePlaybook(t *testing.T) {
 	}
 	b, _ := os.ReadFile(log)
 	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
-	if len(lines) != 2 || !strings.HasPrefix(lines[0], "wait ") || !strings.HasPrefix(lines[1], "other ") {
+	if len(lines) != 2 || !strings.HasPrefix(lines[0], "probe ") || !strings.HasPrefix(lines[1], "other ") {
 		t.Fatalf("calls = %q", lines)
 	}
 	if got := stageSeq(evs); !strings.Contains(got, "wait_ip,wait_ssh") {

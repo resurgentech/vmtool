@@ -164,7 +164,8 @@ func TestCreateLaterStageFailurePrintsExistsLine(t *testing.T) {
 func TestCreateWaitSSHFailurePrintsExistsLine(t *testing.T) {
 	installCreateFake(t, "10.0.0.5")
 	t.Setenv("STUB_WAIT_FAIL", "1")
-	r := runCreate(t, "", "--inventory", "")
+	// A 1 s wait is one probe: the retry would end past the deadline.
+	r := runCreate(t, "ssh_wait_seconds: 1\n", "--inventory", "")
 	if r.err == nil || !strings.Contains(r.err.Error(), "did not accept SSH") {
 		t.Fatalf("err = %v", r.err)
 	}

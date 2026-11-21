@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/jaredeh/vmtool/internal/testexec"
 )
@@ -84,10 +83,7 @@ func noSentinel(t *testing.T, sentinel string) {
 func TestGuardRefusesRealToolsWithoutStub(t *testing.T) {
 	sentinel := sentinelPath(t)
 
-	_, err := WaitSSH(Tunnel{}, "/nonexistent/inv.yml", time.Second)
-	wantRefused(t, "WaitSSH", "ansible", err)
-
-	_, err = GrowDisk(Tunnel{}, "/nonexistent/inv.yml")
+	_, err := GrowDisk(Tunnel{}, "/nonexistent/inv.yml")
 	wantRefused(t, "GrowDisk", "ansible", err)
 
 	_, err = RunPlaybook(Tunnel{}, "/nonexistent/inv.yml", "pb.yml", nil)
@@ -135,9 +131,6 @@ func TestGuardAllowsOnlyTheStubDirectory(t *testing.T) {
 func TestGuardRunsInstalledStubs(t *testing.T) {
 	sentinelPath(t)
 	log := testexec.Ansible(t)
-	if _, err := WaitSSH(Tunnel{}, "/nonexistent/inv.yml", 5*time.Second); err != nil {
-		t.Fatalf("WaitSSH with the stub: %v", err)
-	}
 	if _, err := GrowDisk(Tunnel{}, "/nonexistent/inv.yml"); err != nil {
 		t.Fatalf("GrowDisk with the stub: %v", err)
 	}
@@ -146,7 +139,7 @@ func TestGuardRunsInstalledStubs(t *testing.T) {
 	}
 	b, _ := os.ReadFile(log)
 	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
-	if len(lines) != 3 || !strings.HasPrefix(lines[0], "wait ") || lines[1] != "grow" || !strings.HasPrefix(lines[2], "other ") {
+	if len(lines) != 2 || lines[0] != "grow" || !strings.HasPrefix(lines[1], "other ") {
 		t.Fatalf("stub calls = %q", lines)
 	}
 

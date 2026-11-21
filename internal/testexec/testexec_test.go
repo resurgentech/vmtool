@@ -52,7 +52,6 @@ func TestAnsibleLogsCalls(t *testing.T) {
 	log := Ansible(t)
 	dir := os.Getenv(StubsEnv)
 	for _, args := range [][]string{
-		{"all", "--module-name", "wait_for_connection"},
 		{"all", "--args", "growpart x"},
 	} {
 		if out, err := run(t, dir, "ansible", args...); err != nil {
@@ -62,14 +61,21 @@ func TestAnsibleLogsCalls(t *testing.T) {
 	if out, err := run(t, dir, "ansible-playbook", "pb.yml"); err != nil {
 		t.Fatalf("ansible-playbook: %v %s", err, out)
 	}
+	if out, err := run(t, dir, "ssh", "-o", "X=1", "h", "true"); err != nil {
+		t.Fatalf("ssh: %v %s", err, out)
+	}
+	if out, err := run(t, dir, "sshpass", "-e", "ssh", "h", "true"); err != nil {
+		t.Fatalf("sshpass: %v %s", err, out)
+	}
 	t.Setenv("STUB_WAIT_FAIL", "1")
-	out, err := run(t, dir, "ansible", "wait_for_connection")
+	out, err := run(t, dir, "ssh", "h", "true")
 	if err == nil || !strings.Contains(string(out), "sshd not answering") {
 		t.Fatalf("STUB_WAIT_FAIL: %v %s", err, out)
 	}
 	b, _ := os.ReadFile(log)
 	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
-	if len(lines) != 4 || !strings.HasPrefix(lines[0], "wait ") || lines[1] != "grow" || lines[2] != "other pb.yml" {
+	if len(lines) != 5 || lines[0] != "grow" || lines[1] != "other pb.yml" || lines[2] != "probe -o X=1 h true" ||
+		lines[3] != "probe h true" || lines[4] != "probe h true" {
 		t.Fatalf("log = %q", lines)
 	}
 }

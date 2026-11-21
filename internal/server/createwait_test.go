@@ -92,7 +92,11 @@ func TestCreateVMNoWaitWithPlaybookIs400(t *testing.T) {
 func TestCreateVMWaitSSHFailureIs500WithVM(t *testing.T) {
 	t.Setenv("STUB_WAIT_FAIL", "1")
 	fm := &fakeMgr{ip: "10.0.0.5"}
-	h := createServer(t, fm, &app.Service{})
+	now := time.Unix(1000, 0)
+	h := createServer(t, fm, &app.Service{
+		Now:      func() time.Time { return now },
+		SSHSleep: func(d time.Duration) { now = now.Add(d) },
+	})
 	rec := do(h, "POST", "/v1/hosts/box/vms", `{"name":"web","image":"u.qcow2"}`)
 	if rec.Code != 500 || !strings.Contains(rec.Body.String(), "did not accept SSH") || !strings.Contains(rec.Body.String(), `"vm"`) {
 		t.Fatalf("%d %s", rec.Code, rec.Body)

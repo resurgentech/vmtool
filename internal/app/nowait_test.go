@@ -233,15 +233,17 @@ func TestCreateWaitsForSSHOnEveryCreate(t *testing.T) {
 		t.Fatal(r.err)
 	}
 	calls := r.ansibleCalls()
-	if len(calls) != 1 || !strings.HasPrefix(calls[0], "wait ") {
-		t.Fatalf("ansible calls = %q, want one wait_for_connection", calls)
+	if len(calls) != 1 || !strings.HasPrefix(calls[0], "probe ") {
+		t.Fatalf("calls = %q, want one ssh probe and no ansible", calls)
 	}
 }
 
 func TestCreateWaitSSHFailureLeavesVM(t *testing.T) {
 	t.Setenv("STUB_WAIT_FAIL", "1")
 	m := &nwVMs{createVMs: createVMs{ip: "10.0.0.5"}}
-	r := nwCreate(t, m, &Service{SSHTimeout: 2 * time.Minute}, CreateVMInput{})
+	svc := &Service{SSHTimeout: 2 * time.Minute}
+	fakeSSHTime(svc)
+	r := nwCreate(t, m, svc, CreateVMInput{})
 	if r.info == nil || r.info.Name != "web" {
 		t.Fatalf("VM info not returned: %+v", r.info)
 	}
@@ -269,13 +271,15 @@ func TestCreateGrowAndPlaybookShareOneWait(t *testing.T) {
 	if r.err != nil {
 		t.Fatal(r.err)
 	}
-	var waits int
+	var waits, ansible int
 	for _, c := range r.ansibleCalls() {
-		if strings.HasPrefix(c, "wait ") {
+		if strings.HasPrefix(c, "probe ") {
 			waits++
+		} else {
+			ansible++
 		}
 	}
-	if waits != 1 {
-		t.Errorf("%d waits, want 1: %q", waits, r.ansibleCalls())
+	if waits != 1 || ansible != 2 {
+		t.Errorf("%d probes, %d ansible calls, want 1 and 2 (grow, playbook): %q", waits, ansible, r.ansibleCalls())
 	}
 }

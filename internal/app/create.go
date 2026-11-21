@@ -484,14 +484,10 @@ func (s *Service) CreateVM(ctx context.Context, m Manager, in CreateVMInput) (*v
 	// An address is not sshd: wait for the guest to accept SSH, on every
 	// create. The grow and the playbook then run without a second wait.
 	emit(in, "wait_ssh", "start", "waiting for SSH", "")
-	invPath, cleanup, err := vmtool.TempVMInventory(s.Tunnel, ref.Host, ref.Name, auth, credsDir)
-	if err != nil {
-		emit(in, "wait_ssh", "error", err.Error(), "")
-		return info, wrap("create", err)
-	}
+	// A direct ssh login (no Ansible start): it proves a login, not a port.
 	sshTimeout := s.sshTimeout()
-	out, err := vmtool.WaitSSH(s.Tunnel, invPath, sshTimeout)
-	cleanup()
+	out, err := vmtool.WaitSSH(s.Tunnel, ref.Host, ref.Name, auth, sshTimeout,
+		vmtool.SSHClock{Now: s.Now, Sleep: s.SSHSleep})
 	if err != nil {
 		err = fmt.Errorf("%s did not accept SSH within %s (%w); the VM exists and is running: delete it, or create with --no-wait for a guest vmtool cannot reach by SSH", ref, sshTimeout, err)
 		emit(in, "wait_ssh", "error", err.Error(), out)
