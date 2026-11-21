@@ -164,7 +164,7 @@ func mkNet(name, bridge, subnet string) NetworkInfo {
 }
 
 func TestPlanNetworkFirstFree(t *testing.T) {
-	s, err := PlanNetwork("net1", "", "", nil, nil)
+	s, err := PlanNetwork("net1", "", "", nil, nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +177,7 @@ func TestPlanNetworkFirstFree(t *testing.T) {
 		mkNet("b", "vmt-000003", "10.77.2.0/24"),
 	}
 	routes := []netip.Prefix{netip.MustParsePrefix("10.77.1.0/24"), netip.MustParsePrefix("10.77.3.128/25")}
-	s, err = PlanNetwork("net2", "", "lab.example", existing, routes)
+	s, err = PlanNetwork("net2", "", "lab.example", existing, routes, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,46 +195,46 @@ func TestPlanNetworkFirstFree(t *testing.T) {
 
 func TestPlanNetworkGivenSubnet(t *testing.T) {
 	existing := []NetworkInfo{mkNet("a", "vmt-000001", "10.77.5.0/24")}
-	s, err := PlanNetwork("net1", "10.77.9.0/24", "", existing, nil)
+	s, err := PlanNetwork("net1", "10.77.9.0/24", "", existing, nil, 0)
 	if err != nil || s.Subnet.String() != "10.77.9.0/24" {
 		t.Fatalf("free subnet: %+v, %v", s, err)
 	}
-	_, err = PlanNetwork("net1", "10.77.5.0/24", "", existing, nil)
+	_, err = PlanNetwork("net1", "10.77.5.0/24", "", existing, nil, 0)
 	if !errors.Is(err, ErrSubnetOverlap) || !strings.Contains(err.Error(), `"a"`) || !strings.Contains(err.Error(), "10.77.5.0/24") {
 		t.Errorf("overlap with a network: %v", err)
 	}
-	_, err = PlanNetwork("net1", "192.0.2.0/24", "", nil, []netip.Prefix{netip.MustParsePrefix("192.0.2.0/23")})
+	_, err = PlanNetwork("net1", "192.0.2.0/24", "", nil, []netip.Prefix{netip.MustParsePrefix("192.0.2.0/23")}, 0)
 	if !errors.Is(err, ErrSubnetOverlap) || !strings.Contains(err.Error(), "route 192.0.2.0/23") {
 		t.Errorf("overlap with a route: %v", err)
 	}
 	for _, bad := range []string{"10.77.9.0/16", "10.77.9.0/25", "10.77.9.5/24", "x", "fd00::/24"} {
-		if _, err := PlanNetwork("net1", bad, "", nil, nil); !errors.Is(err, ErrInvalidNetwork) {
+		if _, err := PlanNetwork("net1", bad, "", nil, nil, 0); !errors.Is(err, ErrInvalidNetwork) {
 			t.Errorf("subnet %q: err = %v", bad, err)
 		}
 	}
 }
 
 func TestPlanNetworkRefusals(t *testing.T) {
-	if _, err := PlanNetwork("default", "", "", nil, nil); !errors.Is(err, ErrInvalidNetwork) {
+	if _, err := PlanNetwork("default", "", "", nil, nil, 0); !errors.Is(err, ErrInvalidNetwork) {
 		t.Errorf("default: %v", err)
 	}
-	if _, err := PlanNetwork("bad name", "", "", nil, nil); !errors.Is(err, ErrInvalidNetwork) {
+	if _, err := PlanNetwork("bad name", "", "", nil, nil, 0); !errors.Is(err, ErrInvalidNetwork) {
 		t.Errorf("bad name: %v", err)
 	}
-	if _, err := PlanNetwork("net1", "", "bad domain", nil, nil); !errors.Is(err, ErrInvalidNetwork) {
+	if _, err := PlanNetwork("net1", "", "bad domain", nil, nil, 0); !errors.Is(err, ErrInvalidNetwork) {
 		t.Errorf("bad domain: %v", err)
 	}
-	if _, err := PlanNetwork("a_b", "", "", nil, nil); !errors.Is(err, ErrInvalidNetwork) {
+	if _, err := PlanNetwork("a_b", "", "", nil, nil, 0); !errors.Is(err, ErrInvalidNetwork) {
 		t.Errorf("a_b makes no DNS domain: %v", err)
 	}
-	if _, err := PlanNetwork("a_b", "", "ok.test", nil, nil); err != nil {
+	if _, err := PlanNetwork("a_b", "", "ok.test", nil, nil, 0); err != nil {
 		t.Errorf("a_b with a domain: %v", err)
 	}
-	if _, err := PlanNetwork("net1", "", "", []NetworkInfo{mkNet("net1", "virbr1", "192.0.2.0/24")}, nil); !errors.Is(err, ErrNetworkExists) {
+	if _, err := PlanNetwork("net1", "", "", []NetworkInfo{mkNet("net1", "virbr1", "192.0.2.0/24")}, nil, 0); !errors.Is(err, ErrNetworkExists) {
 		t.Errorf("existing name: %v", err)
 	}
 	all := []netip.Prefix{netip.MustParsePrefix("10.77.0.0/16")}
-	if _, err := PlanNetwork("net1", "", "", nil, all); !errors.Is(err, ErrNoFreeSubnet) {
+	if _, err := PlanNetwork("net1", "", "", nil, all, 0); !errors.Is(err, ErrNoFreeSubnet) {
 		t.Errorf("no room: %v", err)
 	}
 }
@@ -256,5 +256,29 @@ func TestCheckNetworkDeletable(t *testing.T) {
 	err = CheckNetworkDeletable(n)
 	if !errors.Is(err, ErrNetworkInUse) || !strings.Contains(err.Error(), "vm1") || !strings.Contains(err.Error(), "vm2") {
 		t.Errorf("attached: %v", err)
+	}
+}
+
+func TestPlanNetworkGivenBridgeNumber(t *testing.T) {
+	existing := []NetworkInfo{mkNet("a", "vmt-000001", "10.77.0.0/24"), mkNet("b", "vmt-002710", "10.77.1.0/24")}
+	s, err := PlanNetwork("net1", "10.77.2.0/24", "", existing, nil, 10001)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Bridge != "vmt-002711" || s.Subnet.String() != "10.77.2.0/24" {
+		t.Errorf("given number: %+v, want bridge vmt-002711", s)
+	}
+	// The given number is used as it is, whatever is free below it.
+	if s, err = PlanNetwork("net1", "", "", nil, nil, 5); err != nil || s.Bridge != "vmt-000005" {
+		t.Errorf("number 5: %+v, %v", s, err)
+	}
+	// A bridge of that number already on the host is a conflict (409), named.
+	_, err = PlanNetwork("net1", "10.77.2.0/24", "", existing, nil, 10000)
+	if !errors.Is(err, ErrNetworkExists) || !strings.Contains(err.Error(), "vmt-002710") {
+		t.Errorf("bridge in use: %v, want ErrNetworkExists naming vmt-002710", err)
+	}
+	// Beyond 24 bits is not a bridge name.
+	if _, err := PlanNetwork("net1", "", "", nil, nil, 1<<24); !errors.Is(err, ErrInvalidNetwork) {
+		t.Errorf("number 1<<24: %v, want ErrInvalidNetwork", err)
 	}
 }

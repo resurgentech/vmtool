@@ -115,6 +115,14 @@ func (m *Manager) Network(name string) (*NetworkInfo, error) {
 // An empty subnet is the first free /24 of NetworkBaseCIDR; an empty domain is
 // <name>.test. See PlanNetwork for what is refused.
 func (m *Manager) CreateNetwork(name, subnet, domain string) (*NetworkInfo, error) {
+	return m.CreateNetworkVNI(name, subnet, domain, 0)
+}
+
+// CreateNetworkVNI is CreateNetwork on the bridge number the caller gives
+// (vmt- plus vni as six hex digits), which the store's registry allocates; 0
+// is the host's own lowest free number from 1. A bridge of that number that
+// the host already has is refused (ErrNetworkExists).
+func (m *Manager) CreateNetworkVNI(name, subnet, domain string, vni uint32) (*NetworkInfo, error) {
 	existing, err := m.allNetworkInfos()
 	if err != nil {
 		return nil, err
@@ -123,7 +131,7 @@ func (m *Manager) CreateNetwork(name, subnet, domain string) (*NetworkInfo, erro
 	if err != nil {
 		return nil, err
 	}
-	spec, err := PlanNetwork(name, subnet, domain, existing, routes)
+	spec, err := PlanNetwork(name, subnet, domain, existing, routes, vni)
 	if err != nil {
 		return nil, err
 	}

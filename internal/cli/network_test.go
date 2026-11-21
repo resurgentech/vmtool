@@ -151,3 +151,19 @@ func TestNetworksMarksVmtoolNetworks(t *testing.T) {
 		t.Errorf("output %q", r.out)
 	}
 }
+
+// V3: the help says where the number and the subnet come from in each mode.
+func TestNetCreateHelpNamesTheRegistry(t *testing.T) {
+	t.Setenv(config.TokenEnv, gateToken)
+	dir := writeWorkdir(t, "name: jetfire\n"+goodConfig(), "")
+	installFakeHosts(t)
+	r := runGate(t, dir, netKeep, "net", "create", "--help")
+	if r.err != nil {
+		t.Fatal(r.err)
+	}
+	for _, want := range []string{"registry", "bridge number", "VNI", "10000"} {
+		if !strings.Contains(r.out, want) {
+			t.Errorf("help lacks %q:\n%s", want, r.out)
+		}
+	}
+}

@@ -502,6 +502,11 @@ func (h hypervisorPools) RefreshPool(pool string) error {
 	return nil
 }
 
+// CreateNetworkVNI keeps app.VNICreator visible through the wrapper.
+func (h hypervisorPools) CreateNetworkVNI(name, subnet, domain string, vni uint32) (*vmtool.NetworkInfo, error) {
+	return app.ForwardCreateNetworkVNI(h.Manager, name, subnet, domain, vni)
+}
+
 // defaultPools applies a host's config.yml default_pool: an empty pool becomes
 // pool for the operations that put a new VM disk somewhere (CloneImage target,
 // CreateVolume, AddDisk, Define's Pool). Everything else (images, ListPools,
@@ -581,6 +586,11 @@ func (d defaultPools) RefreshPool(pool string) error {
 		return r.RefreshPool(pool)
 	}
 	return nil
+}
+
+// CreateNetworkVNI keeps app.VNICreator visible through the wrapper.
+func (d defaultPools) CreateNetworkVNI(name, subnet, domain string, vni uint32) (*vmtool.NetworkInfo, error) {
+	return app.ForwardCreateNetworkVNI(d.Manager, name, subnet, domain, vni)
 }
 
 // Probe keeps app.Prober visible through the wrapper, so a remote host with a

@@ -88,11 +88,22 @@ func (m *Manager) DetachInterface(vm, mac string) error {
 
 // CreateNetwork makes a vmtool network on the host (createNetwork).
 func (m *Manager) CreateNetwork(name, subnet, domain string) (*vmtool.NetworkInfo, error) {
+	return m.CreateNetworkVNI(name, subnet, domain, 0)
+}
+
+// CreateNetworkVNI is CreateNetwork on the bridge number the caller gives (the
+// store registry's); 0 sends none and the host numbers the bridge itself. A
+// daemon that predates the field ignores it: the caller compares the bridge
+// of the network that comes back.
+func (m *Manager) CreateNetworkVNI(name, subnet, domain string, vni uint32) (*vmtool.NetworkInfo, error) {
 	var v api.NetworkInfo
+	req := api.CreateNetworkRequest{Name: name, Subnet: nonEmpty(subnet), Domain: nonEmpty(domain)}
+	if vni != 0 {
+		n := int(vni)
+		req.Vni = &n
+	}
 	err := m.call("createNetwork", m.timeout, &v, func(ctx context.Context) (*http.Response, error) {
-		return m.client.CreateNetwork(ctx, m.name, api.CreateNetworkRequest{
-			Name: name, Subnet: nonEmpty(subnet), Domain: nonEmpty(domain),
-		})
+		return m.client.CreateNetwork(ctx, m.name, req)
 	})
 	if err != nil {
 		return nil, err

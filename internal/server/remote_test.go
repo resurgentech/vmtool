@@ -115,6 +115,20 @@ func rtNet(name string) *vmtool.NetworkInfo {
 
 func (f *rtMgr) CreateNetwork(name, subnet, domain string) (*vmtool.NetworkInfo, error) {
 	f.rec("CreateNetwork %s %s %s", name, subnet, domain)
+	return f.createNetwork(name, subnet, domain)
+}
+
+// CreateNetworkVNI is the registry's number given: the bridge is vmt- of it.
+func (f *rtMgr) CreateNetworkVNI(name, subnet, domain string, vni uint32) (*vmtool.NetworkInfo, error) {
+	f.rec("CreateNetworkVNI %s %s %s %d", name, subnet, domain, vni)
+	n, err := f.createNetwork(name, subnet, domain)
+	if err == nil {
+		n.Bridge, n.VNI = vmtool.BridgeName(vni), vni
+	}
+	return n, err
+}
+
+func (f *rtMgr) createNetwork(name, subnet, domain string) (*vmtool.NetworkInfo, error) {
 	switch name {
 	case "taken":
 		return nil, fmt.Errorf("a libvirt network named %q already exists: %w", name, vmtool.ErrNetworkExists)

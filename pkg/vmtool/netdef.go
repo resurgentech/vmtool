@@ -257,8 +257,10 @@ func ParseProcNetRoute(s string) ([]netip.Prefix, error) {
 // domain, refuses a name a libvirt network already has, takes the given
 // subnet (refusing one that overlaps a libvirt network or a route on the host,
 // naming the overlap) or the first /24 of NetworkBaseCIDR that none uses, and
-// the lowest free bridge number from 1 (below the registry's 10000 up).
-func PlanNetwork(name, subnet, domain string, existing []NetworkInfo, routes []netip.Prefix) (NetworkSpec, error) {
+// the lowest free bridge number from 1 (below the registry's 10000 up). A
+// non-zero vni is the bridge number to use instead (the registry's, 24 bits):
+// a bridge of that number already on the host is refused (ErrNetworkExists).
+func PlanNetwork(name, subnet, domain string, existing []NetworkInfo, routes []netip.Prefix, vni uint32) (NetworkSpec, error) {
 	if !ValidNetworkName(name) {
 		return NetworkSpec{}, invalidNetwork("name %q: letters, digits, '.', '_', '-', up to %d characters, and not \"default\"", name, maxNetworkName)
 	}
@@ -319,6 +321,15 @@ func PlanNetwork(name, subnet, domain string, existing []NetworkInfo, routes []n
 		if v, ok := BridgeVNI(n.Bridge); ok {
 			used[v] = true
 		}
+	}
+	if vni != 0 {
+		if vni > maxVNI {
+			return NetworkSpec{}, invalidNetwork("bridge number %d is beyond %d (24 bits)", vni, maxVNI)
+		}
+		if used[vni] {
+			return NetworkSpec{}, fmt.Errorf("%w: a bridge %s already exists on this host", ErrNetworkExists, BridgeName(vni))
+		}
+		return NetworkSpec{Name: name, Bridge: BridgeName(vni), Subnet: pick, Domain: domain}, nil
 	}
 	for v := uint32(1); v <= maxLocalBridgeNumber; v++ {
 		if !used[v] {

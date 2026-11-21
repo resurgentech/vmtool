@@ -98,3 +98,44 @@ func TestNetworkRoutesNeedBearer(t *testing.T) {
 		t.Error("a wrong token was accepted")
 	}
 }
+
+// V3: the daemon's createNetwork passes the network number and the subnet to
+// the host's Manager, and never needs a store.
+func TestNetworkRouteWithVNI(t *testing.T) {
+	t.Chdir(t.TempDir())
+	fm := newRTMgr(t)
+	srv, pool, _ := hypervisor(t, fm, testToken)
+	m := remoteFor(t, srv, pool, testToken)
+
+	n, err := m.CreateNetworkVNI("net1", "10.77.1.0/24", "lab.example", 10001)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n.Bridge != "vmt-002711" || n.VNI != 10001 {
+		t.Errorf("network = %+v, want bridge vmt-002711", n)
+	}
+	if g, want := fm.got(), []string{"CreateNetworkVNI net1 10.77.1.0/24 lab.example 10001"}; !reflect.DeepEqual(g, want) {
+		t.Errorf("calls %q, want %q", g, want)
+	}
+	// A bridge number the host already has is its 409, with the cause.
+	fm.reset()
+	_, err = m.CreateNetworkVNI("taken", "", "", 10002)
+	var ae *app.Error
+	if !app.AsError(err, &ae) || ae.Kind != app.KindConflict {
+		t.Errorf("taken: %v", err)
+	}
+	// A number beyond 24 bits is 400 and never reaches the host.
+	fm.reset()
+	_, err = m.CreateNetworkVNI("net1", "", "", 1<<24)
+	if !app.AsError(err, &ae) || ae.Kind != app.KindInvalid || len(fm.got()) != 0 {
+		t.Errorf("vni 1<<24: %v, calls %q", err, fm.got())
+	}
+	// Without a number the host numbers itself.
+	fm.reset()
+	if _, err := m.CreateNetwork("net2", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if g, want := fm.got(), []string{"CreateNetwork net2  "}; !reflect.DeepEqual(g, want) {
+		t.Errorf("calls %q, want %q", g, want)
+	}
+}

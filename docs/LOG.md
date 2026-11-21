@@ -2141,3 +2141,26 @@ are appended, never edited in; a hook refuses rewrites.
   body was read", :768). Green: `-count=500`, and `-count=500 -race`;
   `just check` green.
 - Commits: the F4 commit on `clone-identity`.
+
+## 2026-11-21 — V3 The network registry in the store (finished)
+
+- The remaining hop to the host: vmtool.yaml 2.7.0 `CreateNetworkRequest`
+  gains optional `vni` (1–16777215; bridge `vmt-%06x` of it);
+  `PlanNetwork` takes a given number (409 if that bridge exists on the
+  host); `pkg/vmtool.Manager.CreateNetworkVNI`; the `internal/hosts`
+  wrappers forward it (`app.ForwardCreateNetworkVNI`); `internal/remote`
+  sends `vni`; the daemon route passes `vni` and the subnet through
+  (`Service.CreateNetworkWithVNI`, never calls the store; 400 out of range).
+- Store-mode `net create` registers, then the host defines bridge
+  `vmt-%06x` of the registry's VNI with its /24. An older daemon that
+  ignores `vni` is detected by the returned bridge: its network and the
+  registry entry are removed and the error says to redeploy the host. A
+  Manager with no `CreateNetworkVNI` is refused before registering. The
+  interim "not registered" line is gone; `spec/README.md` and `net create`
+  help say what happens.
+- Tests: an end-to-end test with the real store in httptest and a fake host
+  running the real `PlanNetwork`; the old-host undo; host 409/400 keep their
+  cause; `PlanNetwork` with a given number; remote sends `vni`; the server
+  passes it. Red: assertion failures (app, remote, server, cli); green;
+  `just check` green.
+- Commits: the V3 commit on `clone-identity`.

@@ -117,12 +117,16 @@ type vniMgr struct {
 	netMgr
 	vniCalls []string
 	vniErr   error
+	oldHost  bool // a daemon that predates the vni field: it numbers the bridge itself
 }
 
 func (f *vniMgr) CreateNetworkVNI(name, subnet, domain string, vni uint32) (*vmtool.NetworkInfo, error) {
 	f.vniCalls = append(f.vniCalls, fmt.Sprintf("create %s %s %s %d", name, subnet, domain, vni))
 	if f.vniErr != nil {
 		return nil, f.vniErr
+	}
+	if f.oldHost {
+		vni = 1
 	}
 	return &vmtool.NetworkInfo{Name: name, Bridge: vmtool.BridgeName(vni), VNI: vni, Vmtool: true, Subnet: subnet, Domain: domain}, nil
 }
@@ -273,23 +277,100 @@ func TestCreateNetworkWithoutARegistryIsV1(t *testing.T) {
 	}
 }
 
-// A host that cannot take a registry VNI (every Manager today) still gets the
-// network, made as V1 makes it, and the user is told it is not registered.
-func TestCreateNetworkHostWithoutVNISupportIsNotRegistered(t *testing.T) {
+// A host whose Manager cannot take a number at all (a fake; every real
+// Manager can) is refused before anything is registered or made.
+func TestCreateNetworkHostWithoutVNISupportIsRefused(t *testing.T) {
 	f := newRegStore(t)
 	var notes []string
 	s := &Service{Store: f.session(&notes)}
-	want := &vmtool.NetworkInfo{Name: "net1", Bridge: "vmt-000001", Vmtool: true}
-	m := &netMgr{info: want}
-	got, err := s.CreateNetworkOnHost(context.Background(), "home1", m, "net1", "", "")
-	if err != nil || got != want || len(m.calls) != 1 {
-		t.Fatalf("got %v %v, calls %v", got, err, m.calls)
+	m := &netMgr{info: &vmtool.NetworkInfo{Name: "net1"}}
+	_, err := s.CreateNetworkOnHost(context.Background(), "home1", m, "net1", "", "")
+	if err == nil || !strings.Contains(err.Error(), "host home1 runs a vmtool that cannot take a network number; redeploy it (just deploy home1)") {
+		t.Fatalf("err = %v", err)
 	}
-	if len(f.posts()) != 0 {
-		t.Errorf("registered a network the host numbered itself: %v", f.posts())
+	if len(m.calls) != 0 || len(f.posts()) != 0 || len(notes) != 0 {
+		t.Errorf("host calls %v, posts %v, notes %v; want none", m.calls, f.posts(), notes)
 	}
-	if len(notes) != 1 || !strings.Contains(notes[0], "not registered") {
-		t.Errorf("notes = %v, want one line saying it is not registered", notes)
+}
+
+// An older daemon ignores the unknown vni field and numbers the bridge
+// itself: the network it made is deleted again, and so is the registry entry.
+func TestCreateNetworkOldHostIsUndone(t *testing.T) {
+	f := newRegStore(t)
+	s := &Service{Store: f.session(nil)}
+	m := &vniMgr{oldHost: true}
+	_, err := s.CreateNetworkOnHost(context.Background(), "home1", m, "net1", "", "")
+	if err == nil || !strings.Contains(err.Error(), "host home1 runs a vmtool that cannot take a network number; redeploy it (just deploy home1)") {
+		t.Fatalf("err = %v", err)
 	}
-	regNoToken(t, "notes", notes...)
+	if len(m.vniCalls) != 1 || len(m.calls) != 1 || m.calls[0] != "delete net1" {
+		t.Errorf("host: create %v, then %v; want one create and one delete of net1", m.vniCalls, m.calls)
+	}
+	reqs := f.requests()
+	if len(reqs) != 3 || reqs[2] != "DELETE /v1/networks/net1" {
+		t.Errorf("requests = %v, want the registry entry deleted", reqs)
+	}
+	regNoToken(t, "error", err.Error())
+}
+
+// The old host's stray network cannot be deleted either: the error says what
+// is left on the host, and the registry entry is still removed.
+func TestCreateNetworkOldHostDeleteFailureSaysWhatIsLeft(t *testing.T) {
+	f := newRegStore(t)
+	s := &Service{Store: f.session(nil)}
+	m := &vniMgr{oldHost: true, netMgr: netMgr{err: fmt.Errorf("busy")}}
+	_, err := s.CreateNetworkOnHost(context.Background(), "home1", m, "net1", "", "")
+	if err == nil || !strings.Contains(err.Error(), "cannot take a network number") ||
+		!strings.Contains(err.Error(), "vmt-000001") || !strings.Contains(err.Error(), "busy") {
+		t.Fatalf("err = %v, want the redeploy message and the bridge left on the host", err)
+	}
+	if reqs := f.requests(); reqs[len(reqs)-1] != "DELETE /v1/networks/net1" {
+		t.Errorf("requests = %v", reqs)
+	}
+}
+
+// A bridge number the host already uses, or an overlapping subnet, is the
+// host's refusal: its kind and cause come through and the entry is removed.
+func TestCreateNetworkHostRefusalKeepsItsKindAndCause(t *testing.T) {
+	for _, c := range []struct {
+		err  error
+		kind Kind
+		want string
+	}{
+		{fmt.Errorf("a bridge vmt-002710 already exists on this host: %w", vmtool.ErrNetworkExists), KindConflict, "vmt-002710"},
+		{fmt.Errorf("subnet 10.77.0.0/24 overlaps route 10.77.0.0/16: %w", vmtool.ErrSubnetOverlap), KindInvalid, "overlaps route"},
+	} {
+		f := newRegStore(t)
+		s := &Service{Store: f.session(nil)}
+		_, err := s.CreateNetworkOnHost(context.Background(), "home1", &vniMgr{vniErr: c.err}, "net1", "", "")
+		if err == nil || kindOfErr(t, err) != c.kind || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("err = %v, want kind %v naming %q", err, c.kind, c.want)
+		}
+		if reqs := f.requests(); reqs[len(reqs)-1] != "DELETE /v1/networks/net1" {
+			t.Errorf("requests = %v, want the entry removed", reqs)
+		}
+	}
+}
+
+// The daemon's route: a VNI goes to a host that can take it; without one the
+// host numbers itself; a host that cannot take one is refused.
+func TestCreateNetworkWithVNI(t *testing.T) {
+	s := &Service{}
+	m := &vniMgr{}
+	if _, err := s.CreateNetworkWithVNI(context.Background(), m, "net1", "10.77.1.0/24", "d.test", 10001); err != nil {
+		t.Fatal(err)
+	}
+	if len(m.vniCalls) != 1 || m.vniCalls[0] != "create net1 10.77.1.0/24 d.test 10001" {
+		t.Errorf("calls = %v", m.vniCalls)
+	}
+	m = &vniMgr{}
+	if _, err := s.CreateNetworkWithVNI(context.Background(), m, "net1", "", "", 0); err != nil || len(m.calls) != 1 || len(m.vniCalls) != 0 {
+		t.Errorf("no vni: %v, local %v, vni %v", err, m.calls, m.vniCalls)
+	}
+	if _, err := s.CreateNetworkWithVNI(context.Background(), &netMgr{}, "net1", "", "", 7); err == nil {
+		t.Error("a host that cannot take a number was handed one")
+	}
+	if _, err := s.CreateNetworkWithVNI(context.Background(), &vniMgr{}, "default", "", "", 7); err == nil || kindOfErr(t, err) != KindInvalid {
+		t.Errorf("bad name: %v", err)
+	}
 }

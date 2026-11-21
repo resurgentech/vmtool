@@ -66,6 +66,11 @@ func (t ThinPools) ListPools() ([]vmtool.PoolInfo, error) {
 	return pools, nil
 }
 
+// CreateNetworkVNI keeps app.VNICreator visible through the wrapper.
+func (t ThinPools) CreateNetworkVNI(name, subnet, domain string, vni uint32) (*vmtool.NetworkInfo, error) {
+	return app.ForwardCreateNetworkVNI(t.Manager, name, subnet, domain, vni)
+}
+
 // RefreshPool keeps the optional interface the image cache uses visible
 // through the wrapper.
 func (t ThinPools) RefreshPool(pool string) error {

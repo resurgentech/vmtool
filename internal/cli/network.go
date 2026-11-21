@@ -100,10 +100,21 @@ func netCreateCmd(e *env) *cobra.Command {
 		Use:   "create <host> <name>",
 		Short: "Make a network on a host",
 		Long: `Make a vmtool network called <name> on <host>: NAT, DHCP (.100 to .200), DNS
-and autostart. The subnet is --subnet, or the first /24 of 10.77.0.0/16 that no
-libvirt network or route on the host uses; one that overlaps is refused. The
-DNS domain is --domain, or <name>.test. <name> follows the VM name rule and is
-never "default".`,
+and autostart. The DNS domain is --domain, or <name>.test. <name> follows the
+VM name rule and is never "default".
+
+With a store, the network is registered there first: the registry gives it
+its VNI (from 10000, so the bridge is vmt- plus the VNI as six hex digits) and
+its subnet (the next free /24 of 10.77.0.0/16, or --subnet if free), and the
+host makes the libvirt network with that bridge number and subnet. If the
+host refuses (a bridge of that number or an overlapping subnet), the registry
+entry is removed again. A host running an older vmtool that cannot take a
+network number is refused: redeploy it (just deploy <host>).
+
+With no store (or one that does not answer), nothing is registered: the host
+numbers the bridge itself (1 to 9999) and takes --subnet, or the first /24 of
+10.77.0.0/16 that no libvirt network or route on the host uses; an overlap is
+refused.`,
 		Args: cobra.ExactArgs(2),
 	}
 	cmd.Flags().StringVar(&subnet, "subnet", "", "the network's /24, such as 10.77.1.0/24 (default: the first free /24 of 10.77.0.0/16)")

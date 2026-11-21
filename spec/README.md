@@ -440,11 +440,18 @@ bump costs nothing if it was).
   host define the network on bridge `vmt-<VNI>`; if the host refuses, the
   registry entry is deleted again. In local mode (no store, an unreachable
   one, or a host token) nothing is registered and the host numbers its own
-  bridge from 1 to 9999 and picks its own subnet. **Not yet wired to the
-  daemon:** the daemon's `createNetwork` route does not take a VNI, so no
-  `Manager` implements `app.VNICreator` today; until one does, a store-mode
-  `net create` makes the network as in local mode and says it is not
-  registered. There is no CLI for members yet.
+  bridge from 1 to 9999 and picks its own subnet. In store mode the host is
+  handed both the VNI and the subnet (`vni` and `subnet` of the daemon's
+  `createNetwork`), so the bridge is `vmt-%06x` of the VNI (10000 and up) and
+  the subnet is the allocated /24. A bridge of that number already on the host
+  is its 409, an overlapping subnet its 400; the entry is removed in both
+  cases and the message names the cause. **An older daemon** ignores the
+  unknown `vni` field and numbers the bridge itself: the app compares the
+  bridge it gets back with `vmt-%06x` of the VNI, deletes the network the
+  daemon just made and the registry entry, and fails with "host H runs a
+  vmtool that cannot take a network number; redeploy it (just deploy H)". The
+  daemon's own route stays a primitive: it never calls the store. There is no
+  CLI for members yet.
 
 ## URL versioning
 
@@ -811,9 +818,12 @@ CLI's `vmtool networks` marks vmtool's by asking `getNetwork` for each name.
   (letters, digits, `.`, `_`, `-`, at most 63) and is never `default`; `domain`
   defaults to `<name>.test`; `subnet` is an IPv4 /24 written as its network
   address, or omitted for the first /24 of 10.77.0.0/16 that no libvirt network
-  and no route on the host uses. With no store the bridge number is the lowest
-  free one from 1 (the registry of a later step hands out 10000 and up, so the
-  two never collide). Answers: `201` with the `NetworkInfo`; `400` for a bad
+  and no route on the host uses. `vni` (1 to 16777215, optional) is the network number: the
+  bridge becomes `vmt-%06x` of it, and a bridge of that number already on the
+  host is `409`; the store's registry allocates it from 10000 up, and the
+  daemon never calls the store itself. Omitted, the bridge number is the lowest
+  free one from 1 (so it never collides with a registry number). A daemon that
+  predates the field ignores it. Answers: `201` with the `NetworkInfo`; `400` for a bad
   name, subnet or domain and for a subnet that overlaps a libvirt network or a
   route (the message names it); `409` for a name a libvirt network already has
   and for no free /24; `404` for an unknown host.

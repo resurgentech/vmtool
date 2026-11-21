@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/jaredeh/vmtool/internal/api"
 	"github.com/jaredeh/vmtool/internal/app"
@@ -52,7 +53,16 @@ func (h *handlers) CreateNetwork(ctx context.Context, req api.CreateNetworkReque
 		return api.CreateNetwork400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: "a body with a name is required"}}, nil
 	}
 	v, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
-		return h.svc.CreateNetwork(ctx, m, req.Body.Name, derefStr(req.Body.Subnet), derefStr(req.Body.Domain))
+		// A primitive: the number, when given, is the caller's (the store's
+		// registry allocated it); this route never calls the store.
+		var vni uint32
+		if req.Body.Vni != nil {
+			if *req.Body.Vni < 1 || *req.Body.Vni > 1<<24-1 {
+				return nil, &app.Error{Kind: app.KindInvalid, Op: "net create", Err: fmt.Errorf("vni %d: want 1 to 16777215", *req.Body.Vni)}
+			}
+			vni = uint32(*req.Body.Vni)
+		}
+		return h.svc.CreateNetworkWithVNI(ctx, m, req.Body.Name, derefStr(req.Body.Subnet), derefStr(req.Body.Domain), vni)
 	})
 	if err != nil {
 		switch kindOf(err) {
