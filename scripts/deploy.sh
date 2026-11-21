@@ -150,7 +150,9 @@ is_local=no
 [[ $host != "$local_name" ]] || is_local=yes
 
 # Host entry: "address ssh_user port". An own name that is not listed uses
-# VMTOOL_SELF_ADDRESS / VMTOOL_SELF_PORT; any other failure is fatal.
+# VMTOOL_SELF_ADDRESS / VMTOOL_SELF_PORT (the address falls back to 127.0.0.1
+# when VMTOOL_SELF_ADDRESS is unset and <host>.<domain> does not resolve); any
+# other failure is fatal.
 listed=yes
 rc=0
 out=$(cd "$root" && "$vmtool_bin" config host "$host" 2>&1) || rc=$?
@@ -161,6 +163,12 @@ if [[ $rc -eq 0 ]]; then
 elif [[ $is_local == yes && $out == *"unknown host"* ]]; then
   listed=no
   addr="${VMTOOL_SELF_ADDRESS:-$fqdn}"
+  # No VMTOOL_SELF_ADDRESS and a name nothing resolves: this machine is
+  # reached on loopback (the check and the hosts: entry use it).
+  if [[ -z ${VMTOOL_SELF_ADDRESS:-} ]] && ! getent hosts "$fqdn" >/dev/null 2>&1; then
+    addr=127.0.0.1
+    echo "deploy: $fqdn has no DNS record and $host has no hosts: entry; using 127.0.0.1 as its address (set VMTOOL_SELF_ADDRESS to use another)." >&2
+  fi
   port="${VMTOOL_SELF_PORT:-9474}"
   ssh_user="$(id -un)"
 else

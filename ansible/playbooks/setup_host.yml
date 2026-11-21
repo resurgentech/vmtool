@@ -395,6 +395,19 @@
         fail_key: false
       when: vmtool_role == 'hypervisor'
 
+    # In check mode the user task above only reports "would create", so on a
+    # host never set up the lookup finds nothing: the tasks that need the
+    # user's uid, gid or ownership are skipped on this flag (a real run
+    # creates the user first, so the flag is false there).
+    - name: Work out whether the vmtool user is yet to be created
+      ansible.builtin.set_fact:
+        vmtool_user_pending: "{{ ansible_check_mode and vmtool_role == 'hypervisor' and (ansible_facts.getent_passwd | default({})).get(vmtool_hv_user) is none }}"
+
+    - name: Note that check mode cannot show the tasks that need the vmtool user
+      ansible.builtin.debug:
+        msg: "check mode cannot show the vmtool directories' ownership or the vmtool pool before the {{ vmtool_hv_user }} user exists; they are skipped"
+      when: vmtool_user_pending | bool
+
     - name: Create the vmtool directories
       ansible.builtin.file:
         path: "{{ item.path }}"
@@ -408,7 +421,9 @@
         - {path: /var/lib/vmtool, owner: root, mode: "0711"}
       loop_control:
         label: "{{ item.path }}"
-      when: vmtool_role == 'hypervisor'
+      when:
+        - vmtool_role == 'hypervisor'
+        - not (vmtool_user_pending | bool and item.owner == vmtool_hv_user)
 
     # ----------------------------------------------------------------------- go
 
@@ -608,7 +623,9 @@
     # any other pool. Its XML names the vmtool uid/gid so pool-build/pool-start
     # keep that ownership.
     - name: Ensure the storage pools
-      when: vmtool_vm_host | bool
+      when:
+        - vmtool_vm_host | bool
+        - not (vmtool_user_pending | bool)
       ansible.builtin.include_tasks: tasks/libvirt_pool.yml
       vars:
         _pw: "{{ (ansible_facts.getent_passwd | default({}))[vmtool_hv_user] | default(['', '', '', '']) }}"

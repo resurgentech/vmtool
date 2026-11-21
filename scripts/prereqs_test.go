@@ -2,6 +2,7 @@ package scripts_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -478,5 +479,83 @@ func TestPrereqsUnlistedRemoteFails(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(e.stub, "ansible-playbook.argv")); err == nil {
 		t.Error("ansible-playbook ran")
+	}
+}
+
+// K3: `just prereqs H --check` on a host never set up. In check mode the user
+// task only reports "would create", so the getent lookup finds no vmtool user
+// and the tasks that need its uid, gid or ownership (the pool XML, the
+// directories owned by it) cannot run. They are skipped on a flag set from
+// that lookup, with one line saying so.
+func TestSetupHostCheckModeBeforeUserExists(t *testing.T) {
+	b, err := os.ReadFile("../ansible/playbooks/setup_host.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var plays []struct {
+		Tasks []map[string]any `yaml:"tasks"`
+	}
+	if err := yaml.Unmarshal(b, &plays); err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]map[string]any{}
+	order := []string{}
+	for _, p := range plays {
+		for _, task := range p.Tasks {
+			if n, ok := task["name"].(string); ok {
+				byName[n] = task
+				order = append(order, n)
+			}
+		}
+	}
+	flag := "vmtool_user_pending"
+	whenText := func(name string) string {
+		task, ok := byName[name]
+		if !ok {
+			t.Fatalf("no task %q", name)
+		}
+		return fmt.Sprint(task["when"])
+	}
+	pend, ok := byName["Note that check mode cannot show the tasks that need the vmtool user"]
+	if !ok {
+		t.Fatal("no check-mode note task")
+	}
+	if _, ok := pend["ansible.builtin.debug"]; !ok {
+		t.Error("the note is not a debug task")
+	}
+	if w := fmt.Sprint(pend["when"]); !strings.Contains(w, flag) {
+		t.Errorf("note not conditioned on %s: %s", flag, w)
+	}
+	if msg := fmt.Sprint(pend["ansible.builtin.debug"]); !strings.Contains(msg, "check mode cannot show") {
+		t.Errorf("note text: %s", msg)
+	}
+	var setter map[string]any
+	for _, task := range plays[0].Tasks {
+		if sf, ok := task["ansible.builtin.set_fact"].(map[string]any); ok && sf[flag] != nil {
+			setter = task
+			if s := fmt.Sprint(sf[flag]); !strings.Contains(s, "ansible_check_mode") || !strings.Contains(s, "getent_passwd") {
+				t.Errorf("flag expression: %s", s)
+			}
+		}
+	}
+	if setter == nil {
+		t.Fatalf("nothing sets %s", flag)
+	}
+	for _, n := range []string{"Create the vmtool directories", "Ensure the storage pools"} {
+		if w := whenText(n); !strings.Contains(w, flag) {
+			t.Errorf("%q is not skipped on %s: %s", n, flag, w)
+		}
+	}
+	idx := func(n string) int {
+		for i, o := range order {
+			if o == n {
+				return i
+			}
+		}
+		return -1
+	}
+	if !(idx("Look up the vmtool uid and gid") < idx(setter["name"].(string)) &&
+		idx(setter["name"].(string)) < idx("Create the vmtool directories")) {
+		t.Error("the flag is not set between the uid lookup and the directories")
 	}
 }

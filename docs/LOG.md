@@ -2433,3 +2433,27 @@ are appended, never edited in; a hook refuses rewrites.
   {use-domains: true} ...`. Green: `check: ok`; `just check` green. No
   `packer build` run.
 - Commits: the K2 commit on `clone-identity` (this entry rides in it).
+
+## 2026-11-21 — K3 Three small rollout frictions
+
+- `vmtool config set-host H --vms=false|true`: alone, it edits only the
+  `vms` key of the existing entry (`config.SetHostVMs`; false writes
+  `vms: false`, true removes it; an unknown host is refused, file
+  unchanged); with `--address`/`--ssh-user` the whole entry is written and
+  `--vms` sets the key; left out, an existing `vms` key is carried over.
+- `setup_host.yml`: in check mode on a host whose `vmtool` user does not
+  exist yet (`vmtool_user_pending`), the vmtool-owned directories and the
+  storage pools include are skipped, with one debug line saying check mode
+  cannot show them before the user exists; a real run is unchanged.
+- `scripts/deploy.sh`: an unlisted own name with no `VMTOOL_SELF_ADDRESS`
+  whose `<host>.<domain>` does not resolve (`getent hosts`) uses
+  `127.0.0.1`, with one stderr line naming `VMTOOL_SELF_ADDRESS`; a listed
+  entry is used as it stands.
+- Tests: `TestSetHostVMsKey`, `TestSetHostVMsOnly`,
+  `TestConfigSetHostVMsFlag`, `TestConfigSetHostLoneVMs`,
+  `TestSetupHostCheckModeBeforeUserExists`, four `TestDeployLocal...`
+  cases with a stub `getent`. README for all three.
+- Red: `unknown flag: --vms`, `vms: false not written`, `no check-mode note
+  task`, deploy wrote the fqdn with no fallback line. Green; `just check`
+  and `VMTOOL_TEST_ANSIBLE_SYNTAX=1 just test ./scripts/` green.
+- Commits: the K3 commit on `clone-identity` (this entry rides in it).

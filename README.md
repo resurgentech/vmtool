@@ -35,6 +35,10 @@ just prereqs -e vmtool_pool_path=/srv/vms         # back the default pool elsewh
 scripts/prereqs.sh -e '{"vmtool_extra_pools":[{"name":"fast","path":"/srv/vms"}]}'
 ```
 
+On a hypervisor never set up, `--check` cannot show the `vmtool` directories'
+ownership or the `vmtool` pool before the `vmtool` user exists; those tasks are
+skipped, with one line saying so.
+
 Log out and back in afterwards (or `newgrp libvirt`) to pick up the group.
 
 The playbook also installs OVMF (UEFI firmware: `ovmf` on Debian/Ubuntu,
@@ -280,6 +284,12 @@ list, and networks and links work on it. `vmtool create` on it is refused
 `vmnet  network home: runs no VMs` row, and the TUI and `GET /v1/hosts`
 (`network_home`) carry the same mark.
 
+`vmtool config set-host vmnet --vms=false` edits only that key of the existing
+entry (`vms: false`; `--vms=true` removes it) and keeps the rest of the entry
+and of `config.yml`; for a host with no entry it is refused. With `--address`
+and `--ssh-user` the whole entry is written as before, and `--vms` left out
+keeps whatever the entry has.
+
 The home's own daemon refuses too, so a direct REST call cannot make a VM
 there. `just deploy` reads the client's `hosts.<h>.vms` (`vmtool config
 host-vms <h>` prints it) and, for `vms: false`, writes `network_home: true`
@@ -333,7 +343,9 @@ just deploy ws1      # builds here, one sudo, installs vmtool-daemon.service
 
 For the own name both run locally: no ssh, and deploy does every step in a
 local shell with a single `sudo`. If `config.yml` has no `hosts:` entry for
-it, the address is `VMTOOL_SELF_ADDRESS` (default `<host>.<domain>`) and the
+it, the address is `VMTOOL_SELF_ADDRESS` (default `<host>.<domain>`, or
+`127.0.0.1` when `VMTOOL_SELF_ADDRESS` is unset and that name has no DNS
+record, with one line on stderr saying so) and the
 port is `VMTOOL_SELF_PORT` (default **9474**, clear of `just install`'s 9473).
 After the daemon answers `GET /version`, deploy runs `vmtool config
 set-host`, which writes the entry. An entry you listed yourself is used as it

@@ -133,6 +133,7 @@ func configCmd(dirFn func() (string, error)) *cobra.Command {
 	var (
 		sh     config.Host
 		shPort int
+		shVMs  bool
 	)
 	setHost := &cobra.Command{
 		Use:   "set-host <name>",
@@ -145,10 +146,22 @@ func configCmd(dirFn func() (string, error)) *cobra.Command {
 			}
 			// Required flags are checked here, not with MarkFlagRequired:
 			// the gate test runs every command with positional dummies only.
+			f := c.Flags()
+			if f.Changed("vms") && !f.Changed("address") && !f.Changed("ssh-user") &&
+				!f.Changed("port") && !f.Changed("default-pool") {
+				if err := config.SetHostVMs(dir, args[0], shVMs); err != nil {
+					return err
+				}
+				fmt.Fprintf(c.OutOrStdout(), "set host %s vms in %s\n", args[0], config.FileName)
+				return nil
+			}
 			if sh.Address == "" || sh.SSHUser == "" {
 				return errors.New("set-host needs --address and --ssh-user")
 			}
 			sh.Port = shPort
+			if c.Flags().Changed("vms") {
+				sh.VMs = &shVMs
+			}
 			if err := config.SetHost(dir, args[0], sh); err != nil {
 				return err
 			}
@@ -161,6 +174,8 @@ func configCmd(dirFn func() (string, error)) *cobra.Command {
 	sf.StringVar(&sh.SSHUser, "ssh-user", "", "SSH user (required)")
 	sf.IntVar(&shPort, "port", 0, "daemon port (default 9473)")
 	sf.StringVar(&sh.DefaultPool, "default-pool", "", "pool for new VM disks on this host")
+
+	sf.BoolVar(&shVMs, "vms", true, "false marks a network home (hosts.<name>.vms: false); true removes the key; not given leaves it as it is")
 
 	cmd.AddCommand(write, host, hostVMs, setHost, serverURL)
 	return cmd

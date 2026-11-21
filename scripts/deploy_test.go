@@ -789,6 +789,11 @@ func newLocalEnv(t *testing.T, listed string) (e *certEnv, hv, ud string) {
 		t.Fatal(err)
 	}
 	addStub(t, e.stub, "hostname", "echo PLACEHOLDER-HOST")
+	// The resolver: `getent hosts NAME` finds a name unless the file
+	// "nodns" exists in the stub dir.
+	addStub(t, e.stub, "getent", `echo "getent $*" >> "$d/getent.argv"
+if [[ -f $d/nodns ]]; then exit 2; fi
+echo "10.9.9.9 $2"`)
 	addStub(t, e.stub, "ssh", "exit 99")
 	addStub(t, e.stub, "scp", "exit 99")
 	if listed != "" {
@@ -1615,5 +1620,81 @@ func TestJustDeployPassesHostTokensPath(t *testing.T) {
 	}
 	if !strings.Contains(string(out), `BAO_STORE_HOST_TOKENS_PATH="kv/infra/labtwo/vmtool_store/host_tokens"`) {
 		t.Errorf("deploy recipe: %s", out)
+	}
+}
+
+// K3: an own name with no listed entry and no DNS record falls back to
+// 127.0.0.1, with one line on stderr; a name that resolves keeps its fqdn.
+func TestDeployLocalUnlistedNoDNSFallsBackToLoopback(t *testing.T) {
+	e, _, _ := newLocalEnv(t, "")
+	if err := os.WriteFile(filepath.Join(e.stub, "nodns"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := e.deploy(t, nil, "PLACEHOLDER-HOST")
+	if r.code != 0 {
+		t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
+	}
+	if curl := readOr(t, filepath.Join(e.stub, "curl.argv")); !strings.Contains(curl, "--resolve PLACEHOLDER-HOST.labtwo:9474:127.0.0.1") {
+		t.Errorf("curl argv %q", curl)
+	}
+	if got := readOr(t, filepath.Join(e.stub, "vmtool.argv")); !strings.Contains(got, "config set-host PLACEHOLDER-HOST --address 127.0.0.1 --ssh-user tester --port 9474") {
+		t.Errorf("vmtool argv %q", got)
+	}
+	n := 0
+	for _, l := range strings.Split(r.stderr, "\n") {
+		if strings.Contains(l, "127.0.0.1") && strings.Contains(l, "VMTOOL_SELF_ADDRESS") && strings.Contains(l, "PLACEHOLDER-HOST.labtwo") {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("want one fallback line, got %d in stderr:\n%s", n, r.stderr)
+	}
+}
+
+func TestDeployLocalUnlistedResolvableKeepsName(t *testing.T) {
+	e, _, _ := newLocalEnv(t, "")
+	r := e.deploy(t, nil, "PLACEHOLDER-HOST")
+	if r.code != 0 {
+		t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
+	}
+	if got := readOr(t, filepath.Join(e.stub, "vmtool.argv")); !strings.Contains(got, "--address PLACEHOLDER-HOST.labtwo ") {
+		t.Errorf("vmtool argv %q", got)
+	}
+	if strings.Contains(r.stderr, "127.0.0.1") {
+		t.Errorf("fallback line for a resolvable name: %s", r.stderr)
+	}
+}
+
+func TestDeployLocalNoDNSSelfAddressWins(t *testing.T) {
+	e, _, _ := newLocalEnv(t, "")
+	if err := os.WriteFile(filepath.Join(e.stub, "nodns"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := e.deploy(t, []string{"VMTOOL_SELF_ADDRESS=10.0.0.7"}, "PLACEHOLDER-HOST")
+	if r.code != 0 {
+		t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
+	}
+	if got := readOr(t, filepath.Join(e.stub, "vmtool.argv")); !strings.Contains(got, "--address 10.0.0.7 ") {
+		t.Errorf("vmtool argv %q", got)
+	}
+	if strings.Contains(r.stderr, "127.0.0.1") {
+		t.Errorf("fallback line with VMTOOL_SELF_ADDRESS set: %s", r.stderr)
+	}
+}
+
+func TestDeployLocalListedEntryNoResolution(t *testing.T) {
+	e, _, _ := newLocalEnv(t, "nowhere.invalid tester 9473")
+	if err := os.WriteFile(filepath.Join(e.stub, "nodns"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := e.deploy(t, nil, "PLACEHOLDER-HOST")
+	if r.code != 0 {
+		t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
+	}
+	if strings.Contains(r.stderr, "127.0.0.1") {
+		t.Errorf("fallback for a listed entry: %s", r.stderr)
+	}
+	if _, err := os.Stat(filepath.Join(e.stub, "getent.argv")); err == nil {
+		t.Error("a listed entry was resolved")
 	}
 }

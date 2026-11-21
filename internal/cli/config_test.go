@@ -216,3 +216,63 @@ func TestConfigWriteInstallKeepsHosts(t *testing.T) {
 		t.Fatalf("%+v", c)
 	}
 }
+
+func TestConfigSetHostVMsFlag(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("VMTOOL_TOKEN", "")
+	if err := os.WriteFile(filepath.Join(dir, "config.yml"), []byte("name: jetfire\nhosts:\n  hv1: { address: a.example, ssh_user: u }\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runConfig(t, dir, "", "set-host", "hv1", "--address", "a.example", "--ssh-user", "u", "--vms=false"); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, "config.yml"))
+	if !strings.Contains(string(b), "vms: false") {
+		t.Fatalf("vms: false not written:\n%s", b)
+	}
+	// without --vms the key stays
+	if _, err := runConfig(t, dir, "", "set-host", "hv1", "--address", "c.example", "--ssh-user", "u"); err != nil {
+		t.Fatal(err)
+	}
+	c, _ := config.Load(dir)
+	if c.Hosts["hv1"].HoldsVMs() || c.Hosts["hv1"].Address != "c.example" {
+		t.Fatalf("%+v", c.Hosts["hv1"])
+	}
+	if _, err := runConfig(t, dir, "", "set-host", "hv1", "--address", "c.example", "--ssh-user", "u", "--vms=true"); err != nil {
+		t.Fatal(err)
+	}
+	b, _ = os.ReadFile(filepath.Join(dir, "config.yml"))
+	if strings.Contains(string(b), "vms") {
+		t.Fatalf("vms not removed:\n%s", b)
+	}
+}
+
+func TestConfigSetHostLoneVMs(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("VMTOOL_TOKEN", "")
+	if err := os.WriteFile(filepath.Join(dir, "config.yml"), []byte("name: jetfire\nhosts:\n  hv1: { address: a.example, ssh_user: u, port: 9475 }\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runConfig(t, dir, "", "set-host", "hv1", "--vms=false"); err != nil {
+		t.Fatal(err)
+	}
+	c, _ := config.Load(dir)
+	if h := c.Hosts["hv1"]; h.HoldsVMs() || h.Address != "a.example" || h.SSHUser != "u" || h.Port != 9475 {
+		t.Fatalf("%+v", h)
+	}
+	if _, err := runConfig(t, dir, "", "set-host", "hv1", "--vms=true"); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, "config.yml"))
+	if strings.Contains(string(b), "vms") {
+		t.Fatalf("not removed:\n%s", b)
+	}
+	before := string(b)
+	if _, err := runConfig(t, dir, "", "set-host", "nope", "--vms=false"); err == nil {
+		t.Fatal("unknown host accepted")
+	}
+	b, _ = os.ReadFile(filepath.Join(dir, "config.yml"))
+	if string(b) != before {
+		t.Fatal("file changed")
+	}
+}

@@ -507,3 +507,78 @@ func TestHostVMsSwitch(t *testing.T) {
 		}
 	}
 }
+
+func TestSetHostVMsKey(t *testing.T) {
+	setHost(t, "jetfire")
+	dir := t.TempDir()
+	writeFile(t, dir, "config.yml", "name: jetfire\nhosts:\n  hv1: { address: a.example, ssh_user: u }\n")
+	no, yes := false, true
+	if err := SetHost(dir, "hv1", Host{Address: "a.example", SSHUser: "u", VMs: &no}); err != nil {
+		t.Fatal(err)
+	}
+	c, _ := Load(dir)
+	if c.Hosts["hv1"].HoldsVMs() {
+		t.Fatal("vms: false not written")
+	}
+	raw, _ := os.ReadFile(filepath.Join(dir, "config.yml"))
+	if !strings.Contains(string(raw), "vms: false") {
+		t.Fatalf("no vms: false:\n%s", raw)
+	}
+	// not given: the key is left as it is
+	if err := SetHost(dir, "hv1", Host{Address: "b.example", SSHUser: "u"}); err != nil {
+		t.Fatal(err)
+	}
+	c, _ = Load(dir)
+	if h := c.Hosts["hv1"]; h.HoldsVMs() || h.Address != "b.example" {
+		t.Fatalf("vms key lost or address kept: %+v", h)
+	}
+	// true: the key is removed
+	if err := SetHost(dir, "hv1", Host{Address: "b.example", SSHUser: "u", VMs: &yes}); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ = os.ReadFile(filepath.Join(dir, "config.yml"))
+	if strings.Contains(string(raw), "vms") {
+		t.Fatalf("vms key not removed:\n%s", raw)
+	}
+}
+
+func TestSetHostVMsOnly(t *testing.T) {
+	setHost(t, "jetfire")
+	dir := t.TempDir()
+	orig := "# top\nname: jetfire\nfuture_key: keepme\nhosts:\n  # hv1 comment\n  hv1: { address: a.example, ssh_user: u, port: 9475, default_pool: fast }\n"
+	writeFile(t, dir, "config.yml", orig)
+	if err := SetHostVMs(dir, "hv1", false); err != nil {
+		t.Fatal(err)
+	}
+	c, _ := Load(dir)
+	h := c.Hosts["hv1"]
+	if h.HoldsVMs() || h.Address != "a.example" || h.SSHUser != "u" || h.Port != 9475 || h.DefaultPool != "fast" {
+		t.Fatalf("%+v", h)
+	}
+	raw, _ := os.ReadFile(filepath.Join(dir, "config.yml"))
+	for _, s := range []string{"# top", "future_key: keepme", "# hv1 comment"} {
+		if !strings.Contains(string(raw), s) {
+			t.Errorf("lost %q:\n%s", s, raw)
+		}
+	}
+	if err := SetHostVMs(dir, "hv1", true); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ = os.ReadFile(filepath.Join(dir, "config.yml"))
+	if strings.Contains(string(raw), "vms") {
+		t.Fatalf("not removed:\n%s", raw)
+	}
+	c, _ = Load(dir)
+	if h := c.Hosts["hv1"]; h.Port != 9475 || h.Address != "a.example" {
+		t.Fatalf("%+v", h)
+	}
+	// unknown host: refused, file unchanged
+	before, _ := os.ReadFile(filepath.Join(dir, "config.yml"))
+	if err := SetHostVMs(dir, "nope", false); err == nil {
+		t.Fatal("unknown host accepted")
+	}
+	after, _ := os.ReadFile(filepath.Join(dir, "config.yml"))
+	if string(before) != string(after) {
+		t.Fatal("file changed")
+	}
+}

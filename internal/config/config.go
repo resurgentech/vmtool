@@ -522,6 +522,10 @@ func SetHost(dir, name string, h Host) error {
 		if h.DefaultPool != "" {
 			entry.Content = append(entry.Content, str("default_pool"), str(h.DefaultPool))
 		}
+		if h.VMs != nil && !*h.VMs {
+			entry.Content = append(entry.Content, str("vms"),
+				&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: "false"})
+		}
 		var hosts *yaml.Node
 		for i := 0; i+1 < len(root.Content); i += 2 {
 			if root.Content[i].Value == "hosts" {
@@ -537,12 +541,59 @@ func SetHost(dir, name string, h Host) error {
 		}
 		for i := 0; i+1 < len(hosts.Content); i += 2 {
 			if hosts.Content[i].Value == name {
+				// vms is set only by an explicit h.VMs; otherwise the
+				// existing entry's key (a network home) is carried over.
+				if h.VMs == nil && hosts.Content[i+1].Kind == yaml.MappingNode {
+					old := hosts.Content[i+1].Content
+					for j := 0; j+1 < len(old); j += 2 {
+						if old[j].Value == "vms" {
+							entry.Content = append(entry.Content, old[j], old[j+1])
+						}
+					}
+				}
 				hosts.Content[i+1] = entry
 				return nil
 			}
 		}
 		hosts.Content = append(hosts.Content, str(name), entry)
 		return nil
+	})
+}
+
+// SetHostVMs edits only the vms key of the existing hosts.<name> entry: false
+// writes `vms: false`, true removes the key. The rest of the entry and of
+// config.yml (comments, order, unknown keys) is left as it is. A name with no
+// entry is an error and writes nothing.
+func SetHostVMs(dir, name string, vms bool) error {
+	return edit(dir, func(root *yaml.Node) error {
+		for i := 0; i+1 < len(root.Content); i += 2 {
+			if root.Content[i].Value != "hosts" || root.Content[i+1].Kind != yaml.MappingNode {
+				continue
+			}
+			hosts := root.Content[i+1]
+			for j := 0; j+1 < len(hosts.Content); j += 2 {
+				if hosts.Content[j].Value != name {
+					continue
+				}
+				entry := hosts.Content[j+1]
+				if entry.Kind != yaml.MappingNode {
+					return fmt.Errorf("hosts.%s must be a mapping", name)
+				}
+				for k := 0; k+1 < len(entry.Content); k += 2 {
+					if entry.Content[k].Value == "vms" {
+						entry.Content = append(entry.Content[:k], entry.Content[k+2:]...)
+						break
+					}
+				}
+				if !vms {
+					entry.Content = append(entry.Content,
+						&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "vms"},
+						&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: "false"})
+				}
+				return nil
+			}
+		}
+		return fmt.Errorf("unknown host %q in %s: set-host needs --address and --ssh-user to create the entry", name, FileName)
 	})
 }
 
