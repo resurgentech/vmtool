@@ -319,10 +319,12 @@ func (s *Server) bearerCaller(tok string) (string, bool) {
 
 // hostAllowed is the whole of what a host token may do: the routes, by spec
 // pattern. The report route is in the allow-list before it is in the spec,
-// so the list does not change when it arrives.
+// so the list does not change when it arrives. The networks read answers
+// 403 for any host but the token's own (the handler checks the path).
 var hostAllowed = map[string]bool{
 	"GET /v1/whoami":                 true,
 	"PUT /v1/hosts/{host}/inventory": true,
+	"GET /v1/hosts/{host}/networks":  true,
 }
 
 // hostCallerPrefix starts the name of a host token's caller. User token names

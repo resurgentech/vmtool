@@ -109,7 +109,7 @@ never "default".`,
 	cmd.Flags().StringVar(&subnet, "subnet", "", "the network's /24, such as 10.77.1.0/24 (default: the first free /24 of 10.77.0.0/16)")
 	cmd.Flags().StringVar(&domain, "domain", "", "DNS domain (default: <name>.test)")
 	cmd.RunE = withNetHost(e, func(m app.Manager, cmd *cobra.Command, args []string) error {
-		n, err := e.service("").CreateNetwork(cmd.Context(), m, args[1], subnet, domain)
+		n, err := e.service("").CreateNetworkOnHost(cmd.Context(), args[0], m, args[1], subnet, domain)
 		if err != nil {
 			return err
 		}

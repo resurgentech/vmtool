@@ -155,6 +155,26 @@ var migrations = []string{
 	// 5: a VM's cards on vmtool networks, as its host last reported them: a
 	// JSON array of {network, mac, ip}, replaced by every report.
 	`ALTER TABLE vms ADD COLUMN networks TEXT NOT NULL DEFAULT '[]';`,
+	// 6: the network registry. A network's VNI and subnet are unique; its
+	// members are the hosts linked to it, with the LAN address and interface
+	// of each. Nothing here is secret, and nothing records whether a host is up.
+	`CREATE TABLE networks (
+		name    TEXT PRIMARY KEY,
+		vni     INTEGER NOT NULL UNIQUE,
+		subnet  TEXT NOT NULL UNIQUE,
+		domain  TEXT NOT NULL,
+		home    TEXT NOT NULL,
+		created TEXT NOT NULL
+	);
+	CREATE TABLE network_members (
+		network TEXT NOT NULL,
+		host    TEXT NOT NULL,
+		lan_ip  TEXT NOT NULL,
+		lan_dev TEXT NOT NULL,
+		joined  TEXT NOT NULL,
+		PRIMARY KEY (network, host)
+	);
+	CREATE INDEX network_members_host ON network_members(host);`,
 }
 
 // DB is an open store database. It is safe for concurrent use.

@@ -2083,3 +2083,27 @@ are appended, never edited in; a hook refuses rewrites.
 - Red: assertion failures against stubs (pkg/vmtool, app, store); green;
   `just check` green.
 - Commits: the V2 commit on `clone-identity`.
+
+## 2026-11-21 — V3 The network registry in the store (partial; step stays todo)
+
+- store.yaml 1.2.0: user-token `createNetwork`, `listNetworks`,
+  `getNetwork`, `deleteNetwork` (409 while members remain),
+  `putNetworkMember`, `deleteNetworkMember`; host-token `GET
+  /v1/hosts/{host}/networks` (only its own networks, with VNI, bridge, home,
+  its own member row and the peers' LAN addresses; another host's name 403),
+  added to the host-token allow-list.
+- Store migration 6: `networks` (name PK, vni UNIQUE, subnet UNIQUE,
+  domain, home, created) and `network_members`; allocation in one
+  transaction (lowest free VNI from 10000, lowest free /24 of
+  10.77.0.0/16); a 24-goroutine concurrent-create test.
+- `internal/storeclient/networks.go`; `internal/app/netregistry.go`
+  `CreateNetworkOnHost`: in store mode register first, then define on the
+  host through the optional `VNICreator`, undo the entry if the host fails.
+- Not finished: no host Manager implements `VNICreator` (the daemon's
+  `createNetwork` cannot take a VNI), so a store-mode `net create` still
+  numbers its bridge on the host, registers nothing and says so. The
+  missing hop needs vmtool.yaml, `pkg/vmtool`, `internal/server` and
+  `internal/remote`, outside V3's Touches; left for XO.
+- Red: assertion failures (db, store), stub panics (storeclient, app);
+  green; `just check` green.
+- Commits: the V3 (partial) commit on `clone-identity`.

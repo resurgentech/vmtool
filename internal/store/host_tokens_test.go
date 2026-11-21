@@ -14,7 +14,10 @@ import (
 	"github.com/jaredeh/vmtool/internal/tokenhash"
 )
 
-const reportRoute = "PUT /v1/hosts/{host}/inventory"
+const (
+	reportRoute       = "PUT /v1/hosts/{host}/inventory"
+	hostNetworksRoute = "GET /v1/hosts/{host}/networks"
+)
 
 // ---- config -------------------------------------------------------------
 
@@ -114,8 +117,11 @@ func TestWhoamiKind(t *testing.T) {
 	}
 }
 
-// A host token passes only whoami and the report route; every other route in
-// the spec (so N3's new ones too) is 401, with the body and log free of it.
+// A host token passes only whoami, the report route and the read of its own
+// network memberships; every other route in the spec (V3's registry routes
+// too) is 401, with the body and log free of it. The memberships route, on a
+// host the token is not for, is 403 (here the placeholder host is hv1 and the
+// token is hv1's, so it answers 200 or 500 with no database, never 401).
 func TestHostTokenAllowList(t *testing.T) {
 	ts, logs := hostServer(t)
 	var seen int
@@ -126,7 +132,7 @@ func TestHostTokenAllowList(t *testing.T) {
 		seen++
 		method, p, _ := strings.Cut(op, " ")
 		resp, body := do(t, method, ts.URL+concrete(p), "Bearer "+tokH, "")
-		allowed := op == "GET /v1/whoami" || op == reportRoute
+		allowed := op == "GET /v1/whoami" || op == reportRoute || op == hostNetworksRoute
 		if allowed && resp.StatusCode == 401 {
 			t.Errorf("%s with a host token = 401, want it accepted", op)
 		}
@@ -137,7 +143,7 @@ func TestHostTokenAllowList(t *testing.T) {
 			t.Errorf("%s echoes the host token", op)
 		}
 	}
-	if seen < 14 {
+	if seen < 26 {
 		t.Fatalf("only %d protected operations in the spec", seen)
 	}
 	// Unknown paths and tickets-style misuse learn nothing.
@@ -165,7 +171,10 @@ func TestHostTokenAllowListNamesReportRoute(t *testing.T) {
 	if name, ok := s.authenticate(req(), reportRoute); !ok || name != "host/hv1" {
 		t.Errorf("host token on the report route = %q, %v", name, ok)
 	}
-	for _, pat := range []string{"", "GET /v1/hosts/{host}/inventory", "PUT /v1/hosts/{host}/inventory/x", "GET /v1/inventory", "GET /v1/images"} {
+	if name, ok := s.authenticate(req(), hostNetworksRoute); !ok || name != "host/hv1" {
+		t.Errorf("host token on the networks route = %q, %v", name, ok)
+	}
+	for _, pat := range []string{"", "PUT /v1/hosts/{host}/networks", "POST /v1/hosts/{host}/networks", "GET /v1/networks", "GET /v1/hosts/{host}/inventory", "PUT /v1/hosts/{host}/inventory/x", "GET /v1/inventory", "GET /v1/images"} {
 		if _, ok := s.authenticate(req(), pat); ok {
 			t.Errorf("host token accepted on %q", pat)
 		}

@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: vmtool store API
-  version: 1.1.0
+  version: 1.2.0
   description: >
     HTTP surface of `vmtool-store`, the image and credential store that runs as
     a container behind a TLS-terminating proxy. Spec-first: models, stdlib
@@ -13,7 +13,8 @@ info:
     no other response and no log line does. The one other credential is a
     download ticket, accepted only on the image blob route. A host token
     (one per host, `host_tokens.yaml`) is a limited bearer token: it is
-    accepted only on `GET /v1/whoami` and `PUT /v1/hosts/{host}/inventory`;
+    accepted only on `GET /v1/whoami`, `PUT /v1/hosts/{host}/inventory` and
+    `GET /v1/hosts/{host}/networks` (its own host's network memberships);
     on every other route it answers 401, as a ticket does. It reads no
     credential, image or other host.
 servers:
@@ -577,6 +578,193 @@ paths:
                 $ref: "#/components/schemas/Error"
         "500":
           $ref: "#/components/responses/InternalError"
+  /v1/networks:
+    get:
+      operationId: listNetworks
+      summary: The registered vmtool networks, with their members
+      description: >
+        User tokens only. Ordered by name; each network carries its members.
+      responses:
+        "200":
+          description: Every registered network.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NetworkList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      operationId: createNetwork
+      summary: Register a network and allocate its VNI and subnet
+      description: >
+        User tokens only. The registry is what keeps two hosts from handing
+        out the same VNI or subnet. With no `vni` the store takes the lowest
+        free VNI from 10000 up (so the first bridge is `vmt-002710`); with no
+        `subnet` it takes the next free /24 of 10.77.0.0/16. A `vni` or
+        `subnet` that is given must be free (409 otherwise). `domain` omitted
+        is `<name>.test`. `home` is the host whose libvirt network does the
+        routing, DHCP and DNS. The allocation and the insert are one
+        transaction, so concurrent creates never share a VNI or a subnet. The
+        store only records: it does not touch any host and never tracks
+        whether a host is up. JSON only, at most 1 MiB.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NetworkInput"
+      responses:
+        "201":
+          description: The network, as registered (no members yet).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Network"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          description: >
+            The name, a given VNI or a given subnet is taken, or no VNI or
+            /24 is free. The body is fixed text.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          $ref: "#/components/responses/TooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/networks/{name}:
+    parameters:
+      - $ref: "#/components/parameters/Name"
+    get:
+      operationId: getNetwork
+      summary: One registered network, with its members
+      description: User tokens only.
+      responses:
+        "200":
+          description: The network.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Network"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      operationId: deleteNetwork
+      summary: Remove a network from the registry
+      description: >
+        User tokens only. Refused (409) while the network has members. Frees
+        its VNI and subnet for a later create.
+      responses:
+        "204":
+          description: The network is removed.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The network still has members. The body is fixed text.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/networks/{name}/members/{host}:
+    parameters:
+      - $ref: "#/components/parameters/Name"
+      - $ref: "#/components/parameters/Host"
+    put:
+      operationId: putNetworkMember
+      summary: Add a host to a network, or update its LAN address
+      description: >
+        User tokens only. Records the host's LAN address and the interface
+        that address is on (the underlay of its VXLAN link). A host that is
+        already a member keeps its `joined` time and takes the new address
+        and interface. The home host may be a member too. The store does not
+        reach the host and records nothing about whether it is up. JSON only,
+        at most 1 MiB.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NetworkMemberInput"
+      responses:
+        "200":
+          description: The member, as stored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NetworkMember"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/TooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      operationId: deleteNetworkMember
+      summary: Remove a host from a network
+      description: User tokens only.
+      responses:
+        "204":
+          description: The host is no longer a member.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/hosts/{host}/networks:
+    parameters:
+      - $ref: "#/components/parameters/Host"
+    get:
+      operationId: getHostNetworks
+      summary: The networks one host belongs to, with its peers' LAN addresses
+      description: >
+        The one read a host token has beyond its report: a host token for this
+        very `{host}` (another host's token gets 403; a user token may name
+        any host). Only the networks the host is a member of or the home of,
+        each with VNI, bridge, subnet, domain, home, the host's own LAN
+        address and interface when it is a member, and the other members'
+        host names and LAN addresses (`peers`). Read-only; nothing else of
+        the registry, no network the host is not part of, no reservation, no
+        VM, and no up/down state. A host with no network gets an empty list.
+      responses:
+        "200":
+          description: The host's networks.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HostNetworks"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
 components:
   securitySchemes:
     bearerAuth:
@@ -1086,3 +1274,131 @@ components:
           format: date-time
         had_credentials:
           type: boolean
+    NetworkInput:
+      type: object
+      required: [name, home]
+      properties:
+        name:
+          type: string
+          description: The VM name rule, at most 63 characters, never `default`.
+        home:
+          type: string
+          description: The host whose libvirt network is the network's home.
+        domain:
+          type: string
+          description: DNS domain; omitted is `<name>.test`.
+        subnet:
+          type: string
+          description: An IPv4 /24 written as its network address; omitted, the next free /24 of 10.77.0.0/16.
+        vni:
+          type: integer
+          minimum: 1
+          maximum: 16777215
+          description: A VNI to register as it is (a network a host already made); omitted, the lowest free one from 10000.
+    NetworkMemberInput:
+      type: object
+      required: [lan_ip, lan_dev]
+      properties:
+        lan_ip:
+          type: string
+          description: The host's IPv4 address on the LAN, the source of its VXLAN link.
+        lan_dev:
+          type: string
+          description: The interface that address is on (at most 15 characters).
+    NetworkMember:
+      type: object
+      required: [host, lan_ip, lan_dev, joined]
+      properties:
+        host:
+          type: string
+        lan_ip:
+          type: string
+        lan_dev:
+          type: string
+        joined:
+          type: string
+          format: date-time
+    Network:
+      type: object
+      required: [name, vni, bridge, subnet, domain, home, created, members]
+      properties:
+        name:
+          type: string
+        vni:
+          type: integer
+        bridge:
+          type: string
+          description: "`vmt-` plus the VNI as six lowercase hex digits."
+        subnet:
+          type: string
+        domain:
+          type: string
+        home:
+          type: string
+        created:
+          type: string
+          format: date-time
+        members:
+          type: array
+          items:
+            $ref: "#/components/schemas/NetworkMember"
+    NetworkList:
+      type: object
+      required: [networks]
+      properties:
+        networks:
+          type: array
+          items:
+            $ref: "#/components/schemas/Network"
+    NetworkPeer:
+      type: object
+      required: [host, lan_ip]
+      properties:
+        host:
+          type: string
+        lan_ip:
+          type: string
+    HostNetwork:
+      type: object
+      description: >
+        One network of a host. `member` is the host's own membership and is
+        absent when the host is only the network's home.
+      required: [name, vni, bridge, subnet, domain, home, peers]
+      properties:
+        name:
+          type: string
+        vni:
+          type: integer
+        bridge:
+          type: string
+        subnet:
+          type: string
+        domain:
+          type: string
+        home:
+          type: string
+        member:
+          $ref: "#/components/schemas/HostNetworkSelf"
+        peers:
+          type: array
+          description: The other members, by host name, with their LAN addresses.
+          items:
+            $ref: "#/components/schemas/NetworkPeer"
+    HostNetworkSelf:
+      type: object
+      required: [lan_ip, lan_dev]
+      properties:
+        lan_ip:
+          type: string
+        lan_dev:
+          type: string
+    HostNetworks:
+      type: object
+      required: [host, networks]
+      properties:
+        host:
+          type: string
+        networks:
+          type: array
+          items:
+            $ref: "#/components/schemas/HostNetwork"

@@ -9,7 +9,7 @@ a handler.
 | Path | Contract |
 |---|---|
 | `openapi/vmtool.yaml` | Every HTTP endpoint `vmtool server` registers. oapi-codegen generates models, a stdlib `ServerInterface`, a strict wrapper, an embedded spec, and a test client (`internal/api`). |
-| `openapi/store.yaml` | The image and credential store's HTTP API (`vmtool-store`, 1.0.0), served by `cmd/vmtool-store`, not by `vmtool server`. Its own generated package, `internal/storeapi`; handled as `vmtool.yaml` is (see [The store](#the-store)). |
+| `openapi/store.yaml` | The image and credential store's HTTP API (`vmtool-store`, 1.2.0), served by `cmd/vmtool-store`, not by `vmtool server`. Its own generated package, `internal/storeapi`; handled as `vmtool.yaml` is (see [The store](#the-store)). |
 
 Interactive SSH from CLI (`vmtool ssh`) and TUI (`t`) execs `ssh` locally and
 is not an HTTP operation.
@@ -247,7 +247,9 @@ bad token. **A store token opens every guest's credentials.** A **host
 token** is a limited bearer token, one per host, kept as `{host: sha256}` in
 `host_tokens.yaml` (0600; `host_tokens_file` in the store's config; a missing
 file means none). It is accepted only on `GET /v1/whoami` (answers
-`host/<host>`, kind `host`) and `PUT /v1/hosts/{host}/inventory`; on every
+`host/<host>`, kind `host`), `PUT /v1/hosts/{host}/inventory` and
+`GET /v1/hosts/{host}/networks` (its own host's network memberships, see
+[Networks](#networks-api-120)); on every
 other route, image blob, credentials and images included, it is 401. A hash
 may not appear in both token files. The log's caller for it is `host/<host>`.
 
@@ -258,6 +260,7 @@ may not appear in both token files. The log's caller for it is `host/<host>`.
 | VM credentials, keyed by (host, name) and the domain UUID | `getVMCredential`, `putVMCredential`, `deleteVMCredential` |
 | Metal records, keyed by name | `listMachineCredentials`, `getMachineCredential`, `putMachineCredential`, `deleteMachineCredential` |
 | Inventory, keyed by (host, libvirt UUID) | `putHostInventory` (host token for that host only; a user token or another host's token is 403), `getInventory` (`?host=`, `?gone=true`), `delistVM`, `deleteInventoryRow` (user tokens only) |
+| Network registry, keyed by name | `createNetwork`, `listNetworks`, `getNetwork`, `deleteNetwork`, `putNetworkMember`, `deleteNetworkMember` (user tokens only); `getHostNetworks` (a host token for that host only; a user token may name any host) |
 
 **Images.** `putImage` streams the body to the bucket and hashes it as it is
 written; the image is indexed only when the SHA-256 equals `X-Image-SHA256` and
@@ -392,6 +395,56 @@ to `data/store.db` with mode 0600 in the 0700 directory; use the same
 `enc.key`; start; check `GET /version` and a credential read. vmtool adds no
 restore command. See the `vmtool_store` role's README in `ansible_labtwo` and
 the root `README.md`.
+
+### Networks (API 1.2.0)
+
+The registry of networks that span hosts (locked decision "VM networks";
+tranche 17). It records what hosts cannot agree on alone: each network's name,
+VNI, subnet, domain and home, and its members. `store.yaml` went from 1.1.0 to
+1.2.0 for it (1.1.0 had been left unreleased by the inventory work; a minor
+bump costs nothing if it was).
+
+- **Tables** (migration 6): `networks` (`name` primary key, `vni` unique,
+  `subnet` unique, `domain`, `home`, `created`) and `network_members`
+  (`network`, `host`, `lan_ip`, `lan_dev`, `joined`; primary key
+  (network, host)). Nothing is secret and nothing records whether a host is up.
+- **User-token routes.** `createNetwork` (`POST /v1/networks`: `name`, `home`,
+  optional `domain`, `subnet`, `vni`), `listNetworks`, `getNetwork`,
+  `deleteNetwork` (409 while the network has members), `putNetworkMember` and
+  `deleteNetworkMember` (`/v1/networks/{name}/members/{host}`). A host token
+  gets 401 on every one of them.
+- **Allocation.** With no `vni` the store takes the lowest free one from 10000
+  (the first bridge is `vmt-002710`; a bridge is `vmt-` plus the VNI as six
+  lowercase hex digits); with no `subnet` it takes the lowest free /24 of
+  10.77.0.0/16. A given `vni` (1 to 16777215) or `subnet` (an IPv4 /24 written
+  as its network address) is used if free and is a 409 if not. The check, the
+  allocation and the insert are one transaction on the store's one database
+  connection, so concurrent creates never share a VNI or a subnet. A deleted
+  network's VNI and subnet are handed out again. `domain` defaults to
+  `<name>.test`; `name` follows the VM name rule, at most 63 characters, never
+  `default`. The store does not check a subnet against a host's own libvirt
+  networks or routes: the host does when it defines the network.
+- **`getHostNetworks`** (`GET /v1/hosts/{host}/networks`) is the host token's
+  one read besides its report, for its own `{host}` only (another host's name
+  is 403; a user token may name any host). It lists only the networks the host
+  is a member of or the home of, each with `vni`, `bridge`, `subnet`, `domain`,
+  `home`, the host's own `lan_ip` and `lan_dev` (`member`, absent for a home
+  that is not a member) and `peers`: the other members' host names and LAN
+  addresses, nothing else. A host with none gets an empty list.
+- **The home is not a member by being the home.** A member row is the host's
+  LAN address and interface for its VXLAN link; the host's daemon adds it when
+  it links (a later step), so until then a network has no members and delete
+  works.
+- **Store mode and local mode.** `vmtool net create HOST NAME` in store mode
+  has the registry allocate the VNI and subnet (home = HOST) and then has the
+  host define the network on bridge `vmt-<VNI>`; if the host refuses, the
+  registry entry is deleted again. In local mode (no store, an unreachable
+  one, or a host token) nothing is registered and the host numbers its own
+  bridge from 1 to 9999 and picks its own subnet. **Not yet wired to the
+  daemon:** the daemon's `createNetwork` route does not take a VNI, so no
+  `Manager` implements `app.VNICreator` today; until one does, a store-mode
+  `net create` makes the network as in local mode and says it is not
+  registered. There is no CLI for members yet.
 
 ## URL versioning
 

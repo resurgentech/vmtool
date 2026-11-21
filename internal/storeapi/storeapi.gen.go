@@ -79,6 +79,32 @@ type Error struct {
 	Error string `json:"error"`
 }
 
+// HostNetwork One network of a host. `member` is the host's own membership and is absent when the host is only the network's home.
+type HostNetwork struct {
+	Bridge string           `json:"bridge"`
+	Domain string           `json:"domain"`
+	Home   string           `json:"home"`
+	Member *HostNetworkSelf `json:"member,omitempty"`
+	Name   string           `json:"name"`
+
+	// Peers The other members, by host name, with their LAN addresses.
+	Peers  []NetworkPeer `json:"peers"`
+	Subnet string        `json:"subnet"`
+	Vni    int           `json:"vni"`
+}
+
+// HostNetworkSelf defines model for HostNetworkSelf.
+type HostNetworkSelf struct {
+	LanDev string `json:"lan_dev"`
+	LanIp  string `json:"lan_ip"`
+}
+
+// HostNetworks defines model for HostNetworks.
+type HostNetworks struct {
+	Host     string        `json:"host"`
+	Networks []HostNetwork `json:"networks"`
+}
+
 // HostReport defines model for HostReport.
 type HostReport struct {
 	DaemonVersion string     `json:"daemon_version"`
@@ -193,6 +219,65 @@ type MachineRef struct {
 type MachineSummary struct {
 	Kind string `json:"kind"`
 	Name string `json:"name"`
+}
+
+// Network defines model for Network.
+type Network struct {
+	// Bridge `vmt-` plus the VNI as six lowercase hex digits.
+	Bridge  string          `json:"bridge"`
+	Created time.Time       `json:"created"`
+	Domain  string          `json:"domain"`
+	Home    string          `json:"home"`
+	Members []NetworkMember `json:"members"`
+	Name    string          `json:"name"`
+	Subnet  string          `json:"subnet"`
+	Vni     int             `json:"vni"`
+}
+
+// NetworkInput defines model for NetworkInput.
+type NetworkInput struct {
+	// Domain DNS domain; omitted is `<name>.test`.
+	Domain *string `json:"domain,omitempty"`
+
+	// Home The host whose libvirt network is the network's home.
+	Home string `json:"home"`
+
+	// Name The VM name rule, at most 63 characters, never `default`.
+	Name string `json:"name"`
+
+	// Subnet An IPv4 /24 written as its network address; omitted, the next free /24 of 10.77.0.0/16.
+	Subnet *string `json:"subnet,omitempty"`
+
+	// Vni A VNI to register as it is (a network a host already made); omitted, the lowest free one from 10000.
+	Vni *int `json:"vni,omitempty"`
+}
+
+// NetworkList defines model for NetworkList.
+type NetworkList struct {
+	Networks []Network `json:"networks"`
+}
+
+// NetworkMember defines model for NetworkMember.
+type NetworkMember struct {
+	Host   string    `json:"host"`
+	Joined time.Time `json:"joined"`
+	LanDev string    `json:"lan_dev"`
+	LanIp  string    `json:"lan_ip"`
+}
+
+// NetworkMemberInput defines model for NetworkMemberInput.
+type NetworkMemberInput struct {
+	// LanDev The interface that address is on (at most 15 characters).
+	LanDev string `json:"lan_dev"`
+
+	// LanIp The host's IPv4 address on the LAN, the source of its VXLAN link.
+	LanIp string `json:"lan_ip"`
+}
+
+// NetworkPeer defines model for NetworkPeer.
+type NetworkPeer struct {
+	Host  string `json:"host"`
+	LanIp string `json:"lan_ip"`
 }
 
 // ReportResult defines model for ReportResult.
@@ -393,6 +478,12 @@ type PutHostInventoryJSONRequestBody = HostReport
 // PutVMNotesJSONRequestBody defines body for PutVMNotes for application/json ContentType.
 type PutVMNotesJSONRequestBody = VMNotesInput
 
+// CreateNetworkJSONRequestBody defines body for CreateNetwork for application/json ContentType.
+type CreateNetworkJSONRequestBody = NetworkInput
+
+// PutNetworkMemberJSONRequestBody defines body for PutNetworkMember for application/json ContentType.
+type PutNetworkMemberJSONRequestBody = NetworkMemberInput
+
 // RequestEditorFn  is the function signature for the RequestEditor callback function
 type RequestEditorFn func(ctx context.Context, req *http.Request) error
 
@@ -496,6 +587,9 @@ type ClientInterface interface {
 
 	PutHostInventory(ctx context.Context, host Host, body PutHostInventoryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetHostNetworks request
+	GetHostNetworks(ctx context.Context, host Host, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListImages request
 	ListImages(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -527,6 +621,28 @@ type ClientInterface interface {
 	PutVMNotesWithBody(ctx context.Context, host Host, name Name, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	PutVMNotes(ctx context.Context, host Host, name Name, body PutVMNotesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListNetworks request
+	ListNetworks(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateNetworkWithBody request with any body
+	CreateNetworkWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	CreateNetwork(ctx context.Context, body CreateNetworkJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteNetwork request
+	DeleteNetwork(ctx context.Context, name Name, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetNetwork request
+	GetNetwork(ctx context.Context, name Name, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteNetworkMember request
+	DeleteNetworkMember(ctx context.Context, name Name, host Host, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PutNetworkMemberWithBody request with any body
+	PutNetworkMemberWithBody(ctx context.Context, name Name, host Host, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	PutNetworkMember(ctx context.Context, name Name, host Host, body PutNetworkMemberJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// Whoami request
 	Whoami(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -667,6 +783,18 @@ func (c *Client) PutHostInventory(ctx context.Context, host Host, body PutHostIn
 	return c.Client.Do(req)
 }
 
+func (c *Client) GetHostNetworks(ctx context.Context, host Host, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetHostNetworksRequest(c.Server, host)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) ListImages(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListImagesRequest(c.Server)
 	if err != nil {
@@ -789,6 +917,102 @@ func (c *Client) PutVMNotesWithBody(ctx context.Context, host Host, name Name, c
 
 func (c *Client) PutVMNotes(ctx context.Context, host Host, name Name, body PutVMNotesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPutVMNotesRequest(c.Server, host, name, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListNetworks(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListNetworksRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateNetworkWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateNetworkRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateNetwork(ctx context.Context, body CreateNetworkJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateNetworkRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DeleteNetwork(ctx context.Context, name Name, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteNetworkRequest(c.Server, name)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetNetwork(ctx context.Context, name Name, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetNetworkRequest(c.Server, name)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DeleteNetworkMember(ctx context.Context, name Name, host Host, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteNetworkMemberRequest(c.Server, name, host)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PutNetworkMemberWithBody(ctx context.Context, name Name, host Host, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutNetworkMemberRequestWithBody(c.Server, name, host, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PutNetworkMember(ctx context.Context, name Name, host Host, body PutNetworkMemberJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutNetworkMemberRequest(c.Server, name, host, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1162,6 +1386,40 @@ func NewPutHostInventoryRequestWithBody(server string, host Host, contentType st
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetHostNetworksRequest generates requests for GetHostNetworks
+func NewGetHostNetworksRequest(server string, host Host) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "host", runtime.ParamLocationPath, host)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/hosts/%s/networks", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -1608,6 +1866,236 @@ func NewPutVMNotesRequestWithBody(server string, host Host, name Name, contentTy
 	return req, nil
 }
 
+// NewListNetworksRequest generates requests for ListNetworks
+func NewListNetworksRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/networks")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateNetworkRequest calls the generic CreateNetwork builder with application/json body
+func NewCreateNetworkRequest(server string, body CreateNetworkJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateNetworkRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewCreateNetworkRequestWithBody generates requests for CreateNetwork with any type of body
+func NewCreateNetworkRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/networks")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteNetworkRequest generates requests for DeleteNetwork
+func NewDeleteNetworkRequest(server string, name Name) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "name", runtime.ParamLocationPath, name)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/networks/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetNetworkRequest generates requests for GetNetwork
+func NewGetNetworkRequest(server string, name Name) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "name", runtime.ParamLocationPath, name)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/networks/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewDeleteNetworkMemberRequest generates requests for DeleteNetworkMember
+func NewDeleteNetworkMemberRequest(server string, name Name, host Host) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "name", runtime.ParamLocationPath, name)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "host", runtime.ParamLocationPath, host)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/networks/%s/members/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewPutNetworkMemberRequest calls the generic PutNetworkMember builder with application/json body
+func NewPutNetworkMemberRequest(server string, name Name, host Host, body PutNetworkMemberJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPutNetworkMemberRequestWithBody(server, name, host, "application/json", bodyReader)
+}
+
+// NewPutNetworkMemberRequestWithBody generates requests for PutNetworkMember with any type of body
+func NewPutNetworkMemberRequestWithBody(server string, name Name, host Host, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "name", runtime.ParamLocationPath, name)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "host", runtime.ParamLocationPath, host)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/networks/%s/members/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PUT", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewWhoamiRequest generates requests for Whoami
 func NewWhoamiRequest(server string) (*http.Request, error) {
 	var err error
@@ -1735,6 +2223,9 @@ type ClientWithResponsesInterface interface {
 
 	PutHostInventoryWithResponse(ctx context.Context, host Host, body PutHostInventoryJSONRequestBody, reqEditors ...RequestEditorFn) (*PutHostInventoryResponse, error)
 
+	// GetHostNetworksWithResponse request
+	GetHostNetworksWithResponse(ctx context.Context, host Host, reqEditors ...RequestEditorFn) (*GetHostNetworksResponse, error)
+
 	// ListImagesWithResponse request
 	ListImagesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListImagesResponse, error)
 
@@ -1766,6 +2257,28 @@ type ClientWithResponsesInterface interface {
 	PutVMNotesWithBodyWithResponse(ctx context.Context, host Host, name Name, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutVMNotesResponse, error)
 
 	PutVMNotesWithResponse(ctx context.Context, host Host, name Name, body PutVMNotesJSONRequestBody, reqEditors ...RequestEditorFn) (*PutVMNotesResponse, error)
+
+	// ListNetworksWithResponse request
+	ListNetworksWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListNetworksResponse, error)
+
+	// CreateNetworkWithBodyWithResponse request with any body
+	CreateNetworkWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateNetworkResponse, error)
+
+	CreateNetworkWithResponse(ctx context.Context, body CreateNetworkJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateNetworkResponse, error)
+
+	// DeleteNetworkWithResponse request
+	DeleteNetworkWithResponse(ctx context.Context, name Name, reqEditors ...RequestEditorFn) (*DeleteNetworkResponse, error)
+
+	// GetNetworkWithResponse request
+	GetNetworkWithResponse(ctx context.Context, name Name, reqEditors ...RequestEditorFn) (*GetNetworkResponse, error)
+
+	// DeleteNetworkMemberWithResponse request
+	DeleteNetworkMemberWithResponse(ctx context.Context, name Name, host Host, reqEditors ...RequestEditorFn) (*DeleteNetworkMemberResponse, error)
+
+	// PutNetworkMemberWithBodyWithResponse request with any body
+	PutNetworkMemberWithBodyWithResponse(ctx context.Context, name Name, host Host, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutNetworkMemberResponse, error)
+
+	PutNetworkMemberWithResponse(ctx context.Context, name Name, host Host, body PutNetworkMemberJSONRequestBody, reqEditors ...RequestEditorFn) (*PutNetworkMemberResponse, error)
 
 	// WhoamiWithResponse request
 	WhoamiWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*WhoamiResponse, error)
@@ -1973,6 +2486,32 @@ func (r PutHostInventoryResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r PutHostInventoryResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetHostNetworksResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *HostNetworks
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON500      *InternalError
+}
+
+// Status returns HTTPResponse.Status
+func (r GetHostNetworksResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetHostNetworksResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -2237,6 +2776,161 @@ func (r PutVMNotesResponse) StatusCode() int {
 	return 0
 }
 
+type ListNetworksResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *NetworkList
+	JSON401      *Unauthorized
+	JSON500      *InternalError
+}
+
+// Status returns HTTPResponse.Status
+func (r ListNetworksResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListNetworksResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type CreateNetworkResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *Network
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON409      *Error
+	JSON413      *TooLarge
+	JSON500      *InternalError
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateNetworkResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateNetworkResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type DeleteNetworkResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON404      *NotFound
+	JSON409      *Error
+	JSON500      *InternalError
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteNetworkResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteNetworkResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetNetworkResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *Network
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON404      *NotFound
+	JSON500      *InternalError
+}
+
+// Status returns HTTPResponse.Status
+func (r GetNetworkResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetNetworkResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type DeleteNetworkMemberResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON404      *NotFound
+	JSON500      *InternalError
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteNetworkMemberResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteNetworkMemberResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type PutNetworkMemberResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *NetworkMember
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON404      *NotFound
+	JSON413      *TooLarge
+	JSON500      *InternalError
+}
+
+// Status returns HTTPResponse.Status
+func (r PutNetworkMemberResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PutNetworkMemberResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type WhoamiResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -2378,6 +3072,15 @@ func (c *ClientWithResponses) PutHostInventoryWithResponse(ctx context.Context, 
 	return ParsePutHostInventoryResponse(rsp)
 }
 
+// GetHostNetworksWithResponse request returning *GetHostNetworksResponse
+func (c *ClientWithResponses) GetHostNetworksWithResponse(ctx context.Context, host Host, reqEditors ...RequestEditorFn) (*GetHostNetworksResponse, error) {
+	rsp, err := c.GetHostNetworks(ctx, host, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetHostNetworksResponse(rsp)
+}
+
 // ListImagesWithResponse request returning *ListImagesResponse
 func (c *ClientWithResponses) ListImagesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListImagesResponse, error) {
 	rsp, err := c.ListImages(ctx, reqEditors...)
@@ -2474,6 +3177,76 @@ func (c *ClientWithResponses) PutVMNotesWithResponse(ctx context.Context, host H
 		return nil, err
 	}
 	return ParsePutVMNotesResponse(rsp)
+}
+
+// ListNetworksWithResponse request returning *ListNetworksResponse
+func (c *ClientWithResponses) ListNetworksWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListNetworksResponse, error) {
+	rsp, err := c.ListNetworks(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListNetworksResponse(rsp)
+}
+
+// CreateNetworkWithBodyWithResponse request with arbitrary body returning *CreateNetworkResponse
+func (c *ClientWithResponses) CreateNetworkWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateNetworkResponse, error) {
+	rsp, err := c.CreateNetworkWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateNetworkResponse(rsp)
+}
+
+func (c *ClientWithResponses) CreateNetworkWithResponse(ctx context.Context, body CreateNetworkJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateNetworkResponse, error) {
+	rsp, err := c.CreateNetwork(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateNetworkResponse(rsp)
+}
+
+// DeleteNetworkWithResponse request returning *DeleteNetworkResponse
+func (c *ClientWithResponses) DeleteNetworkWithResponse(ctx context.Context, name Name, reqEditors ...RequestEditorFn) (*DeleteNetworkResponse, error) {
+	rsp, err := c.DeleteNetwork(ctx, name, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteNetworkResponse(rsp)
+}
+
+// GetNetworkWithResponse request returning *GetNetworkResponse
+func (c *ClientWithResponses) GetNetworkWithResponse(ctx context.Context, name Name, reqEditors ...RequestEditorFn) (*GetNetworkResponse, error) {
+	rsp, err := c.GetNetwork(ctx, name, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetNetworkResponse(rsp)
+}
+
+// DeleteNetworkMemberWithResponse request returning *DeleteNetworkMemberResponse
+func (c *ClientWithResponses) DeleteNetworkMemberWithResponse(ctx context.Context, name Name, host Host, reqEditors ...RequestEditorFn) (*DeleteNetworkMemberResponse, error) {
+	rsp, err := c.DeleteNetworkMember(ctx, name, host, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteNetworkMemberResponse(rsp)
+}
+
+// PutNetworkMemberWithBodyWithResponse request with arbitrary body returning *PutNetworkMemberResponse
+func (c *ClientWithResponses) PutNetworkMemberWithBodyWithResponse(ctx context.Context, name Name, host Host, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutNetworkMemberResponse, error) {
+	rsp, err := c.PutNetworkMemberWithBody(ctx, name, host, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutNetworkMemberResponse(rsp)
+}
+
+func (c *ClientWithResponses) PutNetworkMemberWithResponse(ctx context.Context, name Name, host Host, body PutNetworkMemberJSONRequestBody, reqEditors ...RequestEditorFn) (*PutNetworkMemberResponse, error) {
+	rsp, err := c.PutNetworkMember(ctx, name, host, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutNetworkMemberResponse(rsp)
 }
 
 // WhoamiWithResponse request returning *WhoamiResponse
@@ -2892,6 +3665,60 @@ func ParsePutHostInventoryResponse(rsp *http.Response) (*PutHostInventoryRespons
 			return nil, err
 		}
 		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetHostNetworksResponse parses an HTTP response from a GetHostNetworksWithResponse call
+func ParseGetHostNetworksResponse(rsp *http.Response) (*GetHostNetworksResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetHostNetworksResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest HostNetworks
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalError
@@ -3431,6 +4258,323 @@ func ParsePutVMNotesResponse(rsp *http.Response) (*PutVMNotesResponse, error) {
 	return response, nil
 }
 
+// ParseListNetworksResponse parses an HTTP response from a ListNetworksWithResponse call
+func ParseListNetworksResponse(rsp *http.Response) (*ListNetworksResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListNetworksResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest NetworkList
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateNetworkResponse parses an HTTP response from a CreateNetworkWithResponse call
+func ParseCreateNetworkResponse(rsp *http.Response) (*CreateNetworkResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateNetworkResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest Network
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest TooLarge
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteNetworkResponse parses an HTTP response from a DeleteNetworkWithResponse call
+func ParseDeleteNetworkResponse(rsp *http.Response) (*DeleteNetworkResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteNetworkResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetNetworkResponse parses an HTTP response from a GetNetworkWithResponse call
+func ParseGetNetworkResponse(rsp *http.Response) (*GetNetworkResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetNetworkResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Network
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteNetworkMemberResponse parses an HTTP response from a DeleteNetworkMemberWithResponse call
+func ParseDeleteNetworkMemberResponse(rsp *http.Response) (*DeleteNetworkMemberResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteNetworkMemberResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePutNetworkMemberResponse parses an HTTP response from a PutNetworkMemberWithResponse call
+func ParsePutNetworkMemberResponse(rsp *http.Response) (*PutNetworkMemberResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PutNetworkMemberResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest NetworkMember
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest TooLarge
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseWhoamiResponse parses an HTTP response from a WhoamiWithResponse call
 func ParseWhoamiResponse(rsp *http.Response) (*WhoamiResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -3516,6 +4660,9 @@ type ServerInterface interface {
 	// A host daemon reports its full VM list
 	// (PUT /v1/hosts/{host}/inventory)
 	PutHostInventory(w http.ResponseWriter, r *http.Request, host Host)
+	// The networks one host belongs to, with its peers' LAN addresses
+	// (GET /v1/hosts/{host}/networks)
+	GetHostNetworks(w http.ResponseWriter, r *http.Request, host Host)
 	// List images, ordered by name
 	// (GET /v1/images)
 	ListImages(w http.ResponseWriter, r *http.Request)
@@ -3546,6 +4693,24 @@ type ServerInterface interface {
 	// Record a VM's origin, or set or clear its comment
 	// (PUT /v1/inventory/{host}/{name}/notes)
 	PutVMNotes(w http.ResponseWriter, r *http.Request, host Host, name Name)
+	// The registered vmtool networks, with their members
+	// (GET /v1/networks)
+	ListNetworks(w http.ResponseWriter, r *http.Request)
+	// Register a network and allocate its VNI and subnet
+	// (POST /v1/networks)
+	CreateNetwork(w http.ResponseWriter, r *http.Request)
+	// Remove a network from the registry
+	// (DELETE /v1/networks/{name})
+	DeleteNetwork(w http.ResponseWriter, r *http.Request, name Name)
+	// One registered network, with its members
+	// (GET /v1/networks/{name})
+	GetNetwork(w http.ResponseWriter, r *http.Request, name Name)
+	// Remove a host from a network
+	// (DELETE /v1/networks/{name}/members/{host})
+	DeleteNetworkMember(w http.ResponseWriter, r *http.Request, name Name, host Host)
+	// Add a host to a network, or update its LAN address
+	// (PUT /v1/networks/{name}/members/{host})
+	PutNetworkMember(w http.ResponseWriter, r *http.Request, name Name, host Host)
 	// The name of the calling token
 	// (GET /v1/whoami)
 	Whoami(w http.ResponseWriter, r *http.Request)
@@ -3836,6 +5001,37 @@ func (siw *ServerInterfaceWrapper) PutHostInventory(w http.ResponseWriter, r *ht
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PutHostInventory(w, r, host)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetHostNetworks operation middleware
+func (siw *ServerInterfaceWrapper) GetHostNetworks(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "host" -------------
+	var host Host
+
+	err = runtime.BindStyledParameterWithOptions("simple", "host", r.PathValue("host"), &host, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "host", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetHostNetworks(w, r, host)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -4248,6 +5444,188 @@ func (siw *ServerInterfaceWrapper) PutVMNotes(w http.ResponseWriter, r *http.Req
 	handler.ServeHTTP(w, r)
 }
 
+// ListNetworks operation middleware
+func (siw *ServerInterfaceWrapper) ListNetworks(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListNetworks(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateNetwork operation middleware
+func (siw *ServerInterfaceWrapper) CreateNetwork(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateNetwork(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteNetwork operation middleware
+func (siw *ServerInterfaceWrapper) DeleteNetwork(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "name" -------------
+	var name Name
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteNetwork(w, r, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetNetwork operation middleware
+func (siw *ServerInterfaceWrapper) GetNetwork(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "name" -------------
+	var name Name
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetNetwork(w, r, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteNetworkMember operation middleware
+func (siw *ServerInterfaceWrapper) DeleteNetworkMember(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "name" -------------
+	var name Name
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "host" -------------
+	var host Host
+
+	err = runtime.BindStyledParameterWithOptions("simple", "host", r.PathValue("host"), &host, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "host", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteNetworkMember(w, r, name, host)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutNetworkMember operation middleware
+func (siw *ServerInterfaceWrapper) PutNetworkMember(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "name" -------------
+	var name Name
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "host" -------------
+	var host Host
+
+	err = runtime.BindStyledParameterWithOptions("simple", "host", r.PathValue("host"), &host, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "host", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutNetworkMember(w, r, name, host)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // Whoami operation middleware
 func (siw *ServerInterfaceWrapper) Whoami(w http.ResponseWriter, r *http.Request) {
 
@@ -4410,6 +5788,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("GET "+options.BaseURL+"/v1/credentials/vms/{host}/{name}", wrapper.GetVMCredential)
 	m.HandleFunc("PUT "+options.BaseURL+"/v1/credentials/vms/{host}/{name}", wrapper.PutVMCredential)
 	m.HandleFunc("PUT "+options.BaseURL+"/v1/hosts/{host}/inventory", wrapper.PutHostInventory)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/hosts/{host}/networks", wrapper.GetHostNetworks)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/images", wrapper.ListImages)
 	m.HandleFunc("DELETE "+options.BaseURL+"/v1/images/{name}", wrapper.DeleteImage)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/images/{name}", wrapper.GetImage)
@@ -4420,6 +5799,12 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("DELETE "+options.BaseURL+"/v1/inventory/{host}/{name}", wrapper.DeleteInventoryRow)
 	m.HandleFunc("POST "+options.BaseURL+"/v1/inventory/{host}/{name}/delist", wrapper.DelistVM)
 	m.HandleFunc("PUT "+options.BaseURL+"/v1/inventory/{host}/{name}/notes", wrapper.PutVMNotes)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/networks", wrapper.ListNetworks)
+	m.HandleFunc("POST "+options.BaseURL+"/v1/networks", wrapper.CreateNetwork)
+	m.HandleFunc("DELETE "+options.BaseURL+"/v1/networks/{name}", wrapper.DeleteNetwork)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/networks/{name}", wrapper.GetNetwork)
+	m.HandleFunc("DELETE "+options.BaseURL+"/v1/networks/{name}/members/{host}", wrapper.DeleteNetworkMember)
+	m.HandleFunc("PUT "+options.BaseURL+"/v1/networks/{name}/members/{host}", wrapper.PutNetworkMember)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/whoami", wrapper.Whoami)
 	m.HandleFunc("GET "+options.BaseURL+"/version", wrapper.GetVersion)
 
@@ -4851,6 +6236,59 @@ func (response PutHostInventory413JSONResponse) VisitPutHostInventoryResponse(w 
 type PutHostInventory500JSONResponse struct{ InternalErrorJSONResponse }
 
 func (response PutHostInventory500JSONResponse) VisitPutHostInventoryResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetHostNetworksRequestObject struct {
+	Host Host `json:"host"`
+}
+
+type GetHostNetworksResponseObject interface {
+	VisitGetHostNetworksResponse(w http.ResponseWriter) error
+}
+
+type GetHostNetworks200JSONResponse HostNetworks
+
+func (response GetHostNetworks200JSONResponse) VisitGetHostNetworksResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetHostNetworks400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response GetHostNetworks400JSONResponse) VisitGetHostNetworksResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetHostNetworks401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response GetHostNetworks401JSONResponse) VisitGetHostNetworksResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetHostNetworks403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response GetHostNetworks403JSONResponse) VisitGetHostNetworksResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetHostNetworks500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response GetHostNetworks500JSONResponse) VisitGetHostNetworksResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(500)
 
@@ -5416,6 +6854,333 @@ func (response PutVMNotes500JSONResponse) VisitPutVMNotesResponse(w http.Respons
 	return json.NewEncoder(w).Encode(response)
 }
 
+type ListNetworksRequestObject struct {
+}
+
+type ListNetworksResponseObject interface {
+	VisitListNetworksResponse(w http.ResponseWriter) error
+}
+
+type ListNetworks200JSONResponse NetworkList
+
+func (response ListNetworks200JSONResponse) VisitListNetworksResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ListNetworks401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response ListNetworks401JSONResponse) VisitListNetworksResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ListNetworks500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response ListNetworks500JSONResponse) VisitListNetworksResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CreateNetworkRequestObject struct {
+	Body *CreateNetworkJSONRequestBody
+}
+
+type CreateNetworkResponseObject interface {
+	VisitCreateNetworkResponse(w http.ResponseWriter) error
+}
+
+type CreateNetwork201JSONResponse Network
+
+func (response CreateNetwork201JSONResponse) VisitCreateNetworkResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CreateNetwork400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response CreateNetwork400JSONResponse) VisitCreateNetworkResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CreateNetwork401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response CreateNetwork401JSONResponse) VisitCreateNetworkResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CreateNetwork409JSONResponse Error
+
+func (response CreateNetwork409JSONResponse) VisitCreateNetworkResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CreateNetwork413JSONResponse struct{ TooLargeJSONResponse }
+
+func (response CreateNetwork413JSONResponse) VisitCreateNetworkResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(413)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CreateNetwork500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response CreateNetwork500JSONResponse) VisitCreateNetworkResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteNetworkRequestObject struct {
+	Name Name `json:"name"`
+}
+
+type DeleteNetworkResponseObject interface {
+	VisitDeleteNetworkResponse(w http.ResponseWriter) error
+}
+
+type DeleteNetwork204Response struct {
+}
+
+func (response DeleteNetwork204Response) VisitDeleteNetworkResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteNetwork400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response DeleteNetwork400JSONResponse) VisitDeleteNetworkResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteNetwork401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response DeleteNetwork401JSONResponse) VisitDeleteNetworkResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteNetwork404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response DeleteNetwork404JSONResponse) VisitDeleteNetworkResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteNetwork409JSONResponse Error
+
+func (response DeleteNetwork409JSONResponse) VisitDeleteNetworkResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteNetwork500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response DeleteNetwork500JSONResponse) VisitDeleteNetworkResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetNetworkRequestObject struct {
+	Name Name `json:"name"`
+}
+
+type GetNetworkResponseObject interface {
+	VisitGetNetworkResponse(w http.ResponseWriter) error
+}
+
+type GetNetwork200JSONResponse Network
+
+func (response GetNetwork200JSONResponse) VisitGetNetworkResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetNetwork400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response GetNetwork400JSONResponse) VisitGetNetworkResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetNetwork401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response GetNetwork401JSONResponse) VisitGetNetworkResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetNetwork404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response GetNetwork404JSONResponse) VisitGetNetworkResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetNetwork500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response GetNetwork500JSONResponse) VisitGetNetworkResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteNetworkMemberRequestObject struct {
+	Name Name `json:"name"`
+	Host Host `json:"host"`
+}
+
+type DeleteNetworkMemberResponseObject interface {
+	VisitDeleteNetworkMemberResponse(w http.ResponseWriter) error
+}
+
+type DeleteNetworkMember204Response struct {
+}
+
+func (response DeleteNetworkMember204Response) VisitDeleteNetworkMemberResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteNetworkMember400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response DeleteNetworkMember400JSONResponse) VisitDeleteNetworkMemberResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteNetworkMember401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response DeleteNetworkMember401JSONResponse) VisitDeleteNetworkMemberResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteNetworkMember404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response DeleteNetworkMember404JSONResponse) VisitDeleteNetworkMemberResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteNetworkMember500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response DeleteNetworkMember500JSONResponse) VisitDeleteNetworkMemberResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutNetworkMemberRequestObject struct {
+	Name Name `json:"name"`
+	Host Host `json:"host"`
+	Body *PutNetworkMemberJSONRequestBody
+}
+
+type PutNetworkMemberResponseObject interface {
+	VisitPutNetworkMemberResponse(w http.ResponseWriter) error
+}
+
+type PutNetworkMember200JSONResponse NetworkMember
+
+func (response PutNetworkMember200JSONResponse) VisitPutNetworkMemberResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutNetworkMember400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PutNetworkMember400JSONResponse) VisitPutNetworkMemberResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutNetworkMember401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PutNetworkMember401JSONResponse) VisitPutNetworkMemberResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutNetworkMember404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response PutNetworkMember404JSONResponse) VisitPutNetworkMemberResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutNetworkMember413JSONResponse struct{ TooLargeJSONResponse }
+
+func (response PutNetworkMember413JSONResponse) VisitPutNetworkMemberResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(413)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutNetworkMember500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response PutNetworkMember500JSONResponse) VisitPutNetworkMemberResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
 type WhoamiRequestObject struct {
 }
 
@@ -5483,6 +7248,9 @@ type StrictServerInterface interface {
 	// A host daemon reports its full VM list
 	// (PUT /v1/hosts/{host}/inventory)
 	PutHostInventory(ctx context.Context, request PutHostInventoryRequestObject) (PutHostInventoryResponseObject, error)
+	// The networks one host belongs to, with its peers' LAN addresses
+	// (GET /v1/hosts/{host}/networks)
+	GetHostNetworks(ctx context.Context, request GetHostNetworksRequestObject) (GetHostNetworksResponseObject, error)
 	// List images, ordered by name
 	// (GET /v1/images)
 	ListImages(ctx context.Context, request ListImagesRequestObject) (ListImagesResponseObject, error)
@@ -5513,6 +7281,24 @@ type StrictServerInterface interface {
 	// Record a VM's origin, or set or clear its comment
 	// (PUT /v1/inventory/{host}/{name}/notes)
 	PutVMNotes(ctx context.Context, request PutVMNotesRequestObject) (PutVMNotesResponseObject, error)
+	// The registered vmtool networks, with their members
+	// (GET /v1/networks)
+	ListNetworks(ctx context.Context, request ListNetworksRequestObject) (ListNetworksResponseObject, error)
+	// Register a network and allocate its VNI and subnet
+	// (POST /v1/networks)
+	CreateNetwork(ctx context.Context, request CreateNetworkRequestObject) (CreateNetworkResponseObject, error)
+	// Remove a network from the registry
+	// (DELETE /v1/networks/{name})
+	DeleteNetwork(ctx context.Context, request DeleteNetworkRequestObject) (DeleteNetworkResponseObject, error)
+	// One registered network, with its members
+	// (GET /v1/networks/{name})
+	GetNetwork(ctx context.Context, request GetNetworkRequestObject) (GetNetworkResponseObject, error)
+	// Remove a host from a network
+	// (DELETE /v1/networks/{name}/members/{host})
+	DeleteNetworkMember(ctx context.Context, request DeleteNetworkMemberRequestObject) (DeleteNetworkMemberResponseObject, error)
+	// Add a host to a network, or update its LAN address
+	// (PUT /v1/networks/{name}/members/{host})
+	PutNetworkMember(ctx context.Context, request PutNetworkMemberRequestObject) (PutNetworkMemberResponseObject, error)
 	// The name of the calling token
 	// (GET /v1/whoami)
 	Whoami(ctx context.Context, request WhoamiRequestObject) (WhoamiResponseObject, error)
@@ -5774,6 +7560,32 @@ func (sh *strictHandler) PutHostInventory(w http.ResponseWriter, r *http.Request
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(PutHostInventoryResponseObject); ok {
 		if err := validResponse.VisitPutHostInventoryResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetHostNetworks operation middleware
+func (sh *strictHandler) GetHostNetworks(w http.ResponseWriter, r *http.Request, host Host) {
+	var request GetHostNetworksRequestObject
+
+	request.Host = host
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetHostNetworks(ctx, request.(GetHostNetworksRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetHostNetworks")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetHostNetworksResponseObject); ok {
+		if err := validResponse.VisitGetHostNetworksResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -6053,6 +7865,174 @@ func (sh *strictHandler) PutVMNotes(w http.ResponseWriter, r *http.Request, host
 	}
 }
 
+// ListNetworks operation middleware
+func (sh *strictHandler) ListNetworks(w http.ResponseWriter, r *http.Request) {
+	var request ListNetworksRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListNetworks(ctx, request.(ListNetworksRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListNetworks")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListNetworksResponseObject); ok {
+		if err := validResponse.VisitListNetworksResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateNetwork operation middleware
+func (sh *strictHandler) CreateNetwork(w http.ResponseWriter, r *http.Request) {
+	var request CreateNetworkRequestObject
+
+	var body CreateNetworkJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateNetwork(ctx, request.(CreateNetworkRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateNetwork")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateNetworkResponseObject); ok {
+		if err := validResponse.VisitCreateNetworkResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteNetwork operation middleware
+func (sh *strictHandler) DeleteNetwork(w http.ResponseWriter, r *http.Request, name Name) {
+	var request DeleteNetworkRequestObject
+
+	request.Name = name
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteNetwork(ctx, request.(DeleteNetworkRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteNetwork")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteNetworkResponseObject); ok {
+		if err := validResponse.VisitDeleteNetworkResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetNetwork operation middleware
+func (sh *strictHandler) GetNetwork(w http.ResponseWriter, r *http.Request, name Name) {
+	var request GetNetworkRequestObject
+
+	request.Name = name
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetNetwork(ctx, request.(GetNetworkRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetNetwork")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetNetworkResponseObject); ok {
+		if err := validResponse.VisitGetNetworkResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteNetworkMember operation middleware
+func (sh *strictHandler) DeleteNetworkMember(w http.ResponseWriter, r *http.Request, name Name, host Host) {
+	var request DeleteNetworkMemberRequestObject
+
+	request.Name = name
+	request.Host = host
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteNetworkMember(ctx, request.(DeleteNetworkMemberRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteNetworkMember")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteNetworkMemberResponseObject); ok {
+		if err := validResponse.VisitDeleteNetworkMemberResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PutNetworkMember operation middleware
+func (sh *strictHandler) PutNetworkMember(w http.ResponseWriter, r *http.Request, name Name, host Host) {
+	var request PutNetworkMemberRequestObject
+
+	request.Name = name
+	request.Host = host
+
+	var body PutNetworkMemberJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PutNetworkMember(ctx, request.(PutNetworkMemberRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PutNetworkMember")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PutNetworkMemberResponseObject); ok {
+		if err := validResponse.VisitPutNetworkMemberResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // Whoami operation middleware
 func (sh *strictHandler) Whoami(w http.ResponseWriter, r *http.Request) {
 	var request WhoamiRequestObject
@@ -6104,106 +8084,132 @@ func (sh *strictHandler) GetVersion(w http.ResponseWriter, r *http.Request) {
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"H4sIAAAAAAAC/+x9fW/buNLvVyF8D9AEUJykTXtPHdw/uu+9z2Z30aY5D7DbJ6alscUTifSSlF2fRb77",
-	"g5khJdmSHadNsjiLg/2jrSWRw+G8/OaF3D8GqSnnRoP2bjD6YzCXVpbgwdK/fjDO459KD0aDufT5IBlo",
-	"WcJgNMjxUTKw8HulLGSDkbcVJAOX5lBK/Mav5vie81bp2eD2Nhn8RF/2jkZ/3Ge0W3zZzY12QJR+JbN3",
-	"8HsFTG9qtAdNf5XzeaFS6ZXRx/90RuNvzbB/szAdjAb/57jhwjE/dcffWmssT5WBS62a4yCD0eAyB2F5",
-	"MqGcKGUxNbaEbCjwycRkK4HrccLnIKYKikwYXayGg9tk8J2xE5VloJ+GTG9uQItSroQ2XmRG+Fy5c+Ej",
-	"ncqJqfoEmfDwyROBb7UHq2XBwz4Jkc4bC2IqVQHZTtp+Mv47U+ns8cn6yQhXpblQpZxBIq4uhIXU2CwR",
-	"Si9Ae2NXwpqlMFaUMs2VBiLw0pgfpZ3B08pg5JZZgCX2OfUvEIUqld/Jzg9aVj43Vv0LnoClF8o5pWfI",
-	"MqUXslCZmIC0YFlIh2Qiwig4ydcWMtBeyaK97XNr5mC9Yq2HKKQb5iEZOC8L2oYNttkKSBnFMgctZNhW",
-	"AZ+U805MjRVSG5+DFR8+vP1mOEji0BNjCpB6cHvbNlO/BhI+1u+ZyT8h9UjCN1Ao56GH7LRemru+gbm/",
-	"rrRXBT5BQyL9YDTIpIcjr8gqdhaXy+y6NUaLATWVyaCqVNZvh9vk01vJNoq6U/UuVLmbnkXKuUyVX11P",
-	"Vh7c2uKU9q/OmoUp7WEGFoe6UbzNoKsSyZuqAjkwKUx6gx/kSrdIaDgyN6bolQOP6ujv5kN4L4yUbFIf",
-	"KOtbfW0o9xPNvcUHfe87mBvru4NnEkqjrxdgnWLl7Cx8Bhqs9JBdS7+/ZC1KGl95KN1dms7EXV3gd6X8",
-	"9Ja/OTt5/aoeWForV501r5GWbC6GiejjyFs0xl1m6AArujYgl89fvup/pP4Fe4pkNUeOZfvycGOtAdgE",
-	"UsLEzaBbl/mjcj37Tu5o/x1iht3esR1h0F5SorPrkoL47x6UxIEIUXYoSgbBi+4/4gV/8L4qS2lXfUMu",
-	"ys+g7+qiO9QGv3jlPH6L8J38i0D6/mpsdFu4W3JZSOevbW0g9tPvQi22DLdFi/rFuT13jwLTLIH2nWy5",
-	"uugyRVbeOC+t73drqSnLAFLWXft31pSEdq4unjmhjQd3LqCc++Dr0amDUPgI0VoPc7a75fWZftZCClyc",
-	"uLpI6sGFWwLMhYXSLAL2R4QodSaUd6IwM6Vx2v02KlPuZn/xJQ/cowI0ynWlLchMTvoA0S8WHGhPZGLM",
-	"1SwHxVykpioyih1wCIoemL80spCe1yadFywO52JMj8ZCWhA+DkZv3Giz1MJocMPfdA+ySgZTZcultP3m",
-	"fKqs89cOOHbaj424S9dO6XTH0gkOGtzTqwtaDq1cG1EYPQMrcun237dcuruhWR6sQedrNe/9uZD3XngJ",
-	"ZTDbGyicfhdKi+/VV8Neh7fVn2rwS2NvXHfUy6h2qbSZQ2YuSm9MIeInUVJw5c82BEZOaBt6lJSkZC8F",
-	"uLr4iWfq0wJj1Uzpu4f4md/j6MH382ALqk4Gi3ReuT7T2uM9Yt4jifCb54uD1LtHApG0LGJLQ6KJaCzi",
-	"moa0haYrlX1GOTjUJuzqMc1ZZsG53vVH5N55sFWc5tK5pbH9X82tWkgP1zew6n9eTQqVbn18T9CWDCoH",
-	"9l4ukNab1CxpjdBa2fo61qjejQE7m/FWzyu/c0dK+elH0DOfD0anJ8/Pku1bFIOrErzEWEcWCraEVa0t",
-	"ao3/6uXLF6+SOzdtny/WtnGPD9r7dOfrGzu3fct2bEE/EH9wuLpB6k5UGcZ6B9MuYfdXwweJbwJr9xDp",
-	"yIEvpnwHIX3Tc7T6DlxV9Oxnk6np8YewLFbX24G4hV1f70pE1TkoJE2YKcNIWQbwZSEFtYBMFNITDsmE",
-	"LBCHrcQE8EtM0kGWCMd5XWE0iKV0Qs20sZDtkb0KlK8tsrWiSP52hn4Ggn8qaHu5Bmc5SLkL0B5w7s/n",
-	"UodYQuRygWnLf1bOi4XUyuWQHQ5rmKsco1yONAjtM/dHwte57RuAuWugMgNhnhFTjmEm/LiUiJaUH4o3",
-	"DIuMFVNZOBAlSO14KfThEizQIj4LTG9Bmg8AG7vIsFCThbKeiiIjITWXR+qfZVGYpUuE9KJEsT99/ndB",
-	"WTfUiA+X3x39XRgKG0ShNCRCG5Ea7a0pRJpLK1NUDuSdNuLZ8bOh+Ml4zn5DJrwhlnE9JoDSmVqAI60h",
-	"yF/KDISpvFMZxFcyAxRDihQpqoMCHGqZmwKCzvaGkV8Ckw9k/DvO40BMrMpmhIjHi9IfjcW8qJxw6pMo",
-	"zBJsKh2IHD6JTM2Ud4eJWCqfC5BpTpM8i0n/4PTaYsUSy2KljYbzxhRZmBcyBSeWufQtOc6jtN0flDcZ",
-	"wldnXW1+RMD9YEi7zwheqvQGevwJfJorC+5euVcV05uPlMj0Na13pML5vaS9iEjdZiazjydXF7tiiK2x",
-	"7799nLBvyaU3AnzQ6OHq4s7A4d8c2Te83u5uMlNKpamOhybMgWiFwGICmN4R3gzvxLibW3QXy3uB+f3l",
-	"/v6y+QXit1OaohnvLErNu1vw7VrKlbwQptCENsKCA7ugqnKv5yxluivxdPfa4os8FBn1LSsyoSa5vp5W",
-	"crmb2bv3Bt4/7/QFOxhJ37HeLaZga0b9TQBkL0+f3xuQuaFgQUgLkNYJ1ST6CpALYIyLSE0KB6kFP2KM",
-	"kQmlxbxAzaVGBYIbLXvw8vR58pCs3st+DMX3agFaTFZoQ6QHTPurNCckj0sRE5gaTnjHHCcl4+okJ8Iy",
-	"U3l8VQqsj3D7yFQc4OsJAdRDSnwCZLCO6Vti0LO1P9dLX1/KPxC6EcDFkJBA7tSa8rxOw8cmiIBBeWFY",
-	"rCBiheT9wO2oHAzFt4gpuZtJdgWjkQcmfUPEihA9r5OI5fxEUHE/EVjqF8buLM9Ee7g+zNf4QBkt0DCK",
-	"g3fffS1evHjx+lBIjpcIWnt6BbE3DSOW1nhAIbwfFKMn1zsA2fZOBCjnRT/K7d3Ypii4zsvt1cINMxFf",
-	"7LMI/8iNLNX2JMymKJGsK51RkoJ6ylJZFJDV8QSKVi0ypshiEH06PB2eRG1BN0Byh66UxwmloJiSxAeD",
-	"YGv7EpL3yAV1l41wGdLKKr96jxaBl8xNSG8qn9dNThRI08+NcOTezxsUHV9f59P4TeinIlkbCY4OxG/V",
-	"ycmLlD+kv8P4XMg0hTnqGzFkshLff3spjhenx1yOP/4DF3F7PCnMJIRcOEMOMiOqmBGDtQkbYuVc/Res",
-	"uAtL6anpkvrD5eUvwlV2KlPATR2zFTiiDRwnpDdECUXWDXAKO+zRuNhKO9QxSeZfKg1WTCBHMZHi8sf3",
-	"Rx5sqbT0mD+ZW/NpNRTv55AekWkcidJkUGAg7rNCTcR7sAuw1H+IVCUCyglkGWTCzSElOqRIMVftqbhY",
-	"t5Gw8FEqB43IUHy7ALsSKNdsF+AT8jpwmLVCBHlxYnPTvqKNj5uGMlrvWRMIpzmkN2xd6JVnTrz/4c3R",
-	"85evhJxJpUOuAHeJ0E+ODk9HkV/JsuD1aLcE68TZyamgzNNSoalFL9RiuTWVB0oa2FVwlkGPlG76+8wU",
-	"9a9KU3BuWhW42nOhDY8rYrNsTJQUZkbWmjIdPKPREF5uza1wezOz1IXBdBnJcLIhvEa3xAUFlikeijch",
-	"a0IG4wDHn4MV7PDG+Md1iyHjQ54sZm7azYEj9ErKdecdR61ZkkEb0/LGv3zgH3EKd/wH/nF7XDdujs/x",
-	"S2AZYeYgueSam/1IWLJ5xYFLbzlrSFi24VESVm5sGA7nCw5c+QIGo0FwsSw7b355iwmIaMYHZCIJxMxB",
-	"y7kajAYvhifDFxQK+pyMFK6mmdEdt+sPob+tFve32WA0wLJFp4jkBhtd089PTh6s8bNdL+lp/2SdDHTX",
-	"3bTGZoCYb8I5QWpLPTs53TZXTfzxWu/qbTJ4eXJy90frvc3kD2I1ghgmqCLGmol2JpLrxAEnEPEJukFW",
-	"v0MaYtvWBAvOprcAD91N+oZ+72xTd5fOugacv80Cx/ZYfKtD/nOZfHZydvdHdbfuQ+wKr1LIuBPPXBAd",
-	"bnHsEfzvwe/B0AcX+9ZkW7u1ke6h+Fpaq8BFQ/4X38A3rZ0rpVZTcH4DUjhO8jXnTn7tn7B55ZhOktx+",
-	"xCxTjwj8Um0RAWLeVyZbPd7uc4x9u45Iva3g9vFlEPNOPcL3nsLq9uEU9H0C0tygSQuC+LRyePri7o/q",
-	"wxQPIYfEBCH3kMYkVD8QtGKtKtqbHlO/KGt0sa+xX0uO/8fOd+w8l8caHosDLEGRwMZE7orQ/9TYw5YT",
-	"2Mhc1TjujJMZ49+4kv3bYERtjuP9zn+Ig1CaxRSKhZCBODzn+IfRokiDQV8DhZwpQQgcZuByHg2qQmmx",
-	"shY04VrWyMrFxE/HpW2IzYa17Dqbjdw3R+uITAtCr0txkEpttEplIf5+dEb/nT7HSuLhMMaav1dAlbEQ",
-	"aoY84/5H9D4+osVb48cdDvcyD0d+IjV1p0UTysY9/HOs4cnZgzGm59RU//G2BoE3WtAV/zFpzfhw+EBg",
-	"YFO9E6Fae5FFQlTsi1CuLcr3BwrhuMGXA4qO3X54LNGt2j0xjNisYf0HS+zGEl1h7kMOJMntLH8NJfrT",
-	"E5unsPcV8kZ4N08rFCsh25mYWrUoJB8zAWM6JYx+QigvDqIZCMUM/hCREudNmgSumIEXZycvDltCwT1R",
-	"8VtumLm6EIUiHpDESJGp6XQk/v/7n38i69zq/xEX6itxcHb64pBmxBNl4urChRIEt6ZFjqJXosSR0g4s",
-	"PjBWhGomfk0GBksa0tGRjSR+T2m6c+6UaddjIuHsFzzVg5wXplTe8WlvewOZmIWGGTrW0f2ulD7NGRPg",
-	"uDPwLp4ZsWbJsIA6bVrggWtYMUEXqnIjIVsHWgj5LK3yHkIFx+fWVLO8yXnVcrSOTI/p+3EShw/Te1MR",
-	"nT6HEqm6ugh4abO9bsynQ7iRrWlCa9woNbZhiyJKF0qQz2OX1DNXd8uFh6ruUeQtrvnKOVYNn3xNIbKT",
-	"s264AzxtKCriu/jdUHAzIvOnlVOqyXvmBBa9Uiw1ibCvVC1SyANzI3xznnpEmVCaFzdnQW1QWJyS3Ih5",
-	"VPdlbmvcxDpHX6cmrpNBI2Ti+clJ4DX7WGYwBSO51DOSCSyQzYZi3D4xGVsOQ0dje2XngbfBmeJYLjdL",
-	"nbQApvCGOYSKYmFaOaj7vqggi1NuCDqyMmQ4nSpAp9AHU3+pPFqi5szg47jJ1rnYJ/aPay3EPc7xTdjl",
-	"A2OjeAuJuyELOHxiRLmHT2yuovhTvGgoDrAUBwFkHZ9WRRH9Re0sm6OvW/Pdb/mVR5SA5mju1gy30hlg",
-	"wyXR+2fns5lpnTT7BlP3Tl68DT2Ad2ctLut6ECL4f4cUxtnJ68e/A+ONmFcuZ4ehHO0FYxcxt2ZGDboP",
-	"mk7RvAm7kuVb9vSBdWZbjN7Wkr9qbutnHdaJSUfwMpNefnnKu8vLCL2dtyDL4Omp9YEAQazlUzWaHBOD",
-	"hQAnI3ZgpDCpplMIzVjcIk3lTS0KgykjRGFxMKENXziTyjnHALXiR1vY9BrFanWrXg6/V5jnG//3EUnK",
-	"0fsf3jx/+WrcHJymxq/6ta9ZJo+4HwxrubFuHqDjMi66sTw0Fj4NGTuFmcGToWjUUWpOASL2Ia0MLVA4",
-	"XKZm4Fo98coziqbT4T2TxlXjE1METxCQ8wRwBuyChKw9PyNqmoeAp2oAZBwu1qYjbjQV0oS7RxgRpaxe",
-	"Da+B+zM8VbFLilYcpGat7eA1PjcI6CgkIdWqR5cdbouDNK/0DcP2MMbp6RYwGC3LzmRllAIzrWUjEa/O",
-	"Nk43tNoKt3XCrIvPzkTlXHrU1sFo8D+/nhy9lkfTj3+8Orv9W1/H3Sa9CGWjSCrN3W/nsZkkw6j1NKSW",
-	"qS/qcCu965wdtOnr9PKXSquyKgejk25fP6dZ94HZJvXgj9g6rJvvesKJ0pKAe+91a0+Fs3d6DIqygqos",
-	"ZUdNzmPURA9ZPzzdLpUMnp+cPg2NtQFsBWKBvif2dU+BaUKmaC9kc3Z6+rR3owUHta5tDwOyPsypJyqC",
-	"rKR2vP3wmlr5WvHLBheps+ke3WiUud+/4ZBz+7GdqUTzkTWJwKbTDz1uLEwF24yuIXynMIlm+EOjoW4M",
-	"Y78f2VYntTrug7qzNhz9looXvfMVsuxeluYLjdw2XSY7j7aczTgRsr6O7pZ+jmu7xwWYf0XMHLpzCSe0",
-	"+3J//YieuN16++vH249tZfwmSGKtjs8cb1pbLT8Tc/dqMxPj7p+tb4B8OFCyUZoDyJyQa+2PeCw0aCDD",
-	"cz4smoOFkHYPT80cdGgNHW/vJx7XZjrove9T+4RwYUK6fvoSTUblY6to+1RzSENHGhpknzTBAx8tpZOV",
-	"OB6lw7mQwB/hqMo1BiRkOGloQt2tCYTibzm12Wc96DwAJysu41nGDRPycF4ozNAb7GNcEBb41w5xL5T2",
-	"3T7h2k2EJETUo3alq9cZfmiOB/DNuU0bhZnymWSq27QTiFR/cFJlCTVXhEM2CwVLimxbdZZqfoyECjoK",
-	"HOshlKTV4FwoKHzP13txRSGUjDiMpZQ9ZsX/HzWSDAUmpF3CL+ssdhh1ahFcsDrkPldx0X4LCZ6qwsdX",
-	"qTd6q2Ns5dd3hlY/s2Kq+taleB0Z1tK2NHmEo2U7bnHuAJfCGWIQMcDnoOyWC7T65gsXTnTma+6reMwu",
-	"koaV25x/fOFJ9feL1fGyVfaql4Cqk/eLalc1d7W13amrmEvBLVE+JGBG9W146wfeYvl2ZgB9UQmZkh6w",
-	"FkzKa2wo2cb0TasQetCqloZS6SHrJp4rfFufMvQbRynYisgC1ftgHG97ICrHrbv72CVCMT0cchPZ+uVk",
-	"oPDvfEW0pIVpYwNlrXI/ra5PjUM6PXL7nVnet6krgEr7Z7Vybcn5Iz3KBUb+1ZsW39EqY4F+/WLwkFZ7",
-	"9I6l3Yp7nNFNPp/bUpJ8KZjtGocLut+G2yq2HIKlirM2y/Pm3kyUKbyRk5Tr/4pMrpw4GPff1zk+TITv",
-	"v5NzYnzeq8+mpmaLtiqHNx09oiuqLwvfls9gxZoZ/Vcvl6CERJ2qZQTXfZeX4haXp5D1ag9Rx5it1XNF",
-	"Ic/Zyekhd9msN/SguwmuiB2UE3ISTotPwKks3sRTX0QUyuUj+qXlCvGfwR0mrDHhiGA4mEuEcQypdONT",
-	"6yPvMFVa4YoOk/Vz+DjaaqPtCttF+hqJqIlnJWaGHTJjwnXzeLCBEBLW1MPYn+TBhY5pfJsJlvM5df0g",
-	"y4KDqXt88ONoGOTU8/8HYcV3ZFFkEPPA4h+E35H+MfcocVM3Xcrk4JCGa7YmJHCBDv/vPOIv8njKPvjl",
-	"tTP//FvlQegQ3281fwR25A1wLwS34faarOBmZFGQUOE/Y+2ITCgPok1ETGcnr/HeMpaWcav0FwJ96QMv",
-	"RhvnLLn7qb3zIa2KLXB151OUQuyrE4rrVD3dTElo/QPLd+8CV+NeD8U4CO64KbW1OoPDw3il885rJd7Q",
-	"vxwPH5CSXxpGJox5EKZyAau14TFhv6WgFa8Neaz239YlHU/e+csr2+J8Ntnzn0aODZcc2uhbcs3K0Crj",
-	"smHn7rD4rP5tQwE3emlb/9uW3/QDIVcOg9j6M0G0BgdIO2tX25nUvndZXxzR21AS7pV4RFENM2zZEz7n",
-	"8iwUoOJxXTSPrY7lWLpWPrzH9wdsnM3HD8UYP8PbGtq+PH5PaZpjLrbgX2Oppfm6zuN8nvR3gnqiNhg0",
-	"XKqiG6xuQIf9aa4G2dbuE68VeUxjEqbY+X97Uk5U8+Fm1v/jupDKNJcTVSi/EnNrJnAu+Faxwe3Gd51q",
-	"AQ5E10kwAqxsMRgNjjFe+t8BALlQjrLxbAAA",
+	"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",
+	"ANggum4DjwAA",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

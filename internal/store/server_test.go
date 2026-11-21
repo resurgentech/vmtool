@@ -76,7 +76,7 @@ func concrete(p string) string {
 func TestAuthEveryOperation(t *testing.T) {
 	ts, _ := testServer(t)
 	ops := specOps(t)
-	if len(ops) != 20 {
+	if len(ops) != 27 {
 		t.Fatalf("only %d operations in the spec", len(ops))
 	}
 	for op, public := range ops {
@@ -126,7 +126,7 @@ func TestVersionPublic(t *testing.T) {
 		t.Fatalf("status %d", resp.StatusCode)
 	}
 	var v storeapi.Version
-	if err := json.Unmarshal([]byte(body), &v); err != nil || v.Version != "1.1.0" {
+	if err := json.Unmarshal([]byte(body), &v); err != nil || v.Version != "1.2.0" {
 		t.Fatalf("body %q err %v", body, err)
 	}
 }
