@@ -191,6 +191,13 @@ func (s *Service) CreateVM(ctx context.Context, m Manager, in CreateVMInput) (*v
 		return nil, conflict("create", fmt.Errorf("%q is registered as a metal/alien machine", in.Name))
 	}
 
+	// The vmexp- prefix belongs to export volumes in the array's volume group;
+	// no pool takes a VM named like one (a libvirt pool over that group would
+	// list the volume as a disk of that name).
+	if strings.HasPrefix(in.Name, vmtool.ExportVolPrefix) {
+		return nil, invalid("create", fmt.Errorf("a VM cannot be named %q: the %s prefix is for template export volumes", in.Name, vmtool.ExportVolPrefix))
+	}
+
 	// A thin pool takes neither --noclone (a thin disk is always a clone of a
 	// template) nor a VM named like a template. Whether a named pool is thin
 	// is only known from the pool list, which is asked here, before anything

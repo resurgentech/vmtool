@@ -28,12 +28,12 @@ func (t ThinPools) ListTemplates() ([]app.TemplateInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	return t.annotate(vmtool.ThinTemplates(vols))
+	return t.annotate(vmtool.ThinTemplates(vols), vols)
 }
 
 // annotate adds the stale mark to templates, from the daemon's current image
 // manifest. An unreadable manifest is an error, never "nothing is stale".
-func (t ThinPools) annotate(templates []vmtool.Template) ([]app.TemplateInfo, error) {
+func (t ThinPools) annotate(templates []vmtool.Template, vols []vmtool.ThinVolume) ([]app.TemplateInfo, error) {
 	entries, err := t.manifest().Load()
 	if err != nil {
 		return nil, fmt.Errorf("read the image manifest: %w", err)
@@ -45,6 +45,14 @@ func (t ThinPools) annotate(templates []vmtool.Template) ([]app.TemplateInfo, er
 	out := make([]app.TemplateInfo, len(templates))
 	for i, tp := range templates {
 		out[i] = app.TemplateInfo{Template: tp, Stale: stale[tp.Pool+"/"+tp.LV]}
+		for _, v := range vols {
+			if v.Kind == vmtool.ThinKindTemplate && v.Name == tp.LV && v.Pool == tp.Pool {
+				if e, ok := completeExport(vols, v.VG, v.Name); ok {
+					out[i].Export = &app.ExportVolume{ThinExport: e}
+				}
+				break
+			}
+		}
 	}
 	return out, nil
 }
@@ -126,7 +134,7 @@ func (t ThinPools) DeleteTemplate(name, pool string) (app.TemplateInfo, error) {
 	if err != nil {
 		return app.TemplateInfo{}, invalidErr("delete template", "%v", err)
 	}
-	infos, err := t.annotate([]vmtool.Template{tpl})
+	infos, err := t.annotate([]vmtool.Template{tpl}, vols)
 	if err != nil {
 		return app.TemplateInfo{}, err
 	}
@@ -134,6 +142,7 @@ func (t ThinPools) DeleteTemplate(name, pool string) (app.TemplateInfo, error) {
 	if err := t.Thin.Remove(cur.VG, cur.Name); err != nil {
 		return app.TemplateInfo{}, err
 	}
+	t.removeExports(vols, cur.VG, cur.Name)
 	return infos[0], nil
 }
 

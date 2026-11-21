@@ -30,10 +30,13 @@ const (
 	ThinTagVol      = "vmtool_vol"
 	ThinTagTemplate = "vmtool_template"
 	ThinTagBuilding = "vmtool_building"
+	ThinTagExport   = "vmtool_export"
 
 	thinTagNamePrefix   = "vmtool_name="
 	thinTagSHA256Prefix = "vmtool_sha256="
 	thinTagOriginPrefix = "vmtool_origin="
+	thinTagFromPrefix   = "vmtool_from="
+	thinTagBytesPrefix  = "vmtool_bytes="
 )
 
 // ThinVolume kinds.
@@ -41,6 +44,8 @@ const (
 	ThinKindVol      = "vol"
 	ThinKindTemplate = "template"
 	ThinKindBuilding = "building"
+	// ThinKindExport is a thick export volume (vmexp-<12 hex>), not a thin LV.
+	ThinKindExport = "export"
 )
 
 // Template origins.
@@ -87,7 +92,7 @@ type ThinVolume struct {
 	DataPercent float64 // share of the volume's size in use (0 when lvs gave none)
 	Origin      string  // the LV this is a snapshot of, if any
 	Tags        []string
-	Kind        string // ThinKindVol, ThinKindTemplate or ThinKindBuilding
+	Kind        string // ThinKindVol, ThinKindTemplate, ThinKindBuilding or ThinKindExport
 	Created     time.Time
 }
 
@@ -177,7 +182,10 @@ func parseLVPercent(name, s string) (float64, error) {
 // or vmtool_building; its Kind is building if that tag is present, else
 // template, else vol (a half-built template must never be taken for a usable
 // one). Everything else (thick LVs, foreign thin LVs, hidden [..] LVs) is
-// left out, except that every thin LV in a vmtool pool counts toward that
+// left out (a thick LV is a volume only when it is an export volume: attributes
+// starting with -, the tag vmtool_export and a vmexp-<12 hex> name, in a VG
+// that holds a pool; its Kind is ThinKindExport and its Pool is empty), except
+// that every thin LV in a vmtool pool counts toward that
 // pool's VirtualBytes. Unknown fields are ignored and empty percentages are 0;
 // malformed JSON, or a size that is not an integer on a pool or a thin LV in a
 // pool, is an error.
@@ -215,7 +223,28 @@ func ParseThinReport(data []byte) ([]ThinPool, []ThinVolume, error) {
 
 	var vols []ThinVolume
 	for _, r := range rows {
-		if strings.HasPrefix(r.Name, "[") || !strings.HasPrefix(r.Attr, "V") {
+		if strings.HasPrefix(r.Name, "[") {
+			continue
+		}
+		if strings.HasPrefix(r.Attr, "-") {
+			// A thick LV: only an export volume (the helper's own rule: the
+			// tag and the vmexp-<12 hex> name, in a VG that holds a pool).
+			tags := splitTags(r.Tags)
+			if r.Pool != "" || !hasTag(tags, ThinTagExport) || !ValidExportLVName(r.Name) || !vgHasPool(pools, r.VG) {
+				continue
+			}
+			size, err := parseLVBytes(r.Name, r.Size)
+			if err != nil {
+				return nil, nil, err
+			}
+			v := ThinVolume{Name: r.Name, VG: r.VG, SizeBytes: size, Tags: tags, Kind: ThinKindExport}
+			if t, err := time.Parse("2006-01-02 15:04:05 -0700", strings.TrimSpace(r.LVTime)); err == nil {
+				v.Created = t
+			}
+			vols = append(vols, v)
+			continue
+		}
+		if !strings.HasPrefix(r.Attr, "V") {
 			continue
 		}
 		pi, ok := poolIdx[[2]string{r.VG, r.Pool}]
@@ -252,6 +281,15 @@ func ParseThinReport(data []byte) ([]ThinPool, []ThinVolume, error) {
 		vols = append(vols, v)
 	}
 	return pools, vols, nil
+}
+
+func vgHasPool(pools []ThinPool, vg string) bool {
+	for _, p := range pools {
+		if p.VG == vg {
+			return true
+		}
+	}
+	return false
 }
 
 // ---- overcommit ----
@@ -569,7 +607,7 @@ func (t *Thin) Extend(vg, name string, bytes int64) error {
 	return err
 }
 
-// Remove deletes a tagged volume.
+// Remove deletes a tagged volume (a thin one, or a thick export volume).
 func (t *Thin) Remove(vg, name string) error {
 	if err := firstErr(thinCheckName("volume group", vg), thinCheckName("volume", name)); err != nil {
 		return fmt.Errorf("vmtool-thin remove: %w", err)
@@ -612,16 +650,6 @@ func (t *Thin) Import(vg, name, src string) error {
 		return fmt.Errorf("vmtool-thin import: %w", err)
 	}
 	_, err := t.run("import", vg, name, src)
-	return err
-}
-
-// Export writes the volume to the qcow2 file dest (a .part file in the image
-// directory).
-func (t *Thin) Export(vg, name, dest string) error {
-	if err := firstErr(thinCheckName("volume group", vg), thinCheckName("volume", name), thinCheckPath(dest)); err != nil {
-		return fmt.Errorf("vmtool-thin export: %w", err)
-	}
-	_, err := t.run("export", vg, name, dest)
 	return err
 }
 

@@ -34,16 +34,16 @@ const (
 )
 
 // exportMgr is a hypervisor Manager with thin templates: the daemon side of
-// export (app.TemplateVolumeExporter). ExportTemplateVolume writes data to the
-// destination the way the helper's qemu-img does (it fails if dest exists).
+// export (app.TemplateVolumeExporter). ExportTemplateVolume returns an export
+// volume of len(data) bytes; OpenExport reads data.
 type exportMgr struct {
 	*poolMgr
 	emu       sync.Mutex
 	tpls      []app.TemplateInfo
 	data      []byte
-	exportErr error // after writing a partial file
+	exportErr error // what ExportTemplateVolume returns
 	ecalls    []string
-	onExport  func(dest string)
+	onExport  func()
 	noThin    bool
 }
 
@@ -85,18 +85,24 @@ func (m *exportMgr) LookupTemplate(name, pool string) (app.TemplateInfo, error) 
 	return app.TemplateInfo{}, &app.Error{Kind: app.KindConflict, Err: fmt.Errorf("%q matches %d templates", name, len(found))}
 }
 
-func (m *exportMgr) ExportTemplateVolume(t app.TemplateInfo, dest string) error {
-	m.ecall("export %s %s", t.LV, filepath.Base(dest))
+func (m *exportMgr) ExportTemplateVolume(t app.TemplateInfo, on func(float64)) (app.ExportVolume, error) {
+	m.ecall("export %s", t.LV)
+	if on != nil {
+		on(50)
+	}
 	if m.onExport != nil {
-		m.onExport(dest)
+		m.onExport()
 	}
-	if _, err := os.Lstat(dest); err == nil {
-		return errors.New("destination exists")
+	if m.exportErr != nil {
+		return app.ExportVolume{}, m.exportErr
 	}
-	if err := os.WriteFile(dest, m.data, 0o644); err != nil {
-		return err
-	}
-	return m.exportErr
+	return app.ExportVolume{ThinExport: vmtool.ThinExport{Name: "vmexp-000000000001", VG: "vg-test", From: t.LV,
+		TemplateName: t.Name, Bytes: int64(len(m.data))}}, nil
+}
+
+func (m *exportMgr) OpenExport(name string) (io.ReadCloser, app.ExportVolume, error) {
+	m.ecall("open %s", name)
+	return io.NopCloser(bytes.NewReader(m.data)), app.ExportVolume{ThinExport: vmtool.ThinExport{Name: name, Bytes: int64(len(m.data))}}, nil
 }
 
 func (m *exportMgr) RecordTemplateSHA(t app.TemplateInfo, sha string) error {
@@ -352,7 +358,9 @@ func TestExportTemplateFailureRemovesOnlyItsPart(t *testing.T) {
 	// A temporary file that is not ours (the helper refuses: it exists) is not
 	// removed by the failure path.
 	g := newExportFixture(t, config.RoleHypervisor, savedTpl(tplLVName, "proj", ""))
-	g.em.onExport = func(dest string) { _ = os.WriteFile(dest, []byte("created by another process"), 0o644) }
+	g.em.onExport = func() {
+		_ = os.WriteFile(filepath.Join(g.pm.dirs[vmtool.HypervisorPool], ".proj.part"), []byte("created by another process"), 0o644)
+	}
 	rec = g.export("proj", "")
 	evs = exportEvents(t, rec)
 	if evs[len(evs)-1].Event != api.ExportTemplateEventEventError {

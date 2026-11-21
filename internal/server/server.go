@@ -223,6 +223,9 @@ func (s *Server) ListenAndServe() error {
 	r := hosts.New(s.Config)
 	startCleanup(s.Config.Role, r)
 	startThinCleanup(s.Config.Role, r)
+	tick := time.NewTicker(ExportExpiryInterval)
+	defer tick.Stop()
+	startExportExpiry(s.Config.Role, r, time.Now, tick.C, nil)
 	if s.Config.Role == config.RoleHypervisor {
 		if s.h != nil {
 			s.h.warmPoolDir()
@@ -241,6 +244,37 @@ func startThinCleanup(role string, r *hosts.Resolver) {
 		return
 	}
 	r.CleanThinBuilding(slog.Default())
+}
+
+// ExportExpiryInterval is how often a hypervisor removes expired export
+// volumes after the check it makes at start.
+const ExportExpiryInterval = time.Hour
+
+// startExportExpiry removes the export volumes older than 24 hours: once now
+// (the daemon has just started), then at every tick, until stop is closed (a
+// nil stop never is). now is the clock. It does nothing on a workstation (no
+// thin pools) and logs only failures (hosts.ThinPools.ExpireExports); a
+// removal that fails is tried again at the next tick. The returned channel is
+// closed when the loop has ended (at once on a workstation).
+func startExportExpiry(role string, r *hosts.Resolver, now func() time.Time, ticks <-chan time.Time, stop <-chan struct{}) <-chan struct{} {
+	done := make(chan struct{})
+	if role != config.RoleHypervisor {
+		close(done)
+		return done
+	}
+	r.ExpireExports(now(), slog.Default())
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-ticks:
+				r.ExpireExports(now(), slog.Default())
+			case <-stop:
+				return
+			}
+		}
+	}()
+	return done
 }
 
 // withMaxBytes caps every request body at 1 MiB, except uploadImage's: an

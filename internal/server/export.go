@@ -16,14 +16,17 @@ package server
 //     entry's and the file is in place (one `done` line, no rewrite). Only a
 //     saved template makes a new image; an image template is exported only as
 //     the cached image it was built from.
-//   - The helper converts the volume to `.<name>.part` (the helper accepts only
-//     that name, which does not exist, in the image directory; it runs the
-//     converter as the vmtool user). The daemon hashes the file, records the
-//     digest on the template's tags, then puts the file in place and in the
-//     manifest with (*receipt).commit: under the manifest's lock, os.Link
-//     (never an overwrite), a daemon-created entry. Any failure removes that
-//     `.part` and nothing else; if the helper itself refuses because the
-//     `.part` exists (another process made it), the file is not ours and stays.
+//   - The template is converted into a thick export volume in the array's
+//     volume group (or the template's existing one is reused; E2). Interim,
+//     until the blob is served from the volume directly: the daemon copies
+//     the volume's qcow2 bytes (exactly vmtool_bytes of them, from the
+//     helper's send) into `.<name>.part` in the image directory, hashing as
+//     it writes, records the digest on the template's and the volume's
+//     tags, then puts the file in place and in the manifest with
+//     (*receipt).commit: under the manifest's lock, os.Link (never an
+//     overwrite), a daemon-created entry. The `.part` is created here with
+//     O_EXCL; any failure removes that `.part` and nothing else, and one that
+//     already existed (another process made it) is not ours and stays.
 //   - From the 200 on every outcome is an NDJSON line: progress*, then one
 //     done or one error. Refusals that need no conversion are plain JSON
 //     statuses first. Request and response bodies are never logged.
@@ -50,8 +53,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -60,9 +61,6 @@ import (
 	"github.com/jaredeh/vmtool/internal/config"
 	"github.com/jaredeh/vmtool/pkg/vmtool"
 )
-
-// exportTick is how often an export reports the growing temporary file.
-var exportTick = time.Second
 
 // --- routing ---
 
@@ -241,15 +239,33 @@ func (h *handlers) exportTemplate(w http.ResponseWriter, r *http.Request, host, 
 		st.send(api.ExportTemplateEvent{Event: api.ExportTemplateEventEventProgress, Stage: &stage, Received: &received, Total: &total})
 	}
 
-	// The conversion. The helper creates the temporary file itself (as the
-	// vmtool user); a poller reports how much has been written.
+	// The conversion into the export volume (the helper makes the thick LV and
+	// converts into it; the volume is reused if the template has one). Its
+	// progress is the converter's percent of the template's size.
 	progress(api.Export, 0, tpl.SizeBytes)
-	stop := pollPart(rc.part, tpl.SizeBytes, func(n, total int64) { progress(api.Export, n, total) })
-	xerr := exp.ExportTemplateVolume(tpl, rc.part)
-	stop()
-	// The temporary file is ours unless the helper refused because it
-	// already existed: then another process made it, and it stays.
-	partLive := !(xerr != nil && strings.Contains(xerr.Error(), "destination exists"))
+	ev, xerr := exp.ExportTemplateVolume(tpl, func(pct float64) {
+		progress(api.Export, int64(pct/100*float64(tpl.SizeBytes)), tpl.SizeBytes)
+	})
+	if xerr != nil {
+		fail("export of template %q failed: %v", tpl.Name, xerr)
+		return
+	}
+	if ev.Bytes <= 0 {
+		fail("export of template %q made no usable volume", tpl.Name)
+		return
+	}
+
+	// Interim (E2): the image is still copied from the export volume into the
+	// image cache as before, hashing while it is written; the export volume
+	// itself is kept for its 24 hours. E3 serves the volume directly.
+	// The file is made here, exclusively: one that already exists is another
+	// process's and stays.
+	pf, err := os.OpenFile(rc.part, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o644)
+	if err != nil {
+		fail("create the temporary file %s: %v", rc.part, err)
+		return
+	}
+	partLive := true
 	defer func() {
 		if partLive {
 			if err := os.Remove(rc.part); err != nil && !os.IsNotExist(err) {
@@ -257,28 +273,24 @@ func (h *handlers) exportTemplate(w http.ResponseWriter, r *http.Request, host, 
 			}
 		}
 	}()
-	if xerr != nil {
-		fail("export of template %q failed: %v", tpl.Name, xerr)
-		return
-	}
-	fi, err := os.Lstat(rc.part)
-	if err != nil || !fi.Mode().IsRegular() || fi.Size() == 0 {
-		fail("export of template %q made no usable file at %s", tpl.Name, rc.part)
-		return
-	}
-
-	// Hash what the converter wrote, from the file itself (no symlink).
-	f, err := os.OpenFile(rc.part, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	src, _, err := exp.OpenExport(ev.Name)
 	if err != nil {
-		fail("open the exported file %s: %v", rc.part, err)
+		pf.Close()
+		fail("open export volume %s: %v", ev.Name, err)
 		return
 	}
 	sum := sha256.New()
-	step := max(1, min(fi.Size()/100, progressMaxStep))
-	n, err := io.Copy(sum, &progressReader{r: f, step: step, next: step, emit: func(n int64) { progress(api.Hash, n, fi.Size()) }})
-	f.Close()
-	if err != nil || n != fi.Size() {
-		fail("hash the exported file %s: read %d of %d bytes: %v", rc.part, n, fi.Size(), err)
+	step := max(1, min(ev.Bytes/100, progressMaxStep))
+	n, err := io.Copy(io.MultiWriter(pf, sum), &progressReader{r: src, step: step, next: step, emit: func(n int64) { progress(api.Hash, n, ev.Bytes) }})
+	cerr := src.Close()
+	if err == nil {
+		err = cerr
+	}
+	if werr := pf.Close(); err == nil {
+		err = werr
+	}
+	if err != nil || n != ev.Bytes {
+		fail("copy the export volume %s to %s: read %d of %d bytes: %v", ev.Name, rc.part, n, ev.Bytes, err)
 		return
 	}
 	got := hex.EncodeToString(sum.Sum(nil))
@@ -305,39 +317,6 @@ func shortDigest(s string) string {
 		return s[:12]
 	}
 	return s
-}
-
-// pollPart calls emit with the size of the temporary file every exportTick
-// while the conversion runs. The returned stop ends it and waits for it, so
-// nothing is emitted after stop returns.
-func pollPart(part string, total int64, emit func(n, total int64)) (stop func()) {
-	quit := make(chan struct{})
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		t := time.NewTicker(exportTick)
-		defer t.Stop()
-		last := int64(-1)
-		for {
-			select {
-			case <-quit:
-				return
-			case <-t.C:
-				if fi, err := os.Lstat(part); err == nil && fi.Mode().IsRegular() && fi.Size() != last {
-					last = fi.Size()
-					emit(last, total)
-				}
-			}
-		}
-	}()
-	var once sync.Once
-	return func() {
-		once.Do(func() {
-			close(quit)
-			wg.Wait()
-		})
-	}
 }
 
 // forwardExport serves exportTemplate on a workstation for a listed host: the

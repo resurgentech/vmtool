@@ -20,20 +20,35 @@ import (
 // host/<name>` streams a cached image the daemon created into a local
 // directory. See docs of exportTemplate and getImageBlob in the spec.
 
+// ExportVolume is a template's export volume: a thick LV in the array's
+// volume group holding the template as a qcow2 file, kept for 24 hours from
+// Created. SHA256 is empty until the digest is known. Reused is true when
+// ExportTemplateVolume found it instead of making it.
+type ExportVolume struct {
+	vmtool.ThinExport
+	Reused bool
+}
+
 // TemplateVolumeExporter is the daemon's side of an export: a hypervisor
 // daemon's thin-pool Manager (every wrapper in internal/hosts forwards it).
-// The daemon's HTTP handler owns the image cache; this owns the volume.
+// The daemon's HTTP handler owns the request; this owns the volumes.
 type TemplateVolumeExporter interface {
 	// LookupTemplate resolves name (a template's name or its LV name,
 	// optionally only in pool) to exactly one template, as DeleteTemplate
 	// does: not found, or a conflict naming the candidates.
 	LookupTemplate(name, pool string) (TemplateInfo, error)
-	// ExportTemplateVolume writes the template's volume as a qcow2 file to
-	// dest, a `.<name>.part` path in the image cache that does not exist. It
-	// names the volume only if it is still that template.
-	ExportTemplateVolume(t TemplateInfo, dest string) error
-	// RecordTemplateSHA records on the template's tags the SHA-256 of the
-	// image that was exported from it.
+	// ExportTemplateVolume returns the template's export volume: the one that
+	// exists (Reused), or a new one the template is converted into. on, when
+	// not nil, gets the converter's percent done. With no room on the array
+	// the error is a conflict matching vmtool.ErrThinNoRoom and nothing was
+	// written. It names the volume only if the template is still that template.
+	ExportTemplateVolume(t TemplateInfo, on func(pct float64)) (ExportVolume, error)
+	// OpenExport reads the export volume name: exactly Bytes bytes of its
+	// qcow2 file, and the volume as tagged so far. A short read is an error
+	// from Read, never a plain EOF. The caller closes the reader.
+	OpenExport(name string) (io.ReadCloser, ExportVolume, error)
+	// RecordTemplateSHA records on the template's tags, and on its export
+	// volume's, the SHA-256 of the image that was exported from it.
 	RecordTemplateSHA(t TemplateInfo, sha256 string) error
 }
 

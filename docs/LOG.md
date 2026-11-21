@@ -1531,3 +1531,48 @@ are appended, never edited in; a hook refuses rewrites.
 - README: the playbook paragraph in "What a template must be".
 - Red: playbook missing; green; opt-in syntax run ok; `just check` green.
 - Commits: the T14 commit on `clone-identity`.
+
+## 2026-11-20 — E1 Helper: thick export volumes and `send`
+
+- `deploy/vmtool-thin`: `export VG TEMPLATE NAME TAG...` replaces the file
+  export: a vmtool_template thin source, a new `vmexp-<12 hex>` name, tags
+  with `vmtool_export`; `qemu-img measure` (as vmtool) rounded up to the
+  extent size; refuses `no room: need= free= reserve=` (reserve a tenth of
+  the thin pool) before `lvcreate -L <bytes>b` (linear); `convert -p -t none
+  -W -m 16` with progress on stdout; `check --output=json` gives
+  `vmtool_bytes`. A failure after `lvcreate` removes NAME only; both device
+  nodes given back by trap on every exit.
+- `send VG NAME`: exactly `vmtool_bytes` bytes of a thick vmtool_export LV
+  through `dd iflag=count_bytes` as vmtool; length only from its own tag.
+- `remove`/`tag` accept vmtool_export thick LVs, still refuse other thick
+  LVs; `vmtool_export`/`vmtool_bytes` cannot be set by create, snapshot or
+  tag. The `.part` file form is gone; `import` unchanged.
+- Tests: `scripts/vmtool_thin_export_test.go` (argv, no room, room at the
+  reserve, convert failure removes NAME only, send, refusals).
+- Red: export/send tests failing on the old verb; green; `just check` green.
+- Commits: `f4af028`.
+
+## 2026-11-20 — E2 Export volumes on the daemon side
+
+- `pkg/vmtool/thin_export.go` (new): `ThinKindExport`, `vmexp-` names
+  (random 12 hex), `ThinExport` (bytes, sha, created, expires),
+  `ParseExportProgress` (qemu-img `-p`), `ExportRoomError` (matches
+  `ErrThinNoRoom`), helper client `Thin.ExportThick` (streams progress) and
+  `Thin.Send` (reader of exactly N bytes; short stream is an error).
+  `ParseThinReport` lists thick vmtool_export LVs; `Thin.Export` (file form)
+  removed. Image listings in `libvirt.go` leave out `vmexp-`.
+- `internal/hosts`: `ExportTemplateVolume` reuses a finished export of the
+  template LV, removes an unfinished one and those of a replaced template of
+  the same name; no room is a 409 with the numbers. `OpenExport`,
+  `RecordTemplateSHA` tags the export too, `DeleteTemplate` (and so prune)
+  removes the template's exports, `ExpireExports(now)` (24 h from lv_time,
+  under the template lock, failures logged and retried). `templates list`
+  carries the finished export.
+- `internal/server/server.go`: expiry at start and hourly, hypervisor only.
+  `export.go` changed only to the new interface (still caches a file; E3).
+- `internal/app/create.go`, `internal/hosts/thinclone.go`: `vmexp-` VM names
+  refused on every pool.
+- Red: build failures on the missing symbols, and
+  `TestCreateVMRefusesTheExportPrefix` failing; green; `just check` green.
+- Commits: the E2 commit on `clone-identity` (it also carries E1's entry
+  above).

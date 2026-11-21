@@ -458,8 +458,6 @@ func TestThinClientArgv(t *testing.T) {
 			[]string{"-n", helper, "tag", "vg-test", "vm1", "+vmtool_vol", "-vmtool_building"}},
 		{"import", func() error { return th.Import("vg-test", "vm1", "/var/lib/vmtool/img1.qcow2") },
 			[]string{"-n", helper, "import", "vg-test", "vm1", "/var/lib/vmtool/img1.qcow2"}},
-		{"export", func() error { return th.Export("vg-test", "vm1", "/var/lib/vmtool/.img1.qcow2.part") },
-			[]string{"-n", helper, "export", "vg-test", "vm1", "/var/lib/vmtool/.img1.qcow2.part"}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			log := thinStub(t)

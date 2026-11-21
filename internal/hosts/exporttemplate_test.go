@@ -60,41 +60,12 @@ func TestLookupTemplateFindsExactlyOne(t *testing.T) {
 	}
 }
 
-func TestExportTemplateVolumeRunsTheHelperExport(t *testing.T) {
-	h := newHelperStub(t)
-	h.report(t, savedReport(savedTags))
-	dest := filepath.Join(t.TempDir(), ".proj.part")
-	h.write(t, "on_export", `echo qcow > "$3"`)
-	m := newThinFor(t, &thinInner{}, cache{})
-	x := exporter(t, m)
-
-	tpl, err := x.LookupTemplate("proj", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := x.ExportTemplateVolume(tpl, dest); err != nil {
-		t.Fatalf("ExportTemplateVolume: %v", err)
-	}
-	eqStrings(t, "helper writes", h.writes(t), []string{"export vg-test " + savedLV + " " + dest})
-	if _, err := os.Stat(dest); err != nil {
-		t.Errorf("the helper's file is missing: %v", err)
-	}
-
-	// a helper failure comes back as the error
-	h.write(t, "fail_export", "destination exists")
-	err = x.ExportTemplateVolume(tpl, filepath.Join(t.TempDir(), ".other.part"))
-	if err == nil || !strings.Contains(err.Error(), "destination exists") {
-		t.Errorf("failing helper = %v", err)
-	}
-}
-
 // The export names a volume only if the report, read again under the lock,
 // still lists it as a template: a VM's volume or a vanished LV is refused with
 // no helper write.
 func TestExportTemplateVolumeRefusesWhatIsNotATemplate(t *testing.T) {
 	h := newHelperStub(t)
 	h.report(t, savedReport(savedTags))
-	dest := filepath.Join(t.TempDir(), ".proj.part")
 	m := newThinFor(t, &thinInner{}, cache{})
 	x := exporter(t, m)
 
@@ -103,7 +74,7 @@ func TestExportTemplateVolumeRefusesWhatIsNotATemplate(t *testing.T) {
 		"gone":         {Template: vmtool.Template{Name: "proj", LV: "vmtpl-0000000000ff", Pool: "thin-test", Origin: vmtool.TemplateOriginSaved}},
 		"another name": {Template: vmtool.Template{Name: "other", LV: savedLV, Pool: "thin-test", Origin: vmtool.TemplateOriginSaved}},
 	} {
-		if err := x.ExportTemplateVolume(info, dest); err == nil {
+		if _, err := x.ExportTemplateVolume(info, nil); err == nil {
 			t.Errorf("%s: exported", name)
 		}
 	}

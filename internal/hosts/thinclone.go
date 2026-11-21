@@ -229,6 +229,9 @@ func (t ThinPools) resolveSource(pool vmtool.ThinPool, vols []vmtool.ThinVolume,
 // device path. Before any helper write the room check has passed for the bytes
 // this call will promise.
 func (t ThinPools) cloneThin(pool vmtool.ThinPool, vols []vmtool.ThinVolume, image, basePath, newName string, sizeBytes uint64) (string, error) {
+	if strings.HasPrefix(newName, vmtool.ExportVolPrefix) {
+		return "", invalidErr("clone", "a VM cannot be named %s...: that prefix is for template export volumes", vmtool.ExportVolPrefix)
+	}
 	if strings.HasPrefix(newName, "vmtpl-") {
 		return "", invalidErr("clone", "a VM on a thin pool cannot be named vmtpl-...: that prefix is for templates")
 	}

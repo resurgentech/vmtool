@@ -23,6 +23,8 @@ import (
 type TemplateInfo struct {
 	vmtool.Template
 	Stale bool
+	// Export is the template's export volume, when it has one.
+	Export *ExportVolume
 }
 
 // TemplateManager is implemented by a Manager that keeps thin pools: the

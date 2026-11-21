@@ -1314,7 +1314,7 @@ func (m *Manager) ListImages() ([]string, error) {
 			if err != nil {
 				continue
 			}
-			if strings.HasSuffix(name, ".qcow2") {
+			if isImageVolumeName(name) {
 				images = append(images, name)
 			}
 		}
@@ -1347,7 +1347,7 @@ func (m *Manager) ListImagesByPool() (map[string][]string, error) {
 			if err != nil {
 				continue
 			}
-			if strings.HasSuffix(name, ".qcow2") {
+			if isImageVolumeName(name) {
 				result[poolName] = append(result[poolName], name)
 			}
 		}

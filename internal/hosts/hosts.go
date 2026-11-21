@@ -185,6 +185,16 @@ func (r *Resolver) CleanThinBuilding(log *slog.Logger) int {
 	return CleanThinBuilding(r.thin, log)
 }
 
+// ExpireExports removes the export volumes that are older than
+// vmtool.ExportTTL at now (see ThinPools.ExpireExports); a resolver without a
+// helper, or not of the hypervisor role, does nothing. It logs only failures.
+func (r *Resolver) ExpireExports(now time.Time, log *slog.Logger) int {
+	if r.thin == nil || r.role != config.RoleHypervisor {
+		return 0
+	}
+	return ThinPools{Thin: r.thin, Builds: r.builds, Log: log}.ExpireExports(now)
+}
+
 // WithToken returns a copy of r whose remote Managers authenticate with
 // token. r itself is unchanged.
 func (r *Resolver) WithToken(token string) *Resolver {
