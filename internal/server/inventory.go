@@ -25,6 +25,8 @@ var vmChangeOps = map[string]bool{
 	"defineVM": true, "deleteVMDefinition": true, "deleteVM": true,
 	"startVM": true, "stopVM": true, "resumeVM": true, "poweroffVM": true, "rebootVM": true,
 	"setAutostart": true, "addDisk": true, "migrateDisk": true, "resizeVMVolume": true, "resizeVolume": true,
+	// a card on a vmtool network is in the VM's report (its networks)
+	"attachInterface": true, "detachInterface": true,
 }
 
 // startInventory starts the reporter of a hypervisor daemon, or does not: with

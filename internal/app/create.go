@@ -203,6 +203,20 @@ func (s *Service) CreateVM(ctx context.Context, m Manager, in CreateVMInput) (*v
 		}
 	}
 
+	// Requested cards on vmtool networks are checked now, before anything is
+	// created: a network that does not exist or is not vmtool's, a taken or
+	// outside address, a network named twice.
+	seenNet := map[string]bool{}
+	for _, r := range in.Networks {
+		if seenNet[r.Network] {
+			return nil, invalid("create", fmt.Errorf("network %q is named twice; one card per network", r.Network))
+		}
+		seenNet[r.Network] = true
+		if err := checkNetwork("create", m, in.Name, r); err != nil {
+			return nil, err
+		}
+	}
+
 	// The vmexp- prefix belongs to export volumes in the array's volume group;
 	// no pool takes a VM named like one (a libvirt pool over that group would
 	// list the volume as a disk of that name).
@@ -362,6 +376,27 @@ func (s *Service) CreateVM(ctx context.Context, m Manager, in CreateVMInput) (*v
 	if err := m.Define(cfg); err != nil {
 		emit(in, "start", "error", err.Error(), "")
 		return nil, wrap("create", err)
+	}
+	// The extra cards go in while the VM is shut off, each with its reservation
+	// made first, so names and addresses exist from the first boot. A failure
+	// takes back the cards already made (and their reservations) and leaves the
+	// VM defined, not started.
+	var cards []vmtool.NetAttachment
+	for _, r := range in.Networks {
+		emit(in, "network", "start", "attaching a card on network "+r.Network, "")
+		att, err := attachCard(m, cfg.Name, r.Network, r.IP)
+		if err != nil {
+			for i := len(cards) - 1; i >= 0; i-- {
+				if uerr := detachCard(m, cfg.Name, cards[i].Network, cards[i].MAC); uerr != nil {
+					err = fmt.Errorf("%w; and the card %s on network %q could not be taken back: %v", err, cards[i].MAC, cards[i].Network, uerr)
+				}
+			}
+			err = fmt.Errorf("%s is defined but not started: %w", ref, err)
+			emit(in, "network", "error", err.Error(), "")
+			return nil, netErr("create", err)
+		}
+		cards = append(cards, *att)
+		emit(in, "network", "done", fmt.Sprintf("%s %s %s", att.Network, att.MAC, att.IP), "")
 	}
 	if err := m.Start(cfg.Name); err != nil {
 		emit(in, "start", "error", err.Error(), "")

@@ -43,6 +43,7 @@ func netToAPI(n *vmtool.NetworkInfo) api.NetworkInfo {
 		v := int(n.VNI)
 		out.Vni = &v
 	}
+	out.Reservations = reservationsToAPI(n.Reservations)
 	return out
 }
 

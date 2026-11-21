@@ -709,6 +709,7 @@ func (m *Manager) Info(name string) (*VMInfo, error) {
 		vi.Firmware = domainFirmware(xmlDesc)
 		vi.DiskCache = diskCacheOf(xmlDesc, "vda")
 		vi.DiskBacking = diskBackingOf(xmlDesc, "vda")
+		vi.Networks = m.vmNetworks(xmlDesc, netDetails{})
 	}
 
 	return vi, nil
@@ -722,6 +723,7 @@ func (m *Manager) List() ([]VMInfo, error) {
 	}
 
 	var vms []VMInfo
+	netCache := netDetails{}
 	for _, dom := range domains {
 		name, err := dom.GetName()
 		if err != nil {
@@ -757,6 +759,7 @@ func (m *Manager) List() ([]VMInfo, error) {
 		}
 		if xmlDesc, err := dom.GetXMLDesc(0); err == nil {
 			vi.Firmware = domainFirmware(xmlDesc)
+			vi.Networks = m.vmNetworks(xmlDesc, netCache)
 		}
 		vms = append(vms, vi)
 		dom.Free()

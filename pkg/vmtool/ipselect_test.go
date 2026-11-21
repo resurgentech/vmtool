@@ -102,13 +102,51 @@ func TestPickIP(t *testing.T) {
 			want: "192.168.122.50",
 		},
 		{
-			name: "second MAC of the domain: newest across MACs",
+			// V2: VMInfo.ip is the first card's address. A later card (a vmtool
+			// network, whose reservation never expires and whose lease may be
+			// newer) never takes it over while the first card has one.
+			name: "two cards with leases: the first card wins, whatever the expiry",
 			macs: []string{older, newer},
 			src: IPSources{Leases: []LeaseRow{
 				{MAC: older, IP: "192.168.122.10", Expiry: t0},
-				{MAC: newer, IP: "192.168.122.11", Expiry: t0.Add(time.Minute)},
+				{MAC: newer, IP: "10.77.1.100", Expiry: t0.Add(time.Hour)},
 			}},
-			want: "192.168.122.11",
+			want: "192.168.122.10",
+		},
+		{
+			name: "two cards with leases, rows listed second card first: still the first card",
+			macs: []string{older, newer},
+			src: IPSources{Leases: []LeaseRow{
+				{MAC: newer, IP: "10.77.1.100", Expiry: t0.Add(time.Hour)},
+				{MAC: older, IP: "192.168.122.10", Expiry: t0},
+			}},
+			want: "192.168.122.10",
+		},
+		{
+			name: "the first card has no lease yet: the second card's lease is used",
+			macs: []string{older, newer},
+			src: IPSources{Leases: []LeaseRow{
+				{MAC: newer, IP: "10.77.1.100", Expiry: t0},
+			}},
+			want: "10.77.1.100",
+		},
+		{
+			name: "two cards, agent only: the first card's address, whatever the order reported",
+			macs: []string{older, newer},
+			src: IPSources{Agent: []IfaceAddr{
+				{MAC: newer, IPs: []string{"10.77.1.100"}},
+				{MAC: older, IPs: []string{"192.168.122.10"}},
+			}},
+			want: "192.168.122.10",
+		},
+		{
+			name: "first card's lease beats the second card's agent address",
+			macs: []string{older, newer},
+			src: IPSources{
+				Leases: []LeaseRow{{MAC: older, IP: "192.168.122.10", Expiry: t0}},
+				Agent:  []IfaceAddr{{MAC: newer, IPs: []string{"10.77.1.100"}}},
+			},
+			want: "192.168.122.10",
 		},
 		{
 			name: "loopback and IPv6 ignored",

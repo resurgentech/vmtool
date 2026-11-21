@@ -33,8 +33,10 @@ type IPSources struct {
 func normMAC(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
 
 // pickIP chooses the domain's address. Order: lease, agent, ARP. Only rows
-// and interfaces whose MAC is one of macs count. Of several rows for the
-// domain's MACs, the newest expiry wins. An address the lease table assigns
+// and interfaces whose MAC is one of macs count. macs are in card order: the
+// first MAC with an address decides (a later card never takes VMInfo.ip over);
+// of several rows for one MAC, the
+// newest expiry wins. An address the lease table assigns
 // to a different MAC (the newest row for that address is foreign) is
 // unknown and is never returned, whatever the agent or ARP say. Returns ""
 // when nothing qualifies.
@@ -62,28 +64,37 @@ func pickIP(macs []string, src IPSources) string {
 		return ok && !h.ours
 	}
 
-	var best *LeaseRow
-	for i := range src.Leases {
-		r := &src.Leases[i]
-		if !own[normMAC(r.MAC)] || contested(r.IP) || !usableIPv4(r.IP) {
-			continue
+	// The first card (the first MAC) decides: a later card, such as one on a
+	// vmtool network whose reservation never expires, never takes the address
+	// over while the first card has one. Within one MAC the newest expiry wins.
+	for _, mac := range macs {
+		mac = normMAC(mac)
+		var best *LeaseRow
+		for i := range src.Leases {
+			r := &src.Leases[i]
+			if normMAC(r.MAC) != mac || contested(r.IP) || !usableIPv4(r.IP) {
+				continue
+			}
+			if best == nil || r.Expiry.After(best.Expiry) {
+				best = r
+			}
 		}
-		if best == nil || r.Expiry.After(best.Expiry) {
-			best = r
+		if best != nil {
+			return best.IP
 		}
-	}
-	if best != nil {
-		return best.IP
 	}
 
 	for _, list := range [][]IfaceAddr{src.Agent, src.ARP} {
-		for _, ifc := range list {
-			if !own[normMAC(ifc.MAC)] {
-				continue
-			}
-			for _, ip := range ifc.IPs {
-				if usableIPv4(ip) && !contested(ip) {
-					return ip
+		for _, mac := range macs {
+			mac = normMAC(mac)
+			for _, ifc := range list {
+				if normMAC(ifc.MAC) != mac {
+					continue
+				}
+				for _, ip := range ifc.IPs {
+					if usableIPv4(ip) && !contested(ip) {
+						return ip
+					}
 				}
 			}
 		}

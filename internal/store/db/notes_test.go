@@ -225,8 +225,8 @@ func TestMigration4CarriesNotesOver(t *testing.T) {
 		t.Fatalf("upgrade: %v", err)
 	}
 	defer d.Close()
-	if v, _ := d.version(ctx); v != 4 {
-		t.Fatalf("version %d want 4", v)
+	if v, _ := d.version(ctx); v != len(migrations) {
+		t.Fatalf("version %d want %d", v, len(migrations))
 	}
 	o, comment, ok := notesOf(t, d, "hv1", uuid1, false)
 	if !ok || o == nil || *o != testOrigin || comment != "placeholder comment" {

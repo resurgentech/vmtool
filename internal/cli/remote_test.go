@@ -31,13 +31,18 @@ func (c cliFake) rec(op string) error {
 	return errFakeHost
 }
 
-func (c cliFake) Start(string) error                  { return c.rec("Start") }
-func (c cliFake) Stop(string) error                   { return c.rec("Stop") }
-func (c cliFake) Resume(string) error                 { return c.rec("Resume") }
-func (c cliFake) Destroy(string) error                { return c.rec("Destroy") }
-func (c cliFake) Delete(string, bool) error           { return c.rec("Delete") }
-func (c cliFake) Info(string) (*vmtool.VMInfo, error) { return nil, c.rec("Info") }
-func (c cliFake) List() ([]vmtool.VMInfo, error)      { return nil, c.rec("List") }
+func (c cliFake) Start(string) error        { return c.rec("Start") }
+func (c cliFake) Stop(string) error         { return c.rec("Stop") }
+func (c cliFake) Resume(string) error       { return c.rec("Resume") }
+func (c cliFake) Destroy(string) error      { return c.rec("Destroy") }
+func (c cliFake) Delete(string, bool) error { return c.rec("Delete") }
+func (c cliFake) Info(vm string) (*vmtool.VMInfo, error) {
+	if c.f.cardInfo != nil {
+		return c.f.cardInfo(c.host, vm)
+	}
+	return nil, c.rec("Info")
+}
+func (c cliFake) List() ([]vmtool.VMInfo, error) { return nil, c.rec("List") }
 func (c cliFake) WaitForIP(string, time.Duration) (string, error) {
 	return "", c.rec("WaitForIP")
 }
@@ -101,6 +106,8 @@ type fakeHosts struct {
 	ops    []string
 	tokens []string
 	netOps []string // network operations (network_test.go)
+	// cardInfo, when set, answers Info for the V2 card tests (netcards_test.go).
+	cardInfo func(host, vm string) (*vmtool.VMInfo, error)
 }
 
 func installFakeHosts(t *testing.T) *fakeHosts {

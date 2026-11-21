@@ -374,5 +374,12 @@ func reportVM(v vmtool.VMInfo, disks []InventoryDisk) storeclient.ReportVM {
 	for _, d := range disks {
 		rv.Disks = append(rv.Disks, storeapi.Disk{Target: d.Target, Pool: d.Pool, Kind: storeapi.DiskKind(d.Kind), CapacityBytes: d.CapacityBytes})
 	}
+	if len(v.Networks) > 0 {
+		nets := make([]storeapi.VMNetwork, len(v.Networks))
+		for i, n := range v.Networks {
+			nets[i] = storeapi.VMNetwork{Network: n.Network, Mac: n.MAC, Ip: n.IP}
+		}
+		rv.Networks = &nets
+	}
 	return rv
 }

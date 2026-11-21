@@ -193,6 +193,19 @@ func TestReportValidation(t *testing.T) {
 		{"negative vcpus", mod(func(v *storeapi.ReportVM) { v.Vcpus = -1 }), "vcpus"},
 		{"bad disk kind", mod(func(v *storeapi.ReportVM) { v.Disks[0].Kind = "tape" }), "disks"},
 		{"too many vms", reportBody(t, at, tooMany...), "vms"},
+		{"network name control", mod(func(v *storeapi.ReportVM) {
+			v.Networks = &[]storeapi.VMNetwork{{Network: "net\t1", Mac: "52:54:00:00:00:01", Ip: "10.77.1.100"}}
+		}), "networks"},
+		{"network mac too long", mod(func(v *storeapi.ReportVM) {
+			v.Networks = &[]storeapi.VMNetwork{{Network: "net1", Mac: strings.Repeat("a", 200), Ip: "10.77.1.100"}}
+		}), "networks"},
+		{"too many networks", mod(func(v *storeapi.ReportVM) {
+			n := make([]storeapi.VMNetwork, 65)
+			for i := range n {
+				n[i] = storeapi.VMNetwork{Network: "net1", Mac: "52:54:00:00:00:01", Ip: "10.77.1.100"}
+			}
+			v.Networks = &n
+		}), "networks"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -295,6 +308,32 @@ func TestReportGeneratedAtDoesNotOrderReports(t *testing.T) {
 	inv := e.inventory(t, "")
 	if len(inv.Vms) != 1 || !inv.Hosts[0].LastReport.Equal(e.clock.Now()) {
 		t.Fatalf("inventory = %+v", inv)
+	}
+}
+
+// V2: a report carries each VM's cards on vmtool networks; the inventory shows
+// what the last report said, and omits the field for a VM with none.
+func TestReportNetworksAreStoredAndShown(t *testing.T) {
+	e := newInvEnv(t)
+	a := vm("vm1", invU1)
+	a.Networks = &[]storeapi.VMNetwork{{Network: "net1", Mac: "52:54:00:00:00:01", Ip: "10.77.1.100"}}
+	e.report(t, "hv1", tokH, a, vm("vm2", invU2))
+	by := map[string]storeapi.InventoryVM{}
+	for _, v := range e.inventory(t, "").Vms {
+		by[v.Name] = v
+	}
+	if n := by["vm1"].Networks; n == nil || len(*n) != 1 || (*n)[0].Network != "net1" || (*n)[0].Mac != "52:54:00:00:00:01" || (*n)[0].Ip != "10.77.1.100" {
+		t.Fatalf("vm1 networks = %+v", n)
+	}
+	if by["vm2"].Networks != nil {
+		t.Fatalf("vm2 networks = %+v, want omitted", by["vm2"].Networks)
+	}
+	e.clock.Advance(time.Minute)
+	e.report(t, "hv1", tokH, vm("vm1", invU1), vm("vm2", invU2))
+	for _, v := range e.inventory(t, "").Vms {
+		if v.Networks != nil {
+			t.Fatalf("%s still has networks after a report with none: %+v", v.Name, v.Networks)
+		}
 	}
 }
 

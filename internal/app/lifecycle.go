@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/jaredeh/vmtool/pkg/vmtool"
 )
@@ -36,15 +37,20 @@ func (s *Service) DeleteVM(ctx context.Context, m Manager, ref VMRef, noclone bo
 	if err := validRef("delete", ref); err != nil {
 		return err
 	}
+	// The UUID (store mode) and the VM's cards on vmtool networks are read
+	// before the VM is gone: its reservations go with it.
 	uuid := ""
-	if s.storeMode(ctx) {
-		if info, err := m.Info(ref.Name); err == nil {
+	var cards []vmtool.NetAttachment
+	if info, err := m.Info(ref.Name); err == nil {
+		cards = info.Networks
+		if s.storeMode(ctx) {
 			uuid = info.UUID
 		}
 	}
 	if err := m.Delete(ref.Name, noclone); err != nil {
 		return s.missingVM(ctx, m, ref, wrap("delete", err))
 	}
+	rerr := removeReservations(m, cards)
 	// One line for a store that is down, not one per call.
 	var said bool
 	note := func(line string) {
@@ -63,6 +69,9 @@ func (s *Service) DeleteVM(ctx context.Context, m Manager, ref VMRef, noclone bo
 	}
 	if cerr != nil {
 		return wrap("delete", cerr)
+	}
+	if rerr != nil {
+		return wrap("delete", fmt.Errorf("%s is deleted, but %w", ref, rerr))
 	}
 	return nil
 }

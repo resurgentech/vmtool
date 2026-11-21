@@ -34,6 +34,14 @@ type Manager interface {
 	CreateNetwork(name, subnet, domain string) (*vmtool.NetworkInfo, error)
 	Network(name string) (*vmtool.NetworkInfo, error)
 	DeleteNetwork(name string) error
+	// AddReservation, RemoveReservation, AttachInterface and DetachInterface
+	// are a VM's cards on vmtool networks: the primitives behind
+	// Service.AttachNetwork, DetachNetwork, CreateVM's networks and DeleteVM.
+	// A card's reservation is made before the card and removed after it.
+	AddReservation(network, vm, mac, ip string) (*vmtool.Reservation, error)
+	RemoveReservation(network, mac string) error
+	AttachInterface(vm, network, mac string) (*vmtool.NetAttachment, error)
+	DetachInterface(vm, mac string) error
 	ListImagesByPool() (map[string][]string, error)
 	DeleteImage(name, pool string) error
 	ListPools() ([]vmtool.PoolInfo, error)
@@ -163,6 +171,11 @@ type CreateVMInput struct {
 	ExtraDiskSizeGB uint
 	ExtraDiskPool   string
 	ExtraVars       map[string]string
+	// Networks are extra cards on vmtool networks of Host, after the VM's own
+	// first card: each gets a MAC from vmtool and a reservation (the address
+	// given, or the next free one) carrying the VM's name, made before the VM
+	// starts.
+	Networks []NetworkRequest
 	// NoWait returns right after start: no address wait, no SSH wait, no
 	// filesystem grow. Refused together with Playbook.
 	NoWait bool

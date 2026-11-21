@@ -757,6 +757,71 @@ paths:
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+  /v1/hosts/{host}/networks/{name}/reservations:
+    parameters:
+      - $ref: '#/components/parameters/HostName'
+      - name: name
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: createReservation
+      summary: Reserve an address and a name for a network card on a vmtool network
+      description: >
+        Daemon primitive (Manager.AddReservation). Adds a DHCP host entry
+        (`<host mac ip name>` with a lease that never expires) to the
+        network's libvirt definition, live and in the config, through
+        virNetworkUpdate. Only a vmtool network (bridge `vmt-` plus six
+        lowercase hex digits) takes one: any other is 409. `vm` is the name
+        that resolves on the network (`vm` and `vm.<domain>`). `mac`
+        omitted: the host picks `52:54:00` plus three random bytes that no
+        VM on the host and no reservation on the network uses. `ip`
+        omitted: the lowest address of the DHCP range (.100 to .200) that no
+        reservation and no current lease holds. An `ip` given must be a
+        host address of the network's subnet, not its gateway, and not held
+        (409 when taken; 400 when outside the subnet). A `mac` that already
+        has a reservation on the network, or a `vm` name another card of the
+        network already has, is 409. Nothing is written into any VM.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateReservationRequest' }
+      responses:
+        '201':
+          description: reserved
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Reservation' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+  /v1/hosts/{host}/networks/{name}/reservations/{mac}:
+    parameters:
+      - $ref: '#/components/parameters/HostName'
+      - name: name
+        in: path
+        required: true
+        schema: { type: string }
+      - name: mac
+        in: path
+        required: true
+        schema: { type: string }
+    delete:
+      operationId: deleteReservation
+      summary: Remove the reservation of a MAC from a vmtool network
+      description: >
+        Daemon primitive (Manager.RemoveReservation). Removes the DHCP host
+        entry live and from the config. A MAC with no reservation on the
+        network is 404; a network that is not vmtool's is 409.
+      responses:
+        '204': { description: removed }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
   /v1/hosts/{host}/bridges:
     parameters:
       - $ref: '#/components/parameters/HostName'
@@ -1368,6 +1433,62 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+  /v1/hosts/{host}/vms/{name}/interfaces:
+    parameters:
+      - $ref: '#/components/parameters/HostName'
+      - $ref: '#/components/parameters/VMName'
+    post:
+      operationId: attachInterface
+      summary: Attach a network card on a vmtool network to a VM
+      description: >
+        Daemon primitive (Manager.AttachInterface). Adds one virtio
+        `<interface type='network'>` with the given `mac` on the named vmtool
+        network, live and in the config when the VM is running or paused, in
+        the config only when it is shut off. Nothing else goes into the VM's
+        definition. Only a vmtool network takes it (409 otherwise); a VM
+        that does not exist or a network that does not is 404; a `mac` the VM
+        already has is 409. It makes no reservation: the workflow (`vmtool
+        net attach`, create's `networks`) makes the reservation first
+        (`createReservation`) and undoes it if this fails.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AttachInterfaceRequest' }
+      responses:
+        '201':
+          description: attached
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NetworkAttachment' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+  /v1/hosts/{host}/vms/{name}/interfaces/{mac}:
+    parameters:
+      - $ref: '#/components/parameters/HostName'
+      - $ref: '#/components/parameters/VMName'
+      - name: mac
+        in: path
+        required: true
+        schema: { type: string }
+    delete:
+      operationId: detachInterface
+      summary: Detach the card with this MAC from a VM
+      description: >
+        Daemon primitive (Manager.DetachInterface). Removes the card live and
+        from the config (config only for a shut-off VM). Only a card on a
+        vmtool network may be detached through it (409 otherwise, so the VM's
+        own NAT card is never removed); an unknown MAC is 404. It leaves the
+        network's reservation alone (`deleteReservation`).
+      responses:
+        '204': { description: detached }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
   /v1/hosts/{host}/vms/{name}/wait-ip:
     parameters:
       - $ref: '#/components/parameters/HostName'
@@ -1854,6 +1975,49 @@ components:
         uuid:
           type: string
           description: The libvirt domain UUID. Omitted when unknown or by a daemon that predates the field (API 2.3.0).
+        networks:
+          type: array
+          description: >
+            The VM's cards on vmtool networks (API 2.7.0), each with its MAC
+            and its fixed address (the network's reservation for that MAC).
+            The VM's own first card is not listed unless it is on a vmtool
+            network. `ip` above stays the first card's address. Omitted when
+            there is none, or by a daemon that predates the field.
+          items: { $ref: '#/components/schemas/NetworkAttachment' }
+    NetworkAttachment:
+      type: object
+      required: [network, mac, ip]
+      properties:
+        network: { type: string }
+        mac: { type: string, description: "lowercase, colon-separated" }
+        ip: { type: string, description: "the network's reservation for this MAC; empty when the card has none" }
+    NetworkRequest:
+      type: object
+      required: [network]
+      properties:
+        network: { type: string, description: "a vmtool network on the VM's host" }
+        ip: { type: string, description: "a fixed address in the network's subnet; omitted takes the next free one of the DHCP range" }
+    AttachInterfaceRequest:
+      type: object
+      required: [network, mac]
+      properties:
+        network: { type: string }
+        mac: { type: string, description: "the card's MAC, from createReservation" }
+    CreateReservationRequest:
+      type: object
+      required: [vm]
+      properties:
+        vm: { type: string, description: "the VM's name: what resolves on the network" }
+        mac: { type: string, description: "omitted: the host picks 52:54:00 plus three random bytes, unused on the host" }
+        ip: { type: string, description: "omitted: the lowest free address of the DHCP range" }
+    Reservation:
+      type: object
+      required: [network, mac, ip, name]
+      properties:
+        network: { type: string }
+        mac: { type: string }
+        ip: { type: string }
+        name: { type: string }
     VMNotes:
       type: object
       description: >
@@ -1913,6 +2077,10 @@ components:
         firmware: { type: string }
         disks: { type: array, items: { $ref: '#/components/schemas/InventoryDisk' } }
         disks_unreadable: { type: boolean, description: Present and true when the host could not read this VM's disks at its last report; disks are then the last known ones. }
+        networks:
+          type: array
+          description: The VM's cards on vmtool networks at its host's last report (API 2.7.0); omitted when there is none.
+          items: { $ref: '#/components/schemas/NetworkAttachment' }
         origin: { $ref: '#/components/schemas/InventoryOrigin' }
         comment: { type: string }
         first_seen: { type: string, format: date-time }
@@ -1991,6 +2159,17 @@ components:
             host NIC can see each other). vepa sends hairpin via an external
             switch. private isolates guests from each other. passthrough gives
             the guest exclusive use of the NIC.
+        networks:
+          type: array
+          description: >
+            Extra cards on vmtool networks of the VM's host (API 2.7.0), after
+            the VM's own first card (`net_type`). Each gets a MAC from vmtool
+            and a reservation (the named `ip`, or the next free address of the
+            network's DHCP range) carrying the VM's name, made before the VM
+            starts. A network that does not exist is 404, one that is not
+            vmtool's or an address that is taken is 409, an address outside
+            the subnet is 400; all are refused before anything is created.
+          items: { $ref: '#/components/schemas/NetworkRequest' }
         ssh_user: { type: string }
         ssh_pass: { type: string, description: sensitive; never log }
         playbook:
@@ -2327,7 +2506,7 @@ components:
         to a request that asks for `application/x-ndjson` (API 2.6.0).
       required: [stage, status]
       properties:
-        stage: { type: string, description: "clone, resize, extra_disk, start, write_inventory, wait_ip, wait_ssh, grow_disk, playbook, reboot, upload, credentials" }
+        stage: { type: string, description: "clone, resize, extra_disk, network, start, write_inventory, wait_ip, wait_ssh, grow_disk, playbook, reboot, upload, credentials" }
         status: { type: string, description: "start, done, error, progress, hash or notice" }
         detail: { type: string }
         output: { type: string, description: "captured tool output, for a failed or finished step" }
@@ -2476,6 +2655,10 @@ components:
           type: array
           description: "VMs with a card on this network"
           items: { type: string }
+        reservations:
+          type: array
+          description: "the network's DHCP host entries (API 2.7.0): libvirt's own configuration, read from the definition; omitted when there is none"
+          items: { $ref: '#/components/schemas/Reservation' }
     DefineVMRequest:
       type: object
       description: >

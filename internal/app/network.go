@@ -31,7 +31,8 @@ func netErr(op string, err error) error {
 	case errors.Is(err, vmtool.ErrInvalidNetwork), errors.Is(err, vmtool.ErrSubnetOverlap):
 		return invalid(op, err)
 	case errors.Is(err, vmtool.ErrNetworkExists), errors.Is(err, vmtool.ErrNoFreeSubnet),
-		errors.Is(err, vmtool.ErrNetworkNotVmtool), errors.Is(err, vmtool.ErrNetworkInUse):
+		errors.Is(err, vmtool.ErrNetworkNotVmtool), errors.Is(err, vmtool.ErrNetworkInUse),
+		errors.Is(err, vmtool.ErrAddressTaken):
 		return conflict(op, err)
 	}
 	return wrap(op, err)

@@ -78,6 +78,9 @@ type NetworkInfo struct {
 	Active    bool
 	Autostart bool
 	VMs       []string // VMs with a card on this network
+	// Reservations are the DHCP host entries of the definition: libvirt's own
+	// configuration (<host mac ip name>), read, never annotated.
+	Reservations []Reservation
 }
 
 var (
@@ -179,6 +182,11 @@ func ParseNetworkXML(x string) (*NetworkInfo, error) {
 				Start string `xml:"start,attr"`
 				End   string `xml:"end,attr"`
 			} `xml:"dhcp>range"`
+			Hosts []struct {
+				MAC  string `xml:"mac,attr"`
+				IP   string `xml:"ip,attr"`
+				Name string `xml:"name,attr"`
+			} `xml:"dhcp>host"`
 		} `xml:"ip"`
 	}
 	if err := xml.Unmarshal([]byte(x), &d); err != nil {
@@ -205,6 +213,12 @@ func ParseNetworkXML(x string) (*NetworkInfo, error) {
 		n.Gateway = addr.String()
 		n.Subnet = netip.PrefixFrom(addr, ones).Masked().String()
 		n.DHCPStart, n.DHCPEnd = ip.Range.Start, ip.Range.End
+		for _, h := range ip.Hosts {
+			if h.MAC == "" {
+				continue // an entry by name or address only: not a card's
+			}
+			n.Reservations = append(n.Reservations, Reservation{Network: n.Name, MAC: normMAC(h.MAC), IP: h.IP, Name: h.Name})
+		}
 		break
 	}
 	return n, nil

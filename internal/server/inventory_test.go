@@ -38,7 +38,9 @@ var noVMChange = map[string]string{
 	"runPlaybook": "runs in the guest", "waitVMIP": "read",
 	"listNetworks": "read", "getNetwork": "read",
 	"createNetwork": "a network is not a VM", "deleteNetwork": "refuses a network with VMs attached",
-	"listBridges": "read", "listImages": "images, not VMs",
+	"createReservation": "a reservation is in the network; the VM changes with its card (attachInterface)",
+	"deleteReservation": "a reservation is in the network; the VM changes with its card (detachInterface)",
+	"listBridges":       "read", "listImages": "images, not VMs",
 	"deleteImage": "images", "uploadImage": "images", "fetchImage": "images",
 	"getImageManifest": "images", "getImageBlob": "images", "getImagePath": "images",
 	"listPools": "read", "createPool": "a pool is not a VM",
@@ -91,7 +93,8 @@ func TestEveryOperationIsClassified(t *testing.T) {
 		}
 	}
 	for _, id := range []string{"defineVM", "deleteVMDefinition", "deleteVM", "startVM", "stopVM", "resumeVM", "poweroffVM",
-		"rebootVM", "setAutostart", "addDisk", "migrateDisk", "resizeVMVolume", "resizeVolume"} {
+		"rebootVM", "setAutostart", "addDisk", "migrateDisk", "resizeVMVolume", "resizeVolume",
+		"attachInterface", "detachInterface"} {
 		if !vmChangeOps[id] {
 			t.Errorf("%s is missing from the VM change set", id)
 		}

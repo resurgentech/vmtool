@@ -936,6 +936,27 @@ components:
             the VM having just vanished). `disks` is then empty and ignored:
             the store keeps its last known disks for the VM and marks it.
             Absent or false means the disks were read.
+        networks:
+          type: array
+          maxItems: 64
+          description: >
+            The VM's cards on vmtool networks (a network whose bridge is
+            `vmt-` plus six lowercase hex digits), with each card's fixed
+            address. Absent or empty means none; a report replaces what the
+            store had.
+          items:
+            $ref: "#/components/schemas/VMNetwork"
+    VMNetwork:
+      type: object
+      required: [network, mac, ip]
+      properties:
+        network:
+          type: string
+        mac:
+          type: string
+        ip:
+          type: string
+          description: Empty when the card has no reservation.
     HostReport:
       type: object
       required: [generated_at, daemon_version, vms]
@@ -1010,6 +1031,13 @@ components:
           description: >
             Present and true when the host could not read this VM's disks at
             its last report; `disks` are then the last known ones.
+        networks:
+          type: array
+          description: >
+            The VM's cards on vmtool networks at its host's last report;
+            absent when there is none.
+          items:
+            $ref: "#/components/schemas/VMNetwork"
         origin:
           $ref: "#/components/schemas/VMOrigin"
         comment:

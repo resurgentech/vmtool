@@ -144,6 +144,56 @@ func (f *rtMgr) DeleteNetwork(name string) error {
 	}
 	return nil
 }
+
+// The V2 card primitives. A name picks the answer: "default" is not vmtool's,
+// "ghost" does not exist, "taken" is an address already held, "outside" is an
+// address outside the subnet.
+func cardErr(name string) error {
+	switch name {
+	case "ghost":
+		return fmt.Errorf("%q: %w", name, vmtool.ErrNotFound)
+	case "default":
+		return fmt.Errorf("network %q: %w", name, vmtool.ErrNetworkNotVmtool)
+	case "taken":
+		return fmt.Errorf("10.77.1.100 is already held on network %q: %w", name, vmtool.ErrAddressTaken)
+	case "outside":
+		return fmt.Errorf("address is outside the subnet: %w", vmtool.ErrInvalidNetwork)
+	}
+	return nil
+}
+
+func (f *rtMgr) AddReservation(network, vm, mac, ip string) (*vmtool.Reservation, error) {
+	f.rec("AddReservation %s %s %s %s", network, vm, mac, ip)
+	if err := cardErr(network); err != nil {
+		return nil, err
+	}
+	if mac == "" {
+		mac = "52:54:00:00:00:01"
+	}
+	if ip == "" {
+		ip = "10.77.1.100"
+	}
+	return &vmtool.Reservation{Network: network, MAC: mac, IP: ip, Name: vm}, nil
+}
+func (f *rtMgr) RemoveReservation(network, mac string) error {
+	f.rec("RemoveReservation %s %s", network, mac)
+	return cardErr(network)
+}
+func (f *rtMgr) AttachInterface(vm, network, mac string) (*vmtool.NetAttachment, error) {
+	f.rec("AttachInterface %s %s %s", vm, network, mac)
+	if err := cardErr(network); err != nil {
+		return nil, err
+	}
+	if vm == "ghost" {
+		return nil, cardErr("ghost")
+	}
+	return &vmtool.NetAttachment{Network: network, MAC: mac, IP: "10.77.1.100"}, nil
+}
+func (f *rtMgr) DetachInterface(vm, mac string) error {
+	f.rec("DetachInterface %s %s", vm, mac)
+	return cardErr(vm)
+}
+
 func (f *rtMgr) ListImagesByPool() (map[string][]string, error) {
 	f.rec("ListImagesByPool")
 	return map[string][]string{"default": {"a.qcow2", "b.qcow2"}, "fast": {"c.qcow2"}}, nil

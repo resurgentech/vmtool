@@ -64,6 +64,7 @@ func newSrvStore(t *testing.T) *srvStore {
 						"disks":            []any{map[string]any{"target": "vda", "pool": "nvme", "capacity_bytes": 21474836480, "kind": "thin"}},
 						"origin":           map[string]any{"image": "img1", "image_sha256": strings.Repeat("a", 64), "clone": "thin", "pool": "nvme", "created": "2026-11-20T00:00:00Z"},
 						"disks_unreadable": true,
+						"networks":         []any{map[string]any{"network": "net1", "mac": "52:54:00:00:00:01", "ip": "10.77.1.100"}},
 						"comment":          "placeholder comment", "first_seen": "2026-11-20T00:00:00Z", "last_seen": "2026-11-21T01:02:03Z", "has_credentials": true},
 					map[string]any{"host": "hv1", "name": "vm2", "uuid": "00000000-0000-4000-8000-000000000002", "state": "shutoff",
 						"vcpus": 1, "memory": 1, "ip": "", "autostart": false, "firmware": "bios", "disks": []any{}, "comment": "",

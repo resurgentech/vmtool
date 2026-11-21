@@ -119,4 +119,8 @@ type VMInfo struct {
 	// UUID is the libvirt domain UUID, filled by Info and List; empty when
 	// unknown (a daemon that predates the field).
 	UUID string `json:"uuid,omitempty"`
+	// Networks are the VM's cards on vmtool networks, each with its MAC and
+	// its fixed address (the network's reservation for that MAC), filled by
+	// Info and List. IP stays the first card's address.
+	Networks []NetAttachment `json:"networks,omitempty"`
 }

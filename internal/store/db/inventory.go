@@ -30,6 +30,9 @@ type VMRow struct {
 	// DisksUnreadable: the host could not read this VM's disks. ApplyReport
 	// then keeps the stored disks and sets the flag; Disks is ignored.
 	DisksUnreadable bool
+	// Networks is a JSON array of the VM's cards on vmtool networks
+	// ({network, mac, ip}); nil is stored as []. Each report replaces it.
+	Networks json.RawMessage
 }
 
 // ReportCounts is what ApplyReport did. Stale is true when the report was
@@ -111,6 +114,9 @@ func (d *DB) ApplyReport(ctx context.Context, host string, generatedAt time.Time
 		if len(v.Disks) > 0 && !json.Valid(v.Disks) {
 			return cnt, errors.New("apply report: disks is not valid JSON")
 		}
+		if len(v.Networks) > 0 && !json.Valid(v.Networks) {
+			return cnt, errors.New("apply report: networks is not valid JSON")
+		}
 	}
 	// The receive time is taken before the transaction waits for its turn, so
 	// of two overlapping requests the one taken first is the older.
@@ -153,6 +159,10 @@ func (d *DB) ApplyReport(ctx context.Context, host string, generatedAt time.Time
 		if disks == "" {
 			disks = "[]"
 		}
+		networks := string(v.Networks)
+		if networks == "" {
+			networks = "[]"
+		}
 		var gone sql.NullString
 		err := tx.QueryRowContext(ctx, `SELECT gone_since FROM vms WHERE host=? AND uuid=?`, host, v.UUID).Scan(&gone)
 		exists := err == nil
@@ -161,20 +171,20 @@ func (d *DB) ApplyReport(ctx context.Context, host string, generatedAt time.Time
 		}
 		if !exists {
 			_, err = tx.ExecContext(ctx,
-				`INSERT INTO vms(host, `+vmCols+`, disks_unreadable) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
+				`INSERT INTO vms(host, `+vmCols+`, disks_unreadable, networks) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
 				host, v.UUID, v.Name, v.State, v.VCPUs, v.MemoryGiB, v.IP, v.Autostart, v.Firmware, disks,
-				now, now, v.DisksUnreadable)
+				now, now, v.DisksUnreadable, networks)
 		} else {
 			if gone.Valid {
 				cnt.Relisted++
 			}
 			_, err = tx.ExecContext(ctx,
 				`UPDATE vms SET name=?, state=?, vcpus=?, memory_gib=?, ip=?, autostart=?, firmware=?,
-				   disks=CASE WHEN ? THEN disks ELSE ? END, disks_unreadable=?,
+				   disks=CASE WHEN ? THEN disks ELSE ? END, disks_unreadable=?, networks=?,
 				   last_seen=?, gone_since=NULL
 				 WHERE host=? AND uuid=?`,
 				v.Name, v.State, v.VCPUs, v.MemoryGiB, v.IP, v.Autostart, v.Firmware,
-				v.DisksUnreadable, disks, v.DisksUnreadable, now, host, v.UUID)
+				v.DisksUnreadable, disks, v.DisksUnreadable, networks, now, host, v.UUID)
 		}
 		if err != nil {
 			return cnt, fmt.Errorf("apply report: %w", err)
@@ -331,7 +341,7 @@ func (d *DB) ListInventory(ctx context.Context, host string, withGone bool) (Inv
 	         n.origin_written IS NOT NULL, COALESCE(n.origin_image, ''), COALESCE(n.origin_sha256, ''),
 	         COALESCE(n.origin_template, ''), COALESCE(n.origin_clone, ''), COALESCE(n.origin_pool, ''),
 	         COALESCE(n.origin_created, ''), COALESCE(n.comment, ''),
-	         v.first_seen, v.last_seen, v.gone_since, v.disks_unreadable,
+	         v.first_seen, v.last_seen, v.gone_since, v.disks_unreadable, v.networks,
 	         EXISTS (SELECT 1 FROM vm_credentials c WHERE c.host=v.host AND c.name=v.name AND c.uuid=v.uuid)
 	       FROM vms v LEFT JOIN vm_notes n ON n.host=v.host AND n.uuid=v.uuid
 	       WHERE (?='' OR v.host=?) AND (? OR v.gone_since IS NULL)
@@ -343,19 +353,20 @@ func (d *DB) ListInventory(ctx context.Context, host string, withGone bool) (Inv
 	defer rows.Close()
 	for rows.Next() {
 		var v InventoryVM
-		var disks, first, last string
+		var disks, networks, first, last string
 		var gone sql.NullString
 		var hasOrigin bool
 		var o Origin
 		if err := rows.Scan(&v.Host, &v.UUID, &v.Name, &v.State, &v.VCPUs, &v.MemoryGiB, &v.IP, &v.Autostart,
 			&v.Firmware, &disks, &hasOrigin, &o.Image, &o.SHA256, &o.Template, &o.Clone, &o.Pool, &o.Created,
-			&v.Comment, &first, &last, &gone, &v.DisksUnreadable, &v.HasCredentials); err != nil {
+			&v.Comment, &first, &last, &gone, &v.DisksUnreadable, &networks, &v.HasCredentials); err != nil {
 			return inv, fmt.Errorf("list inventory: %w", err)
 		}
 		if hasOrigin {
 			v.Origin = &o
 		}
 		v.Disks = json.RawMessage(disks)
+		v.Networks = json.RawMessage(networks)
 		v.FirstSeen, v.LastSeen = parseTime(first), parseTime(last)
 		if gone.Valid {
 			g := parseTime(gone.String)

@@ -767,8 +767,49 @@ CLI's `vmtool networks` marks vmtool's by asking `getNetwork` for each name.
 - **Delete** answers `204`; `409` for a network that is not vmtool's ("not made
   by vmtool") and for one with VMs attached (the message names them); `404` for
   a network the host does not have.
-- **VMs are not changed.** `create`'s `--net-type` behaviour is as before; a
-  VM keeps its own NAT card first, and nothing here attaches a card.
+- **VMs are not changed by these three.** A VM keeps its own NAT card first;
+  cards are the next section.
+
+### VMs on a vmtool network (API 2.7.0, same version)
+
+A VM gets an extra card on a vmtool network, with a fixed address and a name.
+The fixed address is the network's DHCP reservation for the card's MAC
+(`<host mac ip name>` with `<lease expiry='0'/>`, added with `virNetworkUpdate`
+live and in the config), which is libvirt's own configuration; vmtool writes
+nothing of its own into the network or the VM, and the VM's definition gets the
+card and nothing else.
+
+- **Primitives on the daemon**, each acting on one host's libvirt:
+  `POST /v1/hosts/{host}/networks/{name}/reservations` (`createReservation`:
+  `vm`, optional `mac` and `ip`), `DELETE …/reservations/{mac}`
+  (`deleteReservation`), `POST /v1/hosts/{host}/vms/{name}/interfaces`
+  (`attachInterface`: `network`, `mac`) and `DELETE …/interfaces/{mac}`
+  (`detachInterface`). Only a vmtool network takes them (409 otherwise); a
+  detach never removes a card that is not on a vmtool network, so the VM's own
+  NAT card is safe. An omitted `mac` is `52:54:00` plus three random bytes that
+  no VM on the host and no reservation uses; an omitted `ip` is the lowest free
+  address of the DHCP range (.100 to .200) that no reservation and no lease
+  holds. An `ip` given is `400` outside the subnet (or the network or broadcast
+  address) and `409` when it is the gateway or already held; a `mac` or a VM
+  name the network already has is `409`. The reservation carries the VM's name
+  (`_` becomes `-`), so `vm` and `vm.<domain>` resolve on the network from the
+  first boot.
+- **The workflow is `internal/app`'s**, not a route: `vmtool net attach host/vm
+  NAME [--ip IP]` reserves, then attaches (a failed card removes the
+  reservation); `net detach` removes the card, then the reservation (a failed
+  reservation removal puts the card back); `create`'s `networks` (`[{network,
+  ip?}]`, the CLI's repeatable `--network NAME[=IP]`, the TUI's Networks field)
+  checks every network and address before anything is created, then attaches
+  each between define and start (a failure takes back the cards already made
+  and leaves the VM defined, not started); `vmtool delete` removes the VM's
+  reservations after the VM. A client that calls the four primitives itself
+  orders the steps itself.
+- **`VMInfo.networks`** lists each card on a vmtool network as `{network, mac,
+  ip}`; `VMInfo.ip` stays the first card's address (the VM's own NAT card),
+  whatever a later card's lease says. `NetworkInfo.reservations` lists a
+  network's DHCP host entries. The inventory report and the store's
+  `InventoryVM.networks` carry the same `{network, mac, ip}` (store migration
+  5; store.yaml stays 1.1.0 while nothing is deployed).
 
 ## GET / pattern
 

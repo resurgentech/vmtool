@@ -152,6 +152,9 @@ var migrations = []string{
 	ALTER TABLE vms DROP COLUMN origin_pool;
 	ALTER TABLE vms DROP COLUMN created;
 	ALTER TABLE vms DROP COLUMN comment;`,
+	// 5: a VM's cards on vmtool networks, as its host last reported them: a
+	// JSON array of {network, mac, ip}, replaced by every report.
+	`ALTER TABLE vms ADD COLUMN networks TEXT NOT NULL DEFAULT '[]';`,
 }
 
 // DB is an open store database. It is safe for concurrent use.

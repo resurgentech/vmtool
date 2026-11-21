@@ -2056,3 +2056,30 @@ are appended, never edited in; a hook refuses rewrites.
 - Red: assertion failures against stub `netdef.go` and stub app methods;
   green; `just check` green.
 - Commits: the V1 commit on `clone-identity`.
+
+## 2026-11-21 — V2 Attach VMs to a network, with a fixed address and a name
+
+- API (2.7.0, unchanged number): primitives `createReservation`,
+  `deleteReservation` (`…/networks/{name}/reservations[/{mac}]`),
+  `attachInterface`, `detachInterface` (`…/vms/{name}/interfaces[/{mac}]`);
+  `VMInfo.networks` (`{network, mac, ip}`), `CreateVMRequest.networks`,
+  `NetworkInfo.reservations`, `InventoryVM.networks`; store.yaml (1.1.0)
+  `ReportVM.networks`, `InventoryVM.networks`.
+- `pkg/vmtool/netcard.go` (pure): MACs `52:54:00` + random unique on the
+  host, the reservation `<host mac name ip><lease expiry='0'/></host>`, the
+  card `<interface type='network'>` with its MAC, card parsing, the next
+  free address of .100–.200 or the one asked (409 taken, 400 outside).
+  `netcardlibvirt.go`: virNetworkUpdate live+config, interface attach and
+  detach live+config; `Info`/`List` fill `networks` from the reservations.
+  `pickIP` ranks by card order, so `VMInfo.ip` stays the first card's.
+- `internal/app/netattach.go`: attach = reservation then card (undo the
+  reservation if the card fails), detach = card then reservation (card put
+  back if the reservation stays); create `--network NAME[=IP]` checked
+  before cloning, cards attached between Define and Start; `vmtool delete`
+  removes the VM's reservations; the reporter carries networks.
+- CLI `net attach host/vm NAME [--ip]`, `net detach host/vm NAME|MAC`,
+  `info` and `net show` list cards and reservations; TUI create field and
+  detail line; store migration 5 (`vms.networks`).
+- Red: assertion failures against stubs (pkg/vmtool, app, store); green;
+  `just check` green.
+- Commits: the V2 commit on `clone-identity`.

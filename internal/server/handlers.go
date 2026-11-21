@@ -146,6 +146,7 @@ func toAPI(info *vmtool.VMInfo) api.VMInfo {
 		fw := api.VMInfoFirmware(info.Firmware)
 		out.Firmware = &fw
 	}
+	out.Networks = attachmentsToAPI(info.Networks)
 	return out
 }
 
@@ -271,6 +272,11 @@ func (h *handlers) CreateVM(ctx context.Context, req api.CreateVMRequestObject) 
 	}
 	if b.ExtraVars != nil {
 		in.ExtraVars = map[string]string(*b.ExtraVars)
+	}
+	if b.Networks != nil {
+		for _, n := range *b.Networks {
+			in.Networks = append(in.Networks, app.NetworkRequest{Network: n.Network, IP: derefStr(n.Ip)})
+		}
 	}
 
 	cs := createStreamOf(ctx)

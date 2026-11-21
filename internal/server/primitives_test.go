@@ -88,6 +88,22 @@ func (f *fakeMgr) Network(n string) (*vmtool.NetworkInfo, error) {
 	return &vmtool.NetworkInfo{Name: n}, f.err
 }
 func (f *fakeMgr) DeleteNetwork(n string) error { f.rec("DeleteNetwork %s", n); return f.err }
+func (f *fakeMgr) AddReservation(n, vm, mac, ip string) (*vmtool.Reservation, error) {
+	f.rec("AddReservation %s %s %s %s", n, vm, mac, ip)
+	return &vmtool.Reservation{Network: n, MAC: "52:54:00:00:00:01", IP: "10.77.1.100", Name: vm}, f.err
+}
+func (f *fakeMgr) RemoveReservation(n, mac string) error {
+	f.rec("RemoveReservation %s %s", n, mac)
+	return f.err
+}
+func (f *fakeMgr) AttachInterface(vm, n, mac string) (*vmtool.NetAttachment, error) {
+	f.rec("AttachInterface %s %s %s", vm, n, mac)
+	return &vmtool.NetAttachment{Network: n, MAC: mac, IP: "10.77.1.100"}, f.err
+}
+func (f *fakeMgr) DetachInterface(vm, mac string) error {
+	f.rec("DetachInterface %s %s", vm, mac)
+	return f.err
+}
 func (f *fakeMgr) ListImagesByPool() (map[string][]string, error) {
 	f.rec("ListImagesByPool")
 	return nil, f.err

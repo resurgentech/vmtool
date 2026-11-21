@@ -38,7 +38,52 @@ func netFromAPI(n api.NetworkInfo) *vmtool.NetworkInfo {
 	if n.Vni != nil && *n.Vni >= 0 {
 		out.VNI = uint32(*n.Vni)
 	}
+	if n.Reservations != nil {
+		for _, r := range *n.Reservations {
+			out.Reservations = append(out.Reservations, vmtool.Reservation{Network: r.Network, MAC: r.Mac, IP: r.Ip, Name: r.Name})
+		}
+	}
 	return out
+}
+
+// AddReservation reserves an address and a name for a card on a vmtool network
+// (createReservation); an empty mac or ip is chosen by the host.
+func (m *Manager) AddReservation(network, vm, mac, ip string) (*vmtool.Reservation, error) {
+	var v api.Reservation
+	err := m.call("createReservation", m.timeout, &v, func(ctx context.Context) (*http.Response, error) {
+		return m.client.CreateReservation(ctx, m.name, network, api.CreateReservationRequest{Vm: vm, Mac: nonEmpty(mac), Ip: nonEmpty(ip)})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &vmtool.Reservation{Network: v.Network, MAC: v.Mac, IP: v.Ip, Name: v.Name}, nil
+}
+
+// RemoveReservation removes a card's reservation (deleteReservation).
+func (m *Manager) RemoveReservation(network, mac string) error {
+	return m.call("deleteReservation", m.timeout, nil, func(ctx context.Context) (*http.Response, error) {
+		return m.client.DeleteReservation(ctx, m.name, network, mac)
+	})
+}
+
+// AttachInterface adds a card with this MAC on a vmtool network to a VM
+// (attachInterface).
+func (m *Manager) AttachInterface(vm, network, mac string) (*vmtool.NetAttachment, error) {
+	var v api.NetworkAttachment
+	err := m.call("attachInterface", m.timeout, &v, func(ctx context.Context) (*http.Response, error) {
+		return m.client.AttachInterface(ctx, m.name, vm, api.AttachInterfaceRequest{Network: network, Mac: mac})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &vmtool.NetAttachment{Network: v.Network, MAC: v.Mac, IP: v.Ip}, nil
+}
+
+// DetachInterface removes the card with this MAC from a VM (detachInterface).
+func (m *Manager) DetachInterface(vm, mac string) error {
+	return m.call("detachInterface", m.timeout, nil, func(ctx context.Context) (*http.Response, error) {
+		return m.client.DetachInterface(ctx, m.name, vm, mac)
+	})
 }
 
 // CreateNetwork makes a vmtool network on the host (createNetwork).

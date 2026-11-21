@@ -47,6 +47,13 @@ func toAPIInventory(in *storeclient.Inventory) api.Inventory {
 			DisksUnreadable: v.DisksUnreadable,
 			Disks:           make([]api.InventoryDisk, len(v.Disks)),
 		}
+		if v.Networks != nil && len(*v.Networks) > 0 {
+			nets := make([]api.NetworkAttachment, len(*v.Networks))
+			for j, n := range *v.Networks {
+				nets[j] = api.NetworkAttachment{Network: n.Network, Mac: n.Mac, Ip: n.Ip}
+			}
+			o.Networks = &nets
+		}
 		for j, d := range v.Disks {
 			o.Disks[j] = api.InventoryDisk{Target: d.Target, Pool: d.Pool, CapacityBytes: d.CapacityBytes, Kind: api.InventoryDiskKind(d.Kind)}
 		}

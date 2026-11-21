@@ -44,7 +44,13 @@ func TestGetInventoryReadsTheStore(t *testing.T) {
 	if v.DisksUnreadable == nil || !*v.DisksUnreadable {
 		t.Errorf("vm1 lacks the disks_unreadable flag: %+v", v)
 	}
+	if v.Networks == nil || len(*v.Networks) != 1 || (*v.Networks)[0].Network != "net1" || (*v.Networks)[0].Mac != "52:54:00:00:00:01" || (*v.Networks)[0].Ip != "10.77.1.100" {
+		t.Errorf("vm1 networks %+v", v.Networks)
+	}
 	g := inv.Vms[1]
+	if g.Networks != nil {
+		t.Errorf("vm2 carries networks: %+v", g.Networks)
+	}
 	if g.DisksUnreadable != nil {
 		t.Errorf("vm2 carries the flag: %+v", g)
 	}

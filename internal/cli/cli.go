@@ -483,6 +483,7 @@ func createCmd(e *env) *cobra.Command {
 		extraDiskSizeGB uint
 		extraDiskPool   string
 		extraVars       []string
+		networks        []string
 		firmware        string
 		diskCache       string
 		comment         string
@@ -557,16 +558,31 @@ When create ends, success or failure, it prints one line of stage timings on
 stdout, such as 'timings: clone 0.3s, start 1.1s, wait_ip 2.0s, wait_ssh 7.0s,
 total 11.0s' (only the stages that ran). REST callers of createVM get none.
 
+--network NAME[=IP] (repeatable) adds a card on a vmtool network of the
+host (see 'vmtool net create') after the VM's own first card: vmtool picks the
+MAC and reserves the address (the one given, or the next free one of the
+network's DHCP range) under the VM's name before the VM starts, so 'web' and
+'web.<network>.test' resolve on the network from the first boot. 'vmtool info'
+shows the VM's cards; its IP stays the first card's address. Attach or detach
+later with 'vmtool net attach' and 'vmtool net detach'; 'vmtool delete'
+removes the reservations.
+
   vmtool create jetfire/web ubuntu-24.04.qcow2
-  vmtool create hv1/web img1 --pool nvme-thin --disk-size 40`,
+  vmtool create hv1/web img1 --pool nvme-thin --disk-size 40
+  vmtool create hv1/web img1 --network net1 --network net2=10.77.2.50`,
 		Args: cobra.ExactArgs(2),
 		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
 			extra, err := parseExtraVars(extraVars)
 			if err != nil {
 				return err
 			}
+			nets, err := app.ParseNetworkRequests(networks)
+			if err != nil {
+				return err
+			}
 			var evs []app.ProgressEvent
 			info, err := e.service(inventory).CreateVM(cmd.Context(), m, app.CreateVMInput{
+				Networks:        nets,
 				Host:            ref.Host,
 				Name:            ref.Name,
 				Image:           args[1],
@@ -620,6 +636,9 @@ total 11.0s' (only the stages that ran). REST callers of createVM get none.
 			if info != nil && info.IP != "" {
 				fmt.Fprintf(out, "IP: %s\n", info.IP)
 			}
+			if info != nil {
+				writeCards(out, info.Networks)
+			}
 			if l := timingsLine(evs); l != "" {
 				fmt.Fprintln(out, l)
 			}
@@ -645,6 +664,7 @@ total 11.0s' (only the stages that ran). REST callers of createVM get none.
 	cmd.Flags().UintVar(&extraDiskSizeGB, "extra-disk-size", 0, "create a second empty virtio disk (vdb): <name>-2.qcow2 in a dir pool, LV <name>-2 in a logical pool. Refused on a thin pool: attach a thin extra disk with add-disk")
 	cmd.Flags().StringVar(&extraDiskPool, "extra-disk-pool", "", "storage pool for the extra disk (default: same as --pool)")
 	cmd.Flags().StringArrayVar(&extraVars, "extra-var", nil, "ansible extra-var key=value for --playbook (repeatable; name: letters, digits, _). Values go to ansible in its environment, not argv. deviceid defaults to the VM name")
+	cmd.Flags().StringArrayVar(&networks, "network", nil, "an extra card on a vmtool network of the host, NAME or NAME=IP (repeatable). The card gets a MAC from vmtool and a reservation carrying the VM's name (the address given, or the next free one of the network's DHCP range), made before the VM starts; the VM's own NAT card stays first. See 'vmtool net create'")
 	cmd.Flags().StringVar(&comment, "comment", "", "a note about the VM, kept in the store only (needs a store): at most 512 bytes, one line, no control characters. Stored in plain text; never put a secret in it")
 
 	return cmd
@@ -774,6 +794,7 @@ func writeVMInfo(out io.Writer, info *vmtool.VMInfo, notes *app.VMNotes) {
 	fmt.Fprintf(out, "Autostart: %s\n", autostart)
 	fmt.Fprintf(out, "IP:        %s\n", ip)
 	fmt.Fprintf(out, "UUID:      %s\n", uuid)
+	writeCards(out, info.Networks)
 	if notes == nil {
 		return
 	}

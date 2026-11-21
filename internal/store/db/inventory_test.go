@@ -308,6 +308,76 @@ func TestMigration3UpgradesVersion2Database(t *testing.T) {
 	}
 }
 
+// V2: a VM's cards on vmtool networks are part of what its host reports; each
+// report replaces them, and a report with none stores none.
+func TestApplyReportStoresNetworksAndReplacesThem(t *testing.T) {
+	ctx := context.Background()
+	d, c := invDB(t)
+	r1 := row(uuid1, "vm1")
+	r1.Networks = []byte(`[{"network":"net1","mac":"52:54:00:00:00:01","ip":"10.77.1.100"}]`)
+	if _, err := d.ApplyReport(ctx, "hv1", t0, "v", []VMRow{r1, row(uuid2, "vm2")}); err != nil {
+		t.Fatal(err)
+	}
+	v, _ := vmByUUID(t, d, "hv1", uuid1, false)
+	if string(v.Networks) != string(r1.Networks) {
+		t.Fatalf("networks = %s", v.Networks)
+	}
+	if v2, _ := vmByUUID(t, d, "hv1", uuid2, false); string(v2.Networks) != "[]" {
+		t.Fatalf("a VM with none stores %s, want []", v2.Networks)
+	}
+	c.t = t0.Add(time.Hour)
+	r1.Networks = []byte(`[{"network":"net2","mac":"52:54:00:00:00:02","ip":"10.77.2.100"}]`)
+	if _, err := d.ApplyReport(ctx, "hv1", c.t, "v", []VMRow{r1, row(uuid2, "vm2")}); err != nil {
+		t.Fatal(err)
+	}
+	if v, _ = vmByUUID(t, d, "hv1", uuid1, false); string(v.Networks) != string(r1.Networks) {
+		t.Fatalf("after a second report: %s", v.Networks)
+	}
+	c.t = t0.Add(2 * time.Hour)
+	if _, err := d.ApplyReport(ctx, "hv1", c.t, "v", []VMRow{row(uuid1, "vm1"), row(uuid2, "vm2")}); err != nil {
+		t.Fatal(err)
+	}
+	if v, _ = vmByUUID(t, d, "hv1", uuid1, false); string(v.Networks) != "[]" {
+		t.Fatalf("a report with none left %s", v.Networks)
+	}
+	if _, err := d.ApplyReport(ctx, "hv1", t0.Add(3*time.Hour), "v", []VMRow{func() VMRow { r := row(uuid1, "vm1"); r.Networks = []byte("{"); return r }()}); err == nil {
+		t.Fatal("networks that are not JSON were stored")
+	}
+}
+
+// Migration 5 adds the column to a version-4 database; its rows have none.
+func TestMigration5UpgradesVersion4Database(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "d", "store.db")
+	d, err := openMigrations(ctx, path, key(1), migrations[:4])
+	if err != nil {
+		t.Fatal(err)
+	}
+	stamp := t0.Format(time.RFC3339Nano)
+	for _, q := range []string{
+		`INSERT INTO hosts(name, last_report, generated_at, daemon_version) VALUES ('hv1', '` + stamp + `', '` + stamp + `', '2.6.0')`,
+		`INSERT INTO vms(host, uuid, name, state, vcpus, memory_gib, ip, autostart, firmware, disks, first_seen, last_seen, gone_since, disks_unreadable)
+		 VALUES ('hv1', '` + uuid1 + `', 'vm1', 'running', 2, 4, '', 0, '', '[]', '` + stamp + `', '` + stamp + `', NULL, 0)`,
+	} {
+		if _, err := d.sql.ExecContext(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	d.Close()
+	d, err = Open(ctx, path, key(1))
+	if err != nil {
+		t.Fatalf("upgrade: %v", err)
+	}
+	defer d.Close()
+	if v, _ := d.version(ctx); v != len(migrations) || len(migrations) < 5 {
+		t.Fatalf("version %d want %d (at least 5)", v, len(migrations))
+	}
+	v, ok := vmByUUID(t, d, "hv1", uuid1, false)
+	if !ok || string(v.Networks) != "[]" {
+		t.Fatalf("row after upgrade %+v ok=%v networks=%s", v, ok, v.Networks)
+	}
+}
+
 func TestApplyReportHostsAreIndependent(t *testing.T) {
 	ctx := context.Background()
 	d, _ := invDB(t)

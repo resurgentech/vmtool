@@ -322,6 +322,11 @@ func fromAPI(v api.VMInfo) vmtool.VMInfo {
 	if v.Uuid != nil {
 		out.UUID = *v.Uuid
 	}
+	if v.Networks != nil {
+		for _, a := range *v.Networks {
+			out.Networks = append(out.Networks, vmtool.NetAttachment{Network: a.Network, MAC: a.Mac, IP: a.Ip})
+		}
+	}
 	return out
 }
 

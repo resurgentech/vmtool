@@ -88,6 +88,7 @@ const (
 	fFirmware
 	fDiskCache
 	fWait
+	fNetworks
 	numCreateFields
 )
 
@@ -888,6 +889,9 @@ func (m model) enterCreateMode() (tea.Model, tea.Cmd) {
 		// no: create returns right after start (NoWait); a guest whose address
 		// vmtool cannot see. Refused with a playbook.
 		{label: "Wait for address", kind: fieldSelect, options: []string{"yes", "no"}},
+		// extra cards on vmtool networks of the host: NAME or NAME=IP,
+		// comma-separated; empty is none.
+		{label: "Networks (NAME[=IP],...)", kind: fieldText},
 	}
 
 	values := make([]string, len(fields))
@@ -1133,7 +1137,20 @@ func (m model) createInput() (in app.CreateVMInput, ok bool, err error) {
 		ref = r
 	}
 
+	var nets []app.NetworkRequest
+	if v := strings.TrimSpace(m.formValues[fNetworks]); v != "" {
+		var specs []string
+		for _, s := range strings.Split(v, ",") {
+			specs = append(specs, strings.TrimSpace(s))
+		}
+		var err error
+		if nets, err = app.ParseNetworkRequests(specs); err != nil {
+			return in, false, err
+		}
+	}
+
 	in = app.CreateVMInput{
+		Networks:        nets,
 		Host:            ref.Host,
 		Name:            ref.Name,
 		Image:           image,
@@ -1846,7 +1863,8 @@ func newModel(r *hosts.Resolver, tunnel vmtool.Tunnel, ipWait, sshWait time.Dura
 	return m
 }
 
-// vmDetail is the line under the list for the selected VM: what it was made
+// vmDetail is the line under the list for the selected VM: its cards on vmtool
+// networks, then what it was made
 // from and its comment, from the store's notes. "" for an error row, a VM
 // with neither, notes of another VM that had the name (another UUID), or no
 // store read.
@@ -1854,11 +1872,25 @@ func (m model) vmDetail(vm vmRow) string {
 	if vm.Err != nil {
 		return ""
 	}
+	var parts []string
+	if len(vm.Networks) > 0 {
+		cards := make([]string, len(vm.Networks))
+		for i, c := range vm.Networks {
+			ip := c.IP
+			if ip == "" {
+				ip = "-"
+			}
+			cards[i] = c.Network + " " + ip
+		}
+		parts = append(parts, "networks: "+strings.Join(cards, ", "))
+	}
 	n, ok := m.notes[m.vmRef(vm)]
 	if !ok || (vm.UUID != "" && n.UUID != "" && !strings.EqualFold(vm.UUID, n.UUID)) {
-		return ""
+		if len(parts) == 0 {
+			return ""
+		}
+		return "  " + strings.Join(parts, "  ")
 	}
-	var parts []string
 	if o := n.Origin; o != nil {
 		p := "origin: " + o.Image
 		if o.Image == "" {

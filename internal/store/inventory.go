@@ -18,11 +18,13 @@ import (
 // Report and notes limits. The 1 MiB body limit is maxCredentialBody (the
 // same guard). The comment's limit is vmnotes.MaxCommentBytes.
 const (
-	maxReportVMs   = 4096
-	maxDisksPerVM  = 128
-	maxShortField  = 128
-	maxVersionLen  = 128
-	maxOriginField = 512
+	maxReportVMs  = 4096
+	maxDisksPerVM = 128
+	// maxNetworksPerVM bounds a VM's cards on vmtool networks in a report.
+	maxNetworksPerVM = 64
+	maxShortField    = 128
+	maxVersionLen    = 128
+	maxOriginField   = 512
 )
 
 // SweepInterval is the period of the inventory sweep.
@@ -69,10 +71,25 @@ func reportVM(v storeapi.ReportVM) (db.VMRow, string) {
 	if err != nil || v.Disks == nil {
 		disks = []byte("[]")
 	}
+	networks := []byte("[]")
+	if v.Networks != nil {
+		if len(*v.Networks) > maxNetworksPerVM {
+			return db.VMRow{}, "networks"
+		}
+		for _, n := range *v.Networks {
+			if n.Network == "" || !plainText(n.Network, maxShortField) || !plainText(n.Mac, maxShortField) || !plainText(n.Ip, maxShortField) {
+				return db.VMRow{}, "networks"
+			}
+		}
+		if b, err := json.Marshal(*v.Networks); err == nil {
+			networks = b
+		}
+	}
 	row := db.VMRow{
 		UUID: strings.ToLower(v.Uuid), Name: v.Name, State: v.State, VCPUs: v.Vcpus, MemoryGiB: v.Memory,
 		IP: v.Ip, Autostart: v.Autostart, Firmware: v.Firmware, Disks: disks,
 		DisksUnreadable: v.DisksUnreadable != nil && *v.DisksUnreadable,
+		Networks:        networks,
 	}
 	return row, ""
 }
@@ -129,6 +146,14 @@ func disksOf(raw json.RawMessage) []storeapi.Disk {
 	return out
 }
 
+func networksOf(raw json.RawMessage) []storeapi.VMNetwork {
+	var out []storeapi.VMNetwork
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &out) // a row the store wrote; on failure, none
+	}
+	return out
+}
+
 func toInventoryVM(v db.InventoryVM) storeapi.InventoryVM {
 	out := storeapi.InventoryVM{
 		Host: v.Host, Name: v.Name, Uuid: v.UUID, State: v.State, Vcpus: v.VCPUs, Memory: v.MemoryGiB,
@@ -138,6 +163,9 @@ func toInventoryVM(v db.InventoryVM) storeapi.InventoryVM {
 	if v.DisksUnreadable {
 		t := true
 		out.DisksUnreadable = &t
+	}
+	if n := networksOf(v.Networks); len(n) > 0 {
+		out.Networks = &n
 	}
 	out.Origin = originToAPI(v.Origin)
 	if v.GoneSince != nil {

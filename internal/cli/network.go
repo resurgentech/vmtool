@@ -22,8 +22,76 @@ of 10.77.0.0/16, a bridge called vmt- plus six hex digits, MTU 1450. vmtool
 writes nothing of its own into the network's definition; the bridge name is
 what marks it as vmtool's. vmtool leaves every other libvirt network alone.`,
 	}
-	cmd.AddCommand(netCreateCmd(e), netDeleteCmd(e), netShowCmd(e))
+	cmd.AddCommand(netCreateCmd(e), netDeleteCmd(e), netShowCmd(e), netAttachCmd(e), netDetachCmd(e))
 	return cmd
+}
+
+func netAttachCmd(e *env) *cobra.Command {
+	var ip string
+	cmd := &cobra.Command{
+		Use:   "attach <host/vm> <network>",
+		Short: "Give a VM a card on a vmtool network, with a fixed address and its name",
+		Long: `Attach an extra card on the vmtool network <network> (on the VM's host) to the
+VM: vmtool picks the MAC, reserves --ip (or the next free address of the
+network's DHCP range) under the VM's name, then adds the card, live and in the
+config when the VM is running, in the config only when it is shut off. If the
+card cannot be added the reservation is removed again. The VM's own first card
+stays first, and 'vmtool info' still shows its address as the VM's IP. The VM
+resolves as 'vm' and 'vm.<domain>' on the network. A network vmtool did not
+make is refused.
+
+  vmtool net attach hv1/web net1
+  vmtool net attach hv1/web net2 --ip 10.77.2.50`,
+		Args: cobra.ExactArgs(2),
+	}
+	cmd.Flags().StringVar(&ip, "ip", "", "the fixed address, inside the network's subnet (default: the next free address of its DHCP range)")
+	cmd.RunE = withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
+		a, err := e.service("").AttachNetwork(cmd.Context(), m, ref, args[1], ip)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "VM %q attached to network %q\n", ref.String(), a.Network)
+		writeCards(cmd.OutOrStdout(), []vmtool.NetAttachment{*a})
+		return nil
+	})
+	return cmd
+}
+
+func netDetachCmd(e *env) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "detach <host/vm> <network|mac>",
+		Short: "Remove a VM's card on a vmtool network and its reservation",
+		Long: `Remove the VM's card on the vmtool network <network> (live and from the config
+when the VM is running, from the config only when it is shut off), then its
+reservation. Name the card by its MAC instead when the VM has more than one on
+the network. If the reservation cannot be removed the card is put back. The
+VM's own first card is never removed by this command.`,
+		Args: cobra.ExactArgs(2),
+	}
+	cmd.RunE = withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
+		if err := e.service("").DetachNetwork(cmd.Context(), m, ref, args[1]); err != nil {
+			return err
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "VM %q detached from %q\n", ref.String(), args[1])
+		return nil
+	})
+	return cmd
+}
+
+// writeCards prints a VM's cards on vmtool networks: one line each, labelled on
+// the first, nothing when there is none.
+func writeCards(w io.Writer, cards []vmtool.NetAttachment) {
+	for i, c := range cards {
+		label := ""
+		if i == 0 {
+			label = "Networks:"
+		}
+		ip := c.IP
+		if ip == "" {
+			ip = "-"
+		}
+		fmt.Fprintf(w, "%-10s %s %s %s\n", label, c.Network, c.MAC, ip)
+	}
 }
 
 func netCreateCmd(e *env) *cobra.Command {
@@ -134,5 +202,12 @@ func writeNetwork(w io.Writer, n *vmtool.NetworkInfo) {
 			label = "vms:"
 		}
 		fmt.Fprintf(w, "%-8s %s\n", label, vm)
+	}
+	for i, r := range n.Reservations {
+		label := ""
+		if i == 0 {
+			label = "reserved:"
+		}
+		fmt.Fprintf(w, "%-9s %s %s %s\n", label, r.IP, r.MAC, r.Name)
 	}
 }
