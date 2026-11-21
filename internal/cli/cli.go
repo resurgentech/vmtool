@@ -1455,32 +1455,16 @@ func timingsLine(evs []app.ProgressEvent) string {
 	if len(evs) == 0 {
 		return ""
 	}
-	type span struct {
-		stage       string
-		first, last int64
-		ran         bool
-	}
-	var spans []*span
-	idx := map[string]*span{}
+	var tm app.CreateTimer
 	for _, ev := range evs {
-		sp := idx[ev.Stage]
-		if sp == nil {
-			sp = &span{stage: ev.Stage, first: ev.ElapsedMS}
-			idx[ev.Stage] = sp
-			spans = append(spans, sp)
-		}
-		sp.last = ev.ElapsedMS
-		if ev.Status == "start" || ev.Status == "hash" {
-			sp.ran = true
-		}
+		tm.Add(ev)
 	}
+	t := tm.Timings()
 	secs := func(ms int64) string { return fmt.Sprintf("%.1fs", float64(ms)/1000) }
 	var parts []string
-	for _, sp := range spans {
-		if sp.ran {
-			parts = append(parts, sp.stage+" "+secs(sp.last-sp.first))
-		}
+	for _, st := range t.Stages {
+		parts = append(parts, st.Stage+" "+secs(st.MS))
 	}
-	parts = append(parts, "total "+secs(evs[len(evs)-1].ElapsedMS))
+	parts = append(parts, "total "+secs(t.TotalMS))
 	return "timings: " + strings.Join(parts, ", ")
 }
