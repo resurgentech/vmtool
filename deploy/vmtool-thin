@@ -10,14 +10,19 @@
 # may be compromised, so every argument is validated here and the helper acts
 # only on what vmtool made:
 #   - a volume group that holds a thin pool tagged vmtool_thinpool;
-#   - logical volumes tagged vmtool_vol, vmtool_template or vmtool_building
-#     (create and report excepted); never a pool, never an untagged volume;
+#   - thin logical volumes tagged vmtool_vol, vmtool_template or
+#     vmtool_building (create and report excepted); never a pool, never an
+#     untagged volume;
+#   - thick (linear) logical volumes tagged vmtool_export, which only export
+#     makes: remove, tag and send act on them, nothing else does;
 #   - flat regular files in the image directory, whose path is rendered into
-#     the installed copy by deploy (no environment can change it).
+#     the installed copy by deploy (no environment can change it); import
+#     reads them.
 # It never runs lvm with caller-supplied options, never forces a removal,
-# never builds a command from text, and runs qemu-img only as user vmtool (setpriv), against a
-# device node it hands to vmtool for the duration, so qemu-img can reach only
-# what vmtool can reach anyway (a qcow2 file may name any backing file).
+# never builds a command from text, and runs qemu-img and dd only as user
+# vmtool (setpriv), against device nodes it hands to vmtool for the
+# duration, so they can reach only what vmtool can reach anyway (a qcow2
+# file may name any backing file).
 #
 # Verbs (a refusal prints one line to stderr and exits non-zero):
 #   report                                  lvs JSON over the VGs holding a pool
@@ -28,7 +33,26 @@
 #   rename VG OLD NEW
 #   tag VG NAME +TAG|-TAG...
 #   import VG NAME SRC                      qcow2 file -> the volume (raw)
-#   export VG NAME DEST                     the volume -> qcow2 file
+#   export VG TEMPLATE NAME TAG...          template -> a new thick qcow2 volume
+#   send VG NAME                            the export volume's qcow2 bytes -> stdout
+#
+# export: TEMPLATE is a vmtool_template thin volume. NAME is vmexp-<12 hex>
+# and new. TAG... include vmtool_export and none of vmtool_vol,
+# vmtool_template, vmtool_building, vmtool_thinpool, vmtool_bytes. It sizes
+# the volume with `qemu-img measure` (fully allocated, rounded up to the VG's
+# extent size), refuses before creating anything unless the VG's free space
+# less that size leaves at least a tenth of the thin pool's size, makes the
+# linear volume (never in the pool), converts the template into it as qcow2,
+# runs `qemu-img check`, and adds the tag vmtool_bytes=<image-end-offset>.
+# stdout carries qemu-img's progress lines (`    (12.34/100%)`, carriage-
+# return separated) and nothing else. Any failure after the volume exists
+# removes that volume (never the template). No room is one stderr line:
+#   vmtool-thin: no room: need=<bytes> free=<bytes> reserve=<bytes>
+# (need: the volume's size; free: the VG's free bytes; reserve: the tenth).
+#
+# send: NAME is a thick vmtool_export volume with exactly one vmtool_bytes=N
+# tag, N no larger than the volume. Writes the first N bytes of the device to
+# stdout, as user vmtool, and nothing else. N comes only from that tag.
 set -euo pipefail
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
@@ -48,7 +72,9 @@ name_re='^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$'
 tag_re='^vmtool_[a-z0-9_]+(=[A-Za-z0-9._:-]+)?$'
 bytes_re='^[1-9][0-9]{0,17}$'
 src_re='^[A-Za-z0-9][A-Za-z0-9._-]*$'
-dest_re='^[.]?[A-Za-z0-9][A-Za-z0-9._-]*[.]part$'
+export_re='^vmexp-[0-9a-f]{12}$'
+measure_re='"fully-allocated"[[:space:]]*:[[:space:]]*([0-9]+)'
+endoff_re='"image-end-offset"[[:space:]]*:[[:space:]]*([0-9]+)'
 
 reserved=(snapshot pvmove _cdata _cmeta _corig _mlog _mimage _pmspare _rimage _rmeta _tdata _tmeta _vorigin _vdata)
 
@@ -144,6 +170,24 @@ require_target() {
   [[ $L_attr == V* ]] || die "$1 is not a thin volume"
 }
 
+# require_export NAME (after require_pool_vg): a thick LV tagged vmtool_export.
+require_export() {
+  check_lv_name "$1"
+  find_lv "$1" || die "no such volume: $1"
+  has_tag "$L_tags" vmtool_export || die "$1 is not a vmtool export volume"
+  [[ $L_attr == -* ]] || die "$1 is not a thick volume"
+}
+
+# require_target_or_export NAME: what remove and tag act on.
+require_target_or_export() {
+  check_lv_name "$1"
+  if find_lv "$1" && has_tag "$L_tags" vmtool_export; then
+    require_export "$1"
+  else
+    require_target "$1"
+  fi
+}
+
 # require_new NAME (after require_pool_vg): a valid name nothing uses yet.
 require_new() {
   check_lv_name "$1"
@@ -159,12 +203,30 @@ new_tags() {
   for t in "$@"; do
     [[ $t =~ $tag_re ]] || die "invalid tag"
     [[ ${t%%=*} != vmtool_thinpool ]] || die "the pool tag cannot be set here"
+    [[ ${t%%=*} != vmtool_export && ${t%%=*} != vmtool_bytes ]] || die "the export tags cannot be set here"
     case $t in
       vmtool_vol | vmtool_template | vmtool_building) kind=yes ;;
     esac
     tag_args+=(--addtag "$t")
   done
   [[ $kind == yes ]] || die "a new volume needs a vmtool_vol, vmtool_template or vmtool_building tag"
+}
+
+# export_tags TAG...: validates an export volume's tags, fills tag_args.
+export_tags() {
+  local t has=no
+  tag_args=()
+  for t in "$@"; do
+    [[ $t =~ $tag_re ]] || die "invalid tag"
+    case ${t%%=*} in
+      vmtool_thinpool | vmtool_vol | vmtool_template | vmtool_building | vmtool_bytes)
+        die "that tag cannot be set on an export volume"
+        ;;
+      vmtool_export) [[ $t == vmtool_export ]] || die "invalid tag"; has=yes ;;
+    esac
+    tag_args+=(--addtag "$t")
+  done
+  [[ $has == yes ]] || die "an export volume needs the vmtool_export tag"
 }
 
 # src_path PATH: SRC is exactly <image dir>/<file>, a regular file, no symlink.
@@ -176,24 +238,40 @@ src_path() {
   [[ -f $1 && ! -L $1 ]] || die "source is not a regular file"
 }
 
-# dest_path PATH: exactly <image dir>/<file>.part, which does not exist.
-dest_path() {
-  local f
-  [[ $1 == "$pool_dir"/* ]] || die "destination is not in the image directory"
-  f=${1#"$pool_dir"/}
-  [[ $f =~ $dest_re ]] || die "destination is not a plain .part file name in the image directory"
-  [[ ! -e $1 && ! -L $1 ]] || die "destination exists"
+# import, export and send hand an LV's device node (/dev/VG/NAME, a link
+# root's udev made) to vmtool while qemu-img or dd runs, and a trap gives
+# each back on every exit path. give_dev LVNAME records and hands over;
+# nothing else is chowned, and never a path in the image directory.
+owned=()
+give_dev() {
+  owned+=("$1")
+  chown vmtool:vmtool "/dev/$vg/$1"
+}
+restore_dev() {
+  local n
+  for n in ${owned[@]+"${owned[@]}"}; do
+    chown root:disk "/dev/$vg/$n" || true
+  done
+  owned=()
 }
 
-# import and export hand the LV's device node (/dev/VG/NAME, a link root's
-# udev made) to vmtool while qemu-img runs, and a trap gives it back on every
-# exit path. Nothing else is chowned, and never a path in the image directory.
-dev_owned=no
-restore_dev() {
-  if [[ $dev_owned == yes ]]; then
-    dev_owned=no
-    chown root:disk "/dev/$vg/$name" || true
+# export's trap: the nodes back, then the new volume removed if the export
+# did not finish. created is set only once lvcreate has succeeded, and names
+# only the new volume.
+created=no
+export_exit() {
+  restore_dev
+  if [[ $created == yes ]]; then
+    created=no
+    lvremove -y "$vg/$name" >/dev/null 2>&1 || true
   fi
+}
+
+traps() {
+  trap "$1" EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
 }
 
 [[ $# -ge 1 ]] || die "usage: vmtool-thin VERB [ARGS]"
@@ -269,7 +347,7 @@ case $verb in
     need_args exact 2
     vg=$1 name=$2
     require_pool_vg "$vg"
-    require_target "$name"
+    require_target_or_export "$name"
     lvremove -y "$vg/$name" >/dev/null
     ;;
 
@@ -287,12 +365,13 @@ case $verb in
     vg=$1 name=$2
     shift 2
     require_pool_vg "$vg"
-    require_target "$name"
+    require_target_or_export "$name"
     tag_args=()
     for item in "$@"; do
       t=${item:1}
       [[ $t =~ $tag_re ]] || die "invalid tag"
       [[ ${t%%=*} != vmtool_thinpool ]] || die "the pool tag cannot be changed"
+      [[ ${t%%=*} != vmtool_export && ${t%%=*} != vmtool_bytes ]] || die "the export tags cannot be changed here"
       case $item in
         +*) tag_args+=(--addtag "$t") ;;
         -*) tag_args+=(--deltag "$t") ;;
@@ -308,28 +387,87 @@ case $verb in
     require_pool_vg "$vg"
     require_target "$name"
     src_path "$src"
-    trap restore_dev EXIT
-    trap 'exit 129' HUP
-    trap 'exit 130' INT
-    trap 'exit 143' TERM
-    dev_owned=yes
-    chown vmtool:vmtool "/dev/$vg/$name"
+    traps restore_dev
+    give_dev "$name"
     setpriv --reuid=vmtool --regid=vmtool --init-groups -- qemu-img convert -f qcow2 -n -O raw -t none -W "$src" "/dev/$vg/$name" >/dev/null
     ;;
 
   export)
-    need_args exact 3
-    vg=$1 name=$2 dest=$3
+    need_args min 5
+    vg=$1 tpl=$2 name=$3
+    shift 3
     require_pool_vg "$vg"
-    require_target "$name"
-    dest_path "$dest"
-    trap restore_dev EXIT
-    trap 'exit 129' HUP
-    trap 'exit 130' INT
-    trap 'exit 143' TERM
-    dev_owned=yes
-    chown vmtool:vmtool "/dev/$vg/$name"
-    setpriv --reuid=vmtool --regid=vmtool --init-groups -- qemu-img convert -f raw -O qcow2 "/dev/$vg/$name" "$dest" >/dev/null
+    # The pool's size, for the reserve.
+    pool_size=''
+    while IFS='|' read -r n a s t; do
+      a=${a// /}
+      t=${t// /}
+      if [[ $a == t* ]] && has_tag "$t" vmtool_thinpool; then
+        s=${s// /}
+        pool_size=${s%%.*}
+        break
+      fi
+    done <<<"$listing"
+    [[ $pool_size =~ ^[0-9]{1,18}$ ]] || die "cannot read the size of the thin pool"
+    require_target "$tpl"
+    has_tag "$L_tags" vmtool_template || die "$tpl is not a vmtool template"
+    [[ $name =~ $export_re ]] || die "an export volume is named vmexp- and 12 lower-case hex digits"
+    require_new "$name"
+    export_tags "$@"
+    traps export_exit
+    give_dev "$tpl"
+    measured=$(setpriv --reuid=vmtool --regid=vmtool --init-groups -- qemu-img measure -f raw -O qcow2 --output=json "/dev/$vg/$tpl") \
+      || die "measuring the template failed"
+    [[ $measured =~ $measure_re ]] || die "cannot read the measured size"
+    need=${BASH_REMATCH[1]}
+    sizes=$(vgs --noheadings --units b --nosuffix --separator '|' -o vg_free,vg_extent_size "$vg" 2>/dev/null) \
+      || die "cannot read the free space of the volume group"
+    IFS='|' read -r free extent <<<"$sizes"
+    free=${free// /}
+    free=${free%%.*}
+    extent=${extent// /}
+    extent=${extent%%.*}
+    [[ $free =~ ^[0-9]{1,18}$ && $extent =~ $bytes_re ]] || die "cannot read the free space of the volume group"
+    [[ $need =~ ^[0-9]{1,18}$ && $need != 0* ]] || die "cannot read the measured size"
+    need=$(((10#$need + 10#$extent - 1) / 10#$extent * 10#$extent))
+    reserve=$((10#$pool_size / 10))
+    if ((10#$free < need + reserve)); then
+      die "no room: need=$need free=$free reserve=$reserve"
+    fi
+    lvcreate -L "${need}b" -n "$name" "${tag_args[@]}" "$vg" >/dev/null
+    created=yes
+    give_dev "$name"
+    setpriv --reuid=vmtool --regid=vmtool --init-groups -- qemu-img convert -p -f raw -O qcow2 -t none -W -m 16 "/dev/$vg/$tpl" "/dev/$vg/$name"
+    checked=$(setpriv --reuid=vmtool --regid=vmtool --init-groups -- qemu-img check --output=json "/dev/$vg/$name") \
+      || die "checking the export failed"
+    [[ $checked =~ $endoff_re ]] || die "cannot read the image length"
+    len=${BASH_REMATCH[1]}
+    [[ $len =~ $bytes_re ]] && ((10#$len <= need)) || die "the image length is not usable"
+    lvchange --addtag "vmtool_bytes=$len" "$vg/$name" >/dev/null
+    created=no
+    ;;
+
+  send)
+    need_args exact 2
+    vg=$1 name=$2
+    require_pool_vg "$vg"
+    require_export "$name"
+    # The length is the volume's own vmtool_bytes tag, once, and nothing else.
+    len='' ntag=0
+    IFS=, read -ra tags <<<"$L_tags"
+    for t in "${tags[@]}"; do
+      if [[ $t == vmtool_bytes=* ]]; then
+        len=${t#vmtool_bytes=}
+        ntag=$((ntag + 1))
+      fi
+    done
+    ((ntag == 1)) || die "$name has no single vmtool_bytes tag"
+    [[ $len =~ $bytes_re ]] || die "the vmtool_bytes tag is not a length"
+    [[ $L_size =~ ^[0-9]{1,18}$ ]] || die "cannot read the size of $name"
+    ((10#$len <= 10#$L_size)) || die "the vmtool_bytes tag is larger than $name"
+    traps restore_dev
+    give_dev "$name"
+    setpriv --reuid=vmtool --regid=vmtool --init-groups -- dd "if=/dev/$vg/$name" bs=1M "count=$len" iflag=count_bytes,fullblock status=none
     ;;
 
   *)

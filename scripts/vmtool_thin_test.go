@@ -27,7 +27,15 @@ const (
 )
 
 // writers are the stubs that must record nothing when the helper refuses.
-var thinWriters = []string{"lvcreate", "lvchange", "lvextend", "lvremove", "lvrename", "qemu-img", "setpriv", "chown"}
+var thinWriters = []string{"lvcreate", "lvchange", "lvextend", "lvremove", "lvrename", "qemu-img", "setpriv", "chown", "dd"}
+
+// qemu-img stub: measure and check print JSON as qemu-img does (several
+// lines); convert -p prints a progress line.
+const thinQemuBody = `case "$1" in
+  measure) printf '{\n    "required": 1048576,\n    "fully-allocated": 10737418241\n}\n' ;;
+  check) printf '{\n    "image-end-offset": 1310720,\n    "check-errors": 0\n}\n' ;;
+  convert) if [[ $2 == -p ]]; then printf '    (1.00/100%%)\r'; fi ;;
+esac`
 
 // lvs answers: --reportformat from lvs.json; the all-VG discovery listing
 // (-o vg_name,...) from lvs.all.out; the per-VG check listing from
@@ -51,6 +59,12 @@ const thinListing = `  thin-test|twi-aotz--|64424509440|vmtool_thinpool
   foreign|-wi-a-----|1073741824|
   other|Vwi-a-tz--|1073741824|someone_else,vmtool_volume
   fakepool|twi-a-tz--|64424509440|vmtool_vol
+  vmexp-000000000001|-wi-a-----|10737418240|vmtool_export,vmtool_name=img1,vmtool_from=vmtpl-000000000001,vmtool_bytes=5368709120
+  vmexp-000000000003|-wi-a-----|10737418240|vmtool_export,vmtool_name=img1
+  vmexp-000000000004|-wi-a-----|10737418240|vmtool_export,vmtool_bytes=5368709120,vmtool_bytes=1024
+  vmexp-000000000005|-wi-a-----|10737418240|vmtool_export,vmtool_bytes=10737418241
+  vmexp-000000000006|-wi-a-----|10737418240|vmtool_name=img1,vmtool_bytes=5368709120
+  vmexp-000000000007|Vwi-a-tz--|10737418240|vmtool_export,vmtool_bytes=5368709120
 `
 
 const thinListingNoPool = `  data|-wi-a-----|1073741824|
@@ -98,8 +112,15 @@ func newThinEnvRender(t *testing.T, pool string) *thinEnv {
 	}
 	stub := thinTemp(t)
 	addStub(t, stub, "lvs", thinLvsBody)
+	addStub(t, stub, "vgs", `f="$d/vgs.out"; [[ -f $f ]] || exit 5; cat "$f"`)
 	for _, w := range thinWriters {
 		body := "true"
+		if w == "qemu-img" {
+			body = thinQemuBody
+		}
+		if w == "dd" {
+			body = `echo PLACEHOLDER-bytes`
+		}
 		if w == "setpriv" {
 			// Run what follows the "--": the stub qemu-img then records too.
 			body = `while [[ $# -gt 0 && $1 != -- ]]; do shift; done; shift; exec "$@"`
@@ -132,6 +153,7 @@ func newThinEnvRender(t *testing.T, pool string) *thinEnv {
 	e.fixture(thinVG, thinListing)
 	e.fixture("vg-nopool", thinListingNoPool)
 	e.write("lvs.all.out", "  "+thinVG+"|twi-aotz--|vmtool_thinpool\n  "+thinVG+"|Vwi-a-tz--|vmtool_vol\n  vg-nopool|-wi-a-----|\n")
+	e.write("vgs.out", "  100000000000|4194304\n")
 	e.write("lvs.json", `{"report":[{"lv":[{"lv_name":"vm1"}]}]}`+"\n")
 	return e
 }
@@ -279,15 +301,6 @@ func TestThinImport(t *testing.T) {
 	e.want("qemu-img", "convert -f qcow2 -n -O raw -t none -W "+src+" /dev/vg-test/bld\n")
 }
 
-func TestThinExport(t *testing.T) {
-	e := newThinEnv(t)
-	dest := filepath.Join(e.images, ".img1.part")
-	e.ok("export", thinVG, "vmtpl-000000000001", dest)
-	e.want("chown", "vmtool:vmtool /dev/vg-test/vmtpl-000000000001\nroot:disk /dev/vg-test/vmtpl-000000000001\n")
-	e.want("setpriv", "--reuid=vmtool --regid=vmtool --init-groups -- qemu-img convert -f raw -O qcow2 /dev/vg-test/vmtpl-000000000001 "+dest+"\n")
-	e.want("qemu-img", "convert -f raw -O qcow2 /dev/vg-test/vmtpl-000000000001 "+dest+"\n")
-}
-
 // A failing qemu-img still gives the device node back, and the helper fails.
 func TestThinImportRestoresOwnerOnFailure(t *testing.T) {
 	e := newThinEnv(t)
@@ -378,7 +391,7 @@ func TestThinRefusesVGWithoutPool(t *testing.T) {
 	e.refuses("tag", "vg-nopool", "vm1", "+vmtool_x")
 	e.refuses("snapshot", "vg-nopool", "vm1", "vm2", "vmtool_vol")
 	e.refuses("import", "vg-nopool", "vm1", e.img("img1"))
-	e.refuses("export", "vg-nopool", "vm1", filepath.Join(e.images, ".x.part"))
+	e.refuses("export", "vg-nopool", "vm1", thinExpNew, "vmtool_export")
 	// A VG lvs does not know.
 	e.refuses("remove", "vg-unknown", "vm1")
 }
@@ -408,14 +421,13 @@ func TestThinRefusesUntaggedTarget(t *testing.T) {
 		t.Run(n, func(t *testing.T) {
 			e := newThinEnv(t)
 			src := e.img("img1")
-			dest := filepath.Join(e.images, ".o.part")
 			e.refuses("snapshot", thinVG, n, "vm9", "vmtool_vol")
 			e.refuses("extend", thinVG, n, "999999999999")
 			e.refuses("remove", thinVG, n)
 			e.refuses("rename", thinVG, n, "vm9")
 			e.refuses("tag", thinVG, n, "+vmtool_x")
 			e.refuses("import", thinVG, n, src)
-			e.refuses("export", thinVG, n, dest)
+			e.refuses("export", thinVG, n, thinExpNew, "vmtool_export")
 		})
 	}
 }
@@ -423,7 +435,6 @@ func TestThinRefusesUntaggedTarget(t *testing.T) {
 // A tagged thin pool (tag set by hand) is a pool all the same: nothing acts on it.
 func TestThinRefusesPoolAsTarget(t *testing.T) {
 	e := newThinEnv(t)
-	dest := filepath.Join(e.images, ".o.part")
 	for _, n := range []string{"fakepool", "thin-test"} {
 		e.refuses("remove", thinVG, n)
 		e.refuses("extend", thinVG, n, "999999999999")
@@ -431,7 +442,7 @@ func TestThinRefusesPoolAsTarget(t *testing.T) {
 		e.refuses("tag", thinVG, n, "-vmtool_vol")
 		e.refuses("snapshot", thinVG, n, "vm9", "vmtool_vol")
 		e.refuses("import", thinVG, n, e.img("img1"))
-		e.refuses("export", thinVG, n, dest)
+		e.refuses("export", thinVG, n, thinExpNew, "vmtool_export")
 	}
 }
 
@@ -482,7 +493,7 @@ func TestThinTargetMustBeThinVolume(t *testing.T) {
 	e.refuses("rename", "vg-odd", "thick", "vm9")
 	e.refuses("tag", "vg-odd", "thick", "+vmtool_template")
 	e.refuses("import", "vg-odd", "thick", e.img("img1"))
-	e.refuses("export", "vg-odd", "thick", filepath.Join(e.images, ".o.part"))
+	e.refuses("export", "vg-odd", "thick", thinExpNew, "vmtool_export")
 }
 
 func TestThinRefusesBadTags(t *testing.T) {
@@ -591,42 +602,9 @@ func TestThinRefusesBadSrc(t *testing.T) {
 	}
 }
 
-func TestThinRefusesBadDest(t *testing.T) {
-	e := newThinEnv(t)
-	outside := filepath.Join(t.TempDir(), ".o.part")
-	os.Mkdir(filepath.Join(e.images, "sub"), 0o755)
-	e.img(".exists.part")
-	os.Symlink(filepath.Join(e.images, "nowhere"), filepath.Join(e.images, ".dangling.part"))
-	os.Symlink(e.images, filepath.Join(e.images, ".link.part"))
-	cases := map[string]string{
-		"not .part":    e.images + "/out.qcow2",
-		"bare name":    e.images + "/img1",
-		"only .part":   e.images + "/.part",
-		"exists":       e.images + "/.exists.part",
-		"dangling":     e.images + "/.dangling.part",
-		"symlink":      e.images + "/.link.part",
-		"relative":     ".o.part",
-		"outside":      outside,
-		"subdirectory": e.images + "/sub/.o.part",
-		"dotdot":       e.images + "/../.o.part",
-		"dotdot dir":   e.images + "/sub/../.o.part",
-		"empty":        "",
-		"the dir":      e.images,
-		"newline":      e.images + "/.o.part\n",
-		"space":        e.images + "/.o p.part",
-		"double dot":   e.images + "/..part",
-	}
-	for name, dest := range cases {
-		t.Run(name, func(t *testing.T) {
-			e.refuses("export", thinVG, "vm1", dest)
-		})
-	}
-}
-
 func TestThinRefusesWrongArgCounts(t *testing.T) {
 	e := newThinEnv(t)
 	img := e.img("img1")
-	dest := filepath.Join(e.images, ".o.part")
 	cases := [][]string{
 		{"report", "x"},
 		{"create", thinVG, "thin-test", "vm9", "1024"},
@@ -646,7 +624,9 @@ func TestThinRefusesWrongArgCounts(t *testing.T) {
 		{"import", thinVG, "bld"},
 		{"import", thinVG, "bld", img, "x"},
 		{"export", thinVG, "vm1"},
-		{"export", thinVG, "vm1", dest, "x"},
+		{"send", thinVG},
+		{"send", thinVG, "vmexp-000000000001", "x"},
+		{"export", thinVG, "vmtpl-000000000001", thinExpNew},
 	}
 	for _, c := range cases {
 		t.Run(strings.Join(c, " "), func(t *testing.T) { e.refuses(c...) })
@@ -736,7 +716,7 @@ func TestThinScriptText(t *testing.T) {
 			t.Errorf("line %d: chown of something that is not a device node: %s", i+1, l)
 		}
 	}
-	if qemu != 2 || setpriv != 2 {
-		t.Errorf("qemu-img on %d lines, setpriv on %d; want 2 and 2 (import, export)", qemu, setpriv)
+	if qemu != 4 || setpriv != 5 {
+		t.Errorf("qemu-img on %d lines, setpriv on %d; want 4 and 5 (import; export measure, convert, check; send dd)", qemu, setpriv)
 	}
 }
