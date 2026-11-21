@@ -27,7 +27,7 @@ const (
 )
 
 // writers are the stubs that must record nothing when the helper refuses.
-var thinWriters = []string{"lvcreate", "lvchange", "lvextend", "lvremove", "lvrename", "qemu-img", "setpriv", "chown", "dd"}
+var thinWriters = []string{"lvcreate", "lvchange", "lvextend", "lvremove", "lvrename", "blkdiscard", "qemu-img", "setpriv", "chown", "dd"}
 
 // qemu-img stub: measure and check print JSON as qemu-img does (several
 // lines); convert -p prints a progress line.
@@ -691,7 +691,7 @@ func TestThinScriptText(t *testing.T) {
 	if regexp.MustCompile(`\beval\b`).MatchString(s) {
 		t.Error("eval in the script")
 	}
-	var setpriv, qemu int
+	var setpriv, qemu, discards, activations int
 	for i, l := range strings.Split(s, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(l), "#") {
 			continue
@@ -715,6 +715,22 @@ func TestThinScriptText(t *testing.T) {
 		if regexp.MustCompile(`\bchown\b`).MatchString(l) && !strings.Contains(l, "/dev/") {
 			t.Errorf("line %d: chown of something that is not a device node: %s", i+1, l)
 		}
+		// blkdiscard: the fixed device path only; no caller text, no options.
+		if strings.Contains(l, "blkdiscard") {
+			discards++
+			if strings.Contains(l, "$@") || strings.Contains(l, "$*") || regexp.MustCompile(`blkdiscard\s+-`).MatchString(l) {
+				t.Errorf("line %d: blkdiscard with an option or caller text: %s", i+1, l)
+			}
+			if !strings.Contains(l, `"/dev/$1/$2"`) {
+				t.Errorf("line %d: blkdiscard on something other than /dev/VG/NAME: %s", i+1, l)
+			}
+		}
+		if strings.Contains(l, "lvchange") && strings.Contains(l, "-K") {
+			activations++
+		}
+	}
+	if discards != 1 || activations != 1 {
+		t.Errorf("blkdiscard on %d lines, lvchange -K on %d; want 1 (discard_lv, used by remove and the export trap) and 1 (remove)", discards, activations)
 	}
 	if qemu != 4 || setpriv != 5 {
 		t.Errorf("qemu-img on %d lines, setpriv on %d; want 4 and 5 (import; export measure, convert, check; send dd)", qemu, setpriv)

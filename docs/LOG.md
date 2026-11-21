@@ -1615,3 +1615,22 @@ are appended, never edited in; a hook refuses rewrites.
   `templates prune`; `TestExportHelpNamesTheArray` pins the keywords.
 - Red: 17 keywords missing; green; `just check` green.
 - Commits: the E4 commit on `clone-identity`.
+
+## 2026-11-20 — D1 The helper discards a volume before removing it
+
+- `deploy/vmtool-thin`: new `discard_lv` (the script's only `blkdiscard`,
+  no option, on `/dev/VG/NAME`). `remove` refuses a volume whose `lv_attr`
+  shows it open, activates an inactive one with `lvchange -ay -K`,
+  discards, and removes only after a successful discard; a failed discard
+  is one stderr line naming the volume, saying it was kept so its data does
+  not return to the pool, and the retry command. The export trap discards
+  before removing and keeps the volume when the discard fails.
+- Tests: `scripts/vmtool_thin_discard_test.go` (call order for a thin
+  volume, a building volume, a template and an export; activation first;
+  open refused; discard failure keeps; export trap both ways; no other verb
+  discards); `TestThinScriptText` pins one `blkdiscard` line and one `-K`
+  line. `internal/hosts/thindiscard_test.go`: the helper's line reaches the
+  delete error and the building-cleanup log (no daemon change needed;
+  these were green at first run, regression pins).
+- Red: 8 helper tests failing; green; `just check` green.
+- Commits: the D1 commit on `clone-identity`.

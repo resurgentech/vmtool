@@ -19,6 +19,11 @@
 #     the installed copy by deploy (no environment can change it); import
 #     reads them.
 # It never runs lvm with caller-supplied options, never forces a removal,
+# discards a volume before it removes it (remove, and export's cleanup of a
+# half-made volume; a volume LVM reports as open is refused, an inactive one
+# is activated first, and one whose discard fails is kept, never removed, so
+# its data does not return to the pool; blkdiscard never gets --force or any
+# caller-supplied option, and no other verb discards),
 # never builds a command from text, and runs qemu-img and dd only as user
 # vmtool (setpriv), against device nodes it hands to vmtool for the
 # duration, so they can reach only what vmtool can reach anyway (a qcow2
@@ -29,7 +34,7 @@
 #   create VG POOL NAME BYTES TAG...        thin volume of BYTES
 #   snapshot VG SRC NAME TAG...             thin snapshot of SRC, activated
 #   extend VG NAME BYTES                    grow only (equal size: nothing)
-#   remove VG NAME
+#   remove VG NAME                          discard the volume's device, then remove it
 #   rename VG OLD NEW
 #   tag VG NAME +TAG|-TAG...
 #   import VG NAME SRC                      qcow2 file -> the volume (raw)
@@ -255,6 +260,22 @@ restore_dev() {
   owned=()
 }
 
+# discard_lv VG NAME: discards the whole device /dev/VG/NAME, so the blocks
+# go back to the pool (or the VG) empty. The only blkdiscard in this script:
+# no option, nothing from the caller but the validated VG and NAME. On
+# failure prints one die-style line to stderr (the volume, that it was kept,
+# the exact retry command) and returns 1; the caller must not remove it.
+discard_lv() {
+  local out
+  if out=$(blkdiscard "/dev/$1/$2" 2>&1); then
+    return 0
+  fi
+  out=${out//[[:space:]]/ }
+  out=${out%% }
+  echo "vmtool-thin: discard of $1/$2 failed${out:+ ($out)}; volume kept so its data does not return to the pool; retry: sudo -n /usr/local/libexec/vmtool-thin remove $1 $2" >&2
+  return 1
+}
+
 # export's trap: the nodes back, then the new volume removed if the export
 # did not finish. created is set only once lvcreate has succeeded, and names
 # only the new volume.
@@ -263,7 +284,12 @@ export_exit() {
   restore_dev
   if [[ $created == yes ]]; then
     created=no
-    lvremove -y "$vg/$name" >/dev/null 2>&1 || true
+    # Discard first; a volume that cannot be discarded is left (tagged, for
+    # the daemon's expiry to retry), never removed. The volume is active: the
+    # lvcreate just made it, so there is nothing to activate.
+    if discard_lv "$vg" "$name"; then
+      lvremove -y "$vg/$name" >/dev/null 2>&1 || true
+    fi
   fi
 }
 
@@ -348,6 +374,16 @@ case $verb in
     vg=$1 name=$2
     require_pool_vg "$vg"
     require_target_or_export "$name"
+    # A volume LVM reports as open (6th attribute character) is in use.
+    [[ ${L_attr:5:1} != o ]] || die "$name is open (in use); not removed"
+    # An inactive one (5th character not a) is activated so its device exists;
+    # -K because a thin volume may carry the activation-skip flag.
+    if [[ ${L_attr:4:1} != a ]]; then
+      lvchange -ay -K "$vg/$name" >/dev/null
+    fi
+    # Discard, and only then remove: a volume that could not be discarded is
+    # kept, so no old data goes back to the pool.
+    discard_lv "$vg" "$name" || exit 1
     lvremove -y "$vg/$name" >/dev/null
     ;;
 
