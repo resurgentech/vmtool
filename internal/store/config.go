@@ -21,11 +21,12 @@ import (
 )
 
 const (
-	DefaultConfigPath = "/etc/vmtool-store/config.yaml"
-	DefaultTokensPath = "/etc/vmtool-store/tokens.yaml"
-	DefaultKeyPath    = "/etc/vmtool-store/enc.key"
-	DefaultListen     = "127.0.0.1:8095"
-	DefaultDataDir    = "/var/lib/vmtool-store"
+	DefaultConfigPath     = "/etc/vmtool-store/config.yaml"
+	DefaultTokensPath     = "/etc/vmtool-store/tokens.yaml"
+	DefaultHostTokensPath = "/etc/vmtool-store/host_tokens.yaml"
+	DefaultKeyPath        = "/etc/vmtool-store/enc.key"
+	DefaultListen         = "127.0.0.1:8095"
+	DefaultDataDir        = "/var/lib/vmtool-store"
 
 	// S3AccessKeyEnv and S3SecretKeyEnv carry the S3 credentials; they are
 	// never read from a file.
@@ -36,21 +37,25 @@ const (
 // Config is config.yaml plus what Load reads from the environment and from
 // the token file.
 type Config struct {
-	Listen      string `yaml:"listen"`
-	DataDir     string `yaml:"data_dir"`
-	Bucket      string `yaml:"bucket"`
-	S3Endpoint  string `yaml:"s3_endpoint"`
-	BehindProxy bool   `yaml:"behind_proxy"`
-	TokensFile  string `yaml:"tokens_file"`
-	KeyFile     string `yaml:"key_file"`
-	TLSCert     string `yaml:"tls_cert"`
-	TLSKey      string `yaml:"tls_key"`
+	Listen         string `yaml:"listen"`
+	DataDir        string `yaml:"data_dir"`
+	Bucket         string `yaml:"bucket"`
+	S3Endpoint     string `yaml:"s3_endpoint"`
+	BehindProxy    bool   `yaml:"behind_proxy"`
+	TokensFile     string `yaml:"tokens_file"`
+	HostTokensFile string `yaml:"host_tokens_file"`
+	KeyFile        string `yaml:"key_file"`
+	TLSCert        string `yaml:"tls_cert"`
+	TLSKey         string `yaml:"tls_key"`
 
 	// S3AccessKey and S3SecretKey come from the environment.
 	S3AccessKey string `yaml:"-"`
 	S3SecretKey string `yaml:"-"`
 	// Tokens maps a caller's name to the SHA-256 hex of its token.
 	Tokens map[string]string `yaml:"-"`
+	// HostTokens maps a host's name to the SHA-256 hex of its token (may be
+	// empty).
+	HostTokens map[string]string `yaml:"-"`
 }
 
 var nameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
@@ -77,6 +82,9 @@ func Load(path string) (*Config, error) {
 	if c.TokensFile == "" {
 		c.TokensFile = DefaultTokensPath
 	}
+	if c.HostTokensFile == "" {
+		c.HostTokensFile = DefaultHostTokensPath
+	}
 	if c.KeyFile == "" {
 		c.KeyFile = DefaultKeyPath
 	}
@@ -84,6 +92,9 @@ func Load(path string) (*Config, error) {
 	c.S3SecretKey = os.Getenv(S3SecretKeyEnv)
 
 	if err := c.loadTokens(); err != nil {
+		return nil, err
+	}
+	if err := c.loadHostTokens(); err != nil {
 		return nil, err
 	}
 	if err := privateFile("key file", c.KeyFile, false); err != nil {
@@ -144,6 +155,54 @@ func (c *Config) loadTokens() error {
 		return fmt.Errorf("tokens file %s has no token, so no request could authenticate", c.TokensFile)
 	}
 	c.Tokens = m
+	return nil
+}
+
+// loadHostTokens reads host_tokens.yaml, a {host: sha256-hex} map. A missing
+// file means no host may report. A hash that is also a user token's, or that
+// two hosts share, is refused: a token must name one kind of caller and one
+// host. Errors name a file or a host, never a hash or a token.
+func (c *Config) loadHostTokens() error {
+	if err := privateFile("host tokens file", c.HostTokensFile, true); err != nil {
+		return err
+	}
+	b, err := os.ReadFile(c.HostTokensFile)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("host tokens file: %w", err)
+	}
+	var m map[string]string
+	if err := yaml.Unmarshal(b, &m); err != nil {
+		return fmt.Errorf("host tokens file %s is not a {host: sha256-hex} map", c.HostTokensFile)
+	}
+	hosts := make([]string, 0, len(m))
+	for h := range m {
+		hosts = append(hosts, h)
+	}
+	sort.Strings(hosts)
+	user := map[string]bool{}
+	for _, h := range c.Tokens {
+		user[h] = true
+	}
+	owner := map[string]string{}
+	for _, h := range hosts {
+		if !validHostName(h) {
+			return fmt.Errorf("host tokens file %s: host name %q is not a valid host name", c.HostTokensFile, h)
+		}
+		if !tokenhash.Valid(m[h]) {
+			return fmt.Errorf("host tokens file %s: the hash for %q must be 64 lowercase hex characters", c.HostTokensFile, h)
+		}
+		if user[m[h]] {
+			return fmt.Errorf("host tokens file %s: the hash for %q is also in the tokens file; a host token must not be a user token", c.HostTokensFile, h)
+		}
+		if prev, dup := owner[m[h]]; dup {
+			return fmt.Errorf("host tokens file %s: %q and %q share a hash; a host token belongs to more than one host", c.HostTokensFile, prev, h)
+		}
+		owner[m[h]] = h
+	}
+	c.HostTokens = m
 	return nil
 }
 

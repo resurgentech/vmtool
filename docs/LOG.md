@@ -1689,3 +1689,22 @@ are appended, never edited in; a hook refuses rewrites.
 - Red: build failed on the missing methods and types; green; `just check`
   green.
 - Commits: the N1 commit on `clone-identity`.
+
+## 2026-11-21 — N2 Host tokens: a limited store credential
+
+- `spec/openapi/store.yaml` 1.1.0: `Whoami.kind` (user|host), host-token
+  rule in the descriptions; `internal/storeapi` regenerated.
+- `internal/store/config.go`: `host_tokens_file` (default
+  `/etc/vmtool-store/host_tokens.yaml`); missing file = no host tokens; a
+  present one must be 0600, `{host: sha256-hex}`, valid host names; a hash
+  also in `tokens.yaml`, or shared by two hosts, refuses to start; errors
+  name a file or host, never a value.
+- `internal/store/server.go`: a host token passes only `GET /v1/whoami` and
+  `PUT /v1/hosts/{host}/inventory` (allow-list), else 401; whoami answers
+  `host/<h>`, kind `host` (user tokens: kind `user`); log caller `host/<h>`.
+- `internal/store/host_tokens_test.go`: config tests and a 401 table over
+  every operation in the embedded spec; token, hash and header absent from
+  bodies and logs. `spec/README.md` store auth paragraph.
+- Red: 5 tests failing (load, refusals, whoami kind, allow-list); green;
+  `just check` green.
+- Commits: the N2 commit on `clone-identity`.

@@ -12,6 +12,7 @@ import (
 const (
 	tokA = "PLACEHOLDER-not-a-secret-1"
 	tokB = "PLACEHOLDER-not-a-secret-2"
+	tokH = "PLACEHOLDER-not-a-secret-3" // a host token
 )
 
 // fixture writes tokens.yaml (0600), enc.key (0600) and a config.yaml with
@@ -22,6 +23,10 @@ type fixture struct {
 	extra  string // appended to config.yaml
 	tokenM os.FileMode
 	keyM   os.FileMode
+	// hostTokens is the host_tokens.yaml body; "" writes no file. hostM is
+	// its mode (0 means 0600).
+	hostTokens string
+	hostM      os.FileMode
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -50,7 +55,20 @@ func (f *fixture) write(t *testing.T) string {
 			t.Fatal(err)
 		}
 	}
-	cfg := "tokens_file: " + tp + "\nkey_file: " + kp + "\ndata_dir: " + f.dir + "\n" + f.extra
+	hp := filepath.Join(f.dir, "host_tokens.yaml")
+	if f.hostTokens != "" {
+		mode := f.hostM
+		if mode == 0 {
+			mode = 0o600
+		}
+		if err := os.WriteFile(hp, []byte(f.hostTokens), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(hp, mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := "tokens_file: " + tp + "\nkey_file: " + kp + "\nhost_tokens_file: " + hp + "\ndata_dir: " + f.dir + "\n" + f.extra
 	cp := filepath.Join(f.dir, "config.yaml")
 	if err := os.WriteFile(cp, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
@@ -76,7 +94,7 @@ func mustRefuse(t *testing.T, f *fixture, want string) {
 	if !strings.Contains(err.Error(), want) {
 		t.Fatalf("error %q does not contain %q", err, want)
 	}
-	for _, secret := range []string{tokA, tokB, tokenhash.Hash(tokA)} {
+	for _, secret := range []string{tokA, tokB, tokH, tokenhash.Hash(tokA), tokenhash.Hash(tokH)} {
 		if strings.Contains(err.Error(), secret) {
 			t.Fatalf("error leaks a token or hash: %q", err)
 		}

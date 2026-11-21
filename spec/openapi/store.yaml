@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: vmtool store API
-  version: 1.0.0
+  version: 1.1.0
   description: >
     HTTP surface of `vmtool-store`, the image and credential store that runs as
     a container behind a TLS-terminating proxy. Spec-first: models, stdlib
@@ -11,7 +11,11 @@ info:
     against the named hashes in tokens.yaml and answers 401 otherwise. The
     credential routes carry secrets only in the body of a successful GET;
     no other response and no log line does. The one other credential is a
-    download ticket, accepted only on the image blob route.
+    download ticket, accepted only on the image blob route. A host token
+    (one per host, `host_tokens.yaml`) is a limited bearer token: it is
+    accepted only on `GET /v1/whoami` and `PUT /v1/hosts/{host}/inventory`;
+    on every other route it answers 401, as a ticket does. It reads no
+    credential, image or other host.
 servers:
   - url: /
 security:
@@ -35,7 +39,10 @@ paths:
       summary: The name of the calling token
       responses:
         "200":
-          description: The caller's name.
+          description: >
+            The caller's name and kind. A user token answers its name from
+            tokens.yaml and kind `user`; a host token answers `host/<host>`
+            and kind `host`.
           content:
             application/json:
               schema:
@@ -623,3 +630,9 @@ components:
       properties:
         name:
           type: string
+        kind:
+          type: string
+          enum: [user, host]
+          description: >
+            Which kind of token called. Absent from a store older than
+            1.1.0, which has only user tokens.

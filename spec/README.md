@@ -243,7 +243,13 @@ is the contract.
 token, and logs requests by caller name; it logs no token, ticket, credential
 or request body. One more scheme exists, `Authorization: Ticket <t>`, accepted
 on exactly `GET /v1/images/{name}/blob`; on any other route it is 401, like a
-bad token. **A store token opens every guest's credentials.**
+bad token. **A store token opens every guest's credentials.** A **host
+token** is a limited bearer token, one per host, kept as `{host: sha256}` in
+`host_tokens.yaml` (0600; `host_tokens_file` in the store's config; a missing
+file means none). It is accepted only on `GET /v1/whoami` (answers
+`host/<host>`, kind `host`) and `PUT /v1/hosts/{host}/inventory`; on every
+other route, image blob, credentials and images included, it is 401. A hash
+may not appear in both token files. The log's caller for it is `host/<host>`.
 
 | Group | Operations |
 |---|---|

@@ -274,8 +274,9 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 }
 
 // authenticate returns the caller's name for a valid credential on route pat
-// (the matched pattern, "" when none matched). A bearer token is
-// accepted, and a download ticket (`Authorization: Ticket <t>`) on exactly
+// (the matched pattern, "" when none matched). A user bearer token is
+// accepted on every route; a host bearer token only on the routes in
+// hostAllowed; and a download ticket (`Authorization: Ticket <t>`) on exactly
 // "GET /v1/images/{name}/blob" for its own image (see ticketCaller); every
 // other route refuses a ticket without spending it.
 func (s *Server) authenticate(r *http.Request, pat string) (string, bool) {
@@ -288,7 +289,10 @@ func (s *Server) authenticate(r *http.Request, pat string) (string, bool) {
 		return "", false
 	}
 	if strings.EqualFold(scheme, "Bearer") {
-		return s.bearerCaller(cred)
+		if name, ok := s.bearerCaller(cred); ok {
+			return name, true
+		}
+		return s.hostCaller(cred, pat)
 	}
 	if strings.EqualFold(scheme, "Ticket") {
 		return s.ticketCaller(r, pat, cred)
@@ -306,6 +310,35 @@ func (s *Server) bearerCaller(tok string) (string, bool) {
 		}
 	}
 	return found, found != ""
+}
+
+// hostAllowed is the whole of what a host token may do: the routes, by spec
+// pattern. The report route is in the allow-list before it is in the spec,
+// so the list does not change when it arrives.
+var hostAllowed = map[string]bool{
+	"GET /v1/whoami":                 true,
+	"PUT /v1/hosts/{host}/inventory": true,
+}
+
+// hostCallerPrefix starts the name of a host token's caller. User token names
+// (nameRE) cannot contain '/', so the prefix tells the two kinds apart.
+const hostCallerPrefix = "host/"
+
+// hostCaller finds the host whose token hash matches tok and answers
+// "host/<name>", but only on a route in hostAllowed; on any other route
+// (pat "" included) the token is as good as unknown. Every entry is checked,
+// as in bearerCaller.
+func (s *Server) hostCaller(tok, pat string) (string, bool) {
+	var found string
+	for host, h := range s.cfg.HostTokens {
+		if tokenhash.Check(tok, h) {
+			found = host
+		}
+	}
+	if found == "" || !hostAllowed[pat] {
+		return "", false
+	}
+	return hostCallerPrefix + found, true
 }
 
 func writeError(w http.ResponseWriter, code int, msg string) {
@@ -328,5 +361,10 @@ func (h *handlers) GetVersion(context.Context, storeapi.GetVersionRequestObject)
 }
 
 func (h *handlers) Whoami(ctx context.Context, _ storeapi.WhoamiRequestObject) (storeapi.WhoamiResponseObject, error) {
-	return storeapi.Whoami200JSONResponse{Name: callerFrom(ctx)}, nil
+	name := callerFrom(ctx)
+	kind := storeapi.WhoamiKindUser
+	if strings.HasPrefix(name, hostCallerPrefix) {
+		kind = storeapi.WhoamiKindHost
+	}
+	return storeapi.Whoami200JSONResponse{Name: name, Kind: &kind}, nil
 }
