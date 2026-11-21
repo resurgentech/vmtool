@@ -218,7 +218,21 @@ func (h *handlers) GetImagePath(ctx context.Context, req api.GetImagePathRequest
 	return api.GetImagePath200JSONResponse{Path: v.(string)}, nil
 }
 
+// networkHomeRefusal is the 409 a daemon whose host is a network home (config.yml
+// network_home: true) gives the routes that make VMs, or nil. It is checked first
+// in each of them: before the body is validated and before any libvirt call.
+func (h *handlers) networkHomeRefusal() *api.Error {
+	if !h.networkHome {
+		return nil
+	}
+	e := api.Error{Error: fmt.Sprintf("%s is a network home and runs no VMs", h.hosts.Local())}
+	return &e
+}
+
 func (h *handlers) CreateVolume(ctx context.Context, req api.CreateVolumeRequestObject) (api.CreateVolumeResponseObject, error) {
+	if e := h.networkHomeRefusal(); e != nil {
+		return api.CreateVolume409JSONResponse(*e), nil
+	}
 	b := req.Body
 	var bad error
 	switch {
@@ -249,6 +263,9 @@ func (h *handlers) CreateVolume(ctx context.Context, req api.CreateVolumeRequest
 }
 
 func (h *handlers) CloneVolume(ctx context.Context, req api.CloneVolumeRequestObject) (api.CloneVolumeResponseObject, error) {
+	if e := h.networkHomeRefusal(); e != nil {
+		return api.CloneVolume409JSONResponse(*e), nil
+	}
 	b := req.Body
 	var bad error
 	switch {
@@ -420,6 +437,9 @@ func derefInt0(p *int) int {
 }
 
 func (h *handlers) DefineVM(ctx context.Context, req api.DefineVMRequestObject) (api.DefineVMResponseObject, error) {
+	if e := h.networkHomeRefusal(); e != nil {
+		return api.DefineVM409JSONResponse(*e), nil
+	}
 	cfg, bad := vmConfigFromDefine(req.Name, req.Body)
 	if bad != nil {
 		return api.DefineVM400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: bad.Error()}}, nil

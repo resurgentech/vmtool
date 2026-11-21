@@ -55,6 +55,9 @@ func (h *handlers) ListTemplates(ctx context.Context, req api.ListTemplatesReque
 }
 
 func (h *handlers) CreateTemplate(ctx context.Context, req api.CreateTemplateRequestObject) (api.CreateTemplateResponseObject, error) {
+	if e := h.networkHomeRefusal(); e != nil {
+		return api.CreateTemplate409JSONResponse(*e), nil
+	}
 	b := req.Body
 	var bad error
 	switch {

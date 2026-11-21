@@ -197,6 +197,17 @@ fi
 token_arg=""
 [[ -z $host_tok ]] || token_arg=" --store-token-file store-host-token"
 
+# The client's hosts.<host>.vms: `vmtool config host-vms` prints false for a
+# network home. Its daemon is told (network_home: true) and refuses the
+# VM-creating routes; the key is config.yml, rewritten on every deploy, so a
+# change of the client's entry is picked up by the next one. A machine that is
+# not listed has no entry and holds VMs.
+home_arg=""
+if [[ $listed == yes ]]; then
+  holds=$(cd "$root" && "$vmtool_bin" config host-vms "$host") || die "'vmtool config host-vms $host' failed; fix config.yml."
+  [[ $holds != false ]] || home_arg=" --network-home"
+fi
+
 # run <command>: on the host over ssh, or here in bash when it is this machine.
 # runt is the install call: `ssh -t` so a sudo prompt works.
 if [[ $is_local == yes ]]; then
@@ -268,7 +279,7 @@ fi
 # 6. config.yml in stage/, from scratch; the token rides stdin of this call
 #    alone (no -t, no sudo). The cert paths are relative to the working
 #    directory, so they hold in stage/ and in HV_DIR alike.
-printf '%s\n' "$tok" | run "cd \"$base/stage\" && umask 077 && rm -f config.yml && ./vmtool config write --token-stdin --role hypervisor --name $host --listen 0.0.0.0:$port --tls-cert tls/$fqdn.crt --tls-key tls/$fqdn.key$store_arg$token_arg"
+printf '%s\n' "$tok" | run "cd \"$base/stage\" && umask 077 && rm -f config.yml && ./vmtool config write --token-stdin --role hypervisor --name $host --listen 0.0.0.0:$port --tls-cert tls/$fqdn.crt --tls-key tls/$fqdn.key$store_arg$token_arg$home_arg"
 # The host token, when there is one: stdin of this one call, into stage/ with
 # umask 077 (the install below sets owner and mode).
 if [[ -n $host_tok ]]; then

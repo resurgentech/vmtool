@@ -27,6 +27,9 @@ type handlers struct {
 	// role is the server's config.yml role. config.RoleHypervisor makes chain
 	// refuse the workstation-only operations; empty means workstation.
 	role string
+	// networkHome is the daemon's config.yml network_home: its host runs no
+	// VMs, so the VM-creating routes answer 409 before any libvirt call.
+	networkHome bool
 	// vmIP and dialGuest are the tunnel's VM lookup and guest dial (tunnel.go).
 	// nil means the resolver's Manager and a 5 s TCP dial; tests inject fakes.
 	vmIP      func(ctx context.Context, host, name string) (string, error)

@@ -96,6 +96,12 @@ type Config struct {
 	// writes it from the client's server.url. Optional; unused by a
 	// workstation, and never used for anything but that download.
 	StoreURL string `yaml:"store_url"`
+	// NetworkHome is true for a hypervisor daemon whose host is a network
+	// home: it runs no VMs, so its defineVM, cloneVolume, createVolume and
+	// createTemplate answer 409. `just deploy` writes it (config write
+	// --network-home) from the client's hosts.<h>.vms: false; it is
+	// configuration, never an annotation in libvirt.
+	NetworkHome bool `yaml:"network_home"`
 	// StoreTokenFile is the path of the file holding a hypervisor daemon's
 	// host token for the store (tranche 12): the one credential it uses to
 	// report its VMs to store_url. A path, like tls_key (relative to the
@@ -466,6 +472,8 @@ type WriteOptions struct {
 	StoreURL string
 	// StoreTokenFile is a hypervisor's store_token_file: a path, never a token.
 	StoreTokenFile string
+	// NetworkHome sets network_home: true; false leaves the key as is.
+	NetworkHome bool
 }
 
 // Write creates or updates dir/config.yml: it applies opts, sets
@@ -486,6 +494,9 @@ func Write(dir, token string, opts WriteOptions) error {
 			if kv.v != "" {
 				setKey(root, kv.k, kv.v)
 			}
+		}
+		if opts.NetworkHome {
+			setNode(root, "network_home", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: "true"})
 		}
 		return nil
 	})

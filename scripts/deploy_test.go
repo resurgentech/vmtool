@@ -1131,6 +1131,86 @@ if [[ "$1 $2" == "config server-url" ]]; then echo https://PLACEHOLDER-HOST:8095
 	}
 }
 
+// hostVMsStub is the vmtool stub for the network-home tests: `config host`
+// answers an entry and `config host-vms` prints what the test put in the file
+// hostvms (the client's hosts.<h>.vms; nothing when absent).
+const hostVMsStub = `echo "vmtool $*" >> "$d/order"
+if [[ "$1 $2" == "config host" ]]; then echo "10.0.0.5 jared 9473"; fi
+if [[ "$1 $2" == "config host-vms" && -f $d/hostvms ]]; then cat "$d/hostvms"; fi`
+
+// A client entry with vms: false: the daemon's config write call carries
+// --network-home; the token still rides stdin alone.
+func TestDeployPassesNetworkHome(t *testing.T) {
+	e := newDeployEnv(t, "go1.22.2\n")
+	addStub(t, e.stub, "vmtool", hostVMsStub)
+	writeStub(t, e, "hostvms", "false\n")
+	if r := e.deploy(t, nil, "veritech01"); r.code != 0 {
+		t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
+	}
+	cfg := configWriteCall(t, e)
+	if !strings.HasSuffix(cfg.argv, "--tls-key tls/veritech01.labtwo.key --network-home") {
+		t.Errorf("config write call: %q", cfg.argv)
+	}
+	if cfg.stdin != deployTok+"\n" || strings.Contains(cfg.argv, deployTok) {
+		t.Errorf("token placement: argv %q stdin %q", cfg.argv, cfg.stdin)
+	}
+	if got := readOr(t, filepath.Join(e.stub, "order")); !strings.Contains(got, "vmtool config host-vms veritech01") {
+		t.Errorf("deploy did not ask the client for vms: %q", got)
+	}
+}
+
+// vms: true or no vms key: no --network-home anywhere, and the call is what
+// it was before.
+func TestDeployNoNetworkHomeOtherwise(t *testing.T) {
+	for _, answer := range []string{"true\n", ""} {
+		e := newDeployEnv(t, "go1.22.2\n")
+		addStub(t, e.stub, "vmtool", hostVMsStub)
+		if answer != "" {
+			writeStub(t, e, "hostvms", answer)
+		}
+		if r := e.deploy(t, nil, "veritech01"); r.code != 0 {
+			t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
+		}
+		for i, c := range sshCalls(t, e.stub) {
+			if strings.Contains(c.argv, "network-home") {
+				t.Errorf("%q: ssh call %d mentions network-home: %q", answer, i+1, c.argv)
+			}
+		}
+		if !strings.HasSuffix(configWriteCall(t, e).argv, "--tls-key tls/veritech01.labtwo.key") {
+			t.Errorf("%q: config write call changed: %q", answer, configWriteCall(t, e).argv)
+		}
+	}
+}
+
+// On this machine the same flag goes to the local config write.
+func TestDeployLocalPassesNetworkHome(t *testing.T) {
+	e, _, _ := newLocalEnv(t, "10.0.0.9 ops 9475")
+	addStub(t, e.stub, "vmtool", `echo "vmtool $*" >> "$d/order"
+if [[ "$1 $2" == "config host" ]]; then cat "$d/listed"; fi
+if [[ "$1 $2" == "config host-vms" ]]; then echo false; fi`)
+	if r := e.deploy(t, nil, "PLACEHOLDER-HOST"); r.code != 0 {
+		t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
+	}
+	if argv := readOr(t, filepath.Join(e.stub, "remote-vmtool.argv")); !strings.Contains(argv, "--network-home") {
+		t.Errorf("config write argv %q", argv)
+	}
+}
+
+// If the client cannot answer, deploy stops before any ssh call rather than
+// deploying a home as a VM host.
+func TestDeployHostVMsFailureIsFatal(t *testing.T) {
+	e := newDeployEnv(t, "go1.22.2\n")
+	addStub(t, e.stub, "vmtool", `if [[ "$1 $2" == "config host" ]]; then echo "10.0.0.5 jared 9473"; fi
+if [[ "$1 $2" == "config host-vms" ]]; then echo boom >&2; exit 1; fi`)
+	r := e.deploy(t, nil, "veritech01")
+	if r.code == 0 || !strings.Contains(r.stderr, "host-vms") {
+		t.Errorf("exit %d: %s%s", r.code, r.stdout, r.stderr)
+	}
+	if _, err := os.Stat(filepath.Join(e.stub, "ssh.argv")); err == nil {
+		t.Error("ssh ran")
+	}
+}
+
 const thinSudoersLine = "vmtool ALL=(root) NOPASSWD: /usr/local/libexec/vmtool-thin\n"
 
 // The sudoers rule is exactly the one line the step names.

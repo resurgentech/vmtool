@@ -277,6 +277,17 @@ list, and networks and links work on it. `vmtool create` on it is refused
 `vmnet  network home: runs no VMs` row, and the TUI and `GET /v1/hosts`
 (`network_home`) carry the same mark.
 
+The home's own daemon refuses too, so a direct REST call cannot make a VM
+there. `just deploy` reads the client's `hosts.<h>.vms` (`vmtool config
+host-vms <h>` prints it) and, for `vms: false`, writes `network_home: true`
+into the daemon's `config.yml` (`vmtool config write --network-home`). Such
+a daemon answers 409 "vmnet is a network home and runs no VMs" on
+`defineVM`, `cloneVolume`, `createVolume` and `createTemplate`, before any
+libvirt call; networks, reservations, links and the inventory are served as
+before. The key is configuration, never a note in libvirt, and `config.yml`
+is rewritten on every deploy: after you change the client's `vms:`, deploy
+that host again.
+
 ### One daemon per host
 
 Every host in `hosts:` is reached through its daemon. Per host:

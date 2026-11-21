@@ -59,6 +59,7 @@ func configCmd(dirFn func() (string, error)) *cobra.Command {
 	f.StringVar(&opts.TLSKey, "tls-key", "", "TLS key path")
 	f.StringVar(&opts.StoreURL, "store-url", "", "https URL of the store a hypervisor daemon fetches images from")
 	f.StringVar(&opts.StoreTokenFile, "store-token-file", "", "path of the file holding the host token a hypervisor daemon reports to the store with (a path, never the token)")
+	f.BoolVar(&opts.NetworkHome, "network-home", false, "write network_home: true, so this daemon refuses the VM-creating routes (the host is a network home)")
 	f.BoolVar(&tokenStdin, "token-stdin", false, "read the token from one line of stdin")
 
 	serverURL := &cobra.Command{
@@ -107,6 +108,28 @@ func configCmd(dirFn func() (string, error)) *cobra.Command {
 		},
 	}
 
+	hostVMs := &cobra.Command{
+		Use:   "host-vms <name>",
+		Short: "Print \"true\" or \"false\": the client's hosts.<name>.vms (false for a network home)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(c *cobra.Command, args []string) error {
+			dir, err := dirFn()
+			if err != nil {
+				return err
+			}
+			cfg, err := config.Load(dir)
+			if err != nil {
+				return err
+			}
+			h, ok := cfg.Hosts[args[0]]
+			if !ok {
+				return fmt.Errorf("unknown host %q in %s", args[0], config.FileName)
+			}
+			fmt.Fprintln(c.OutOrStdout(), h.HoldsVMs())
+			return nil
+		},
+	}
+
 	var (
 		sh     config.Host
 		shPort int
@@ -139,6 +162,6 @@ func configCmd(dirFn func() (string, error)) *cobra.Command {
 	sf.IntVar(&shPort, "port", 0, "daemon port (default 9473)")
 	sf.StringVar(&sh.DefaultPool, "default-pool", "", "pool for new VM disks on this host")
 
-	cmd.AddCommand(write, host, setHost, serverURL)
+	cmd.AddCommand(write, host, hostVMs, setHost, serverURL)
 	return cmd
 }

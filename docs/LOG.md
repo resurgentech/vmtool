@@ -2313,3 +2313,19 @@ are appended, never edited in; a hook refuses rewrites.
   recovery call (timed out waiting for the re-link pass); the others have
   no recorded red. Green; `just check` green.
 - Commits: the G4 commit on `clone-identity`.
+
+## 2026-11-21 — G5 A network home's own daemon refuses VM-creating routes
+
+- Daemon `config.yml` key `network_home: true` (`config write
+  --network-home`); `vmtool config host-vms <host>` prints the client's
+  `hosts.<h>.vms` (true/false); `just deploy` passes `--network-home` when
+  it prints false (fatal if it fails for a listed host), and since deploy
+  rewrites config.yml a redeploy follows the client's entry.
+- Such a daemon answers 409 "HOST is a network home and runs no VMs" on
+  `defineVM`, `cloneVolume`, `createVolume` and `createTemplate` before
+  any libvirt call; a test walks every spec operation and pins exactly
+  those four. `vmtool.yaml` documents the 409 (stays 2.7.0). README home
+  section.
+- Red: assertion or unknown-flag/command failures in config, CLI, server
+  and deploy tests before each layer's code. Green; `just check` green.
+- Commits: the G5 commit on `clone-identity`.

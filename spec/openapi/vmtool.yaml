@@ -1246,6 +1246,9 @@ paths:
         upload). The host has no image of that name: 404. `pool` is not a thin
         pool, the image is not in the daemon's manifest, or the request has no
         `image`: 400. The pool has no room: 409. A host with no thin pools: 400.
+        A daemon whose host is a network home (`network_home: true` in its
+        config.yml) answers 409 "HOST is a network home and runs no VMs" first, before
+        any libvirt call.
         Save: `from_vm` names a VM of the host and `name` the template. The VM
         must be shut off, and its boot disk must be a `vmtool_vol` thin LV; the
         template is a `-kn` thin snapshot of that LV, in the same pool, tagged
@@ -1406,7 +1409,9 @@ paths:
         size_gb GB in pool and returns its path; an omitted pool is the
         host's default pool (`default` on a workstation, `vmtool` on a
         hypervisor). `name` must be a plain file name: letters, digits, `.`,
-        `_`, `-`.
+        `_`, `-`. A daemon whose host is a network home (config.yml `network_home: true`,
+        written by `just deploy` from the client's `hosts.<h>.vms: false`) answers 409
+        "HOST is a network home and runs no VMs" before any libvirt call.
       requestBody:
         required: true
         content:
@@ -1421,6 +1426,7 @@ paths:
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
   /v1/hosts/{host}/volumes/clone:
     parameters:
@@ -1439,6 +1445,9 @@ paths:
         image's file name and manifest SHA-256); base_path may then also be the `/dev/<vg>/<lv>` path of a
         saved template. 409 when a thin pool has no room (the message gives
         the numbers).
+        A daemon whose host is a network home (`network_home: true` in its
+        config.yml) answers 409 "HOST is a network home and runs no VMs" before any
+        libvirt call.
       requestBody:
         required: true
         content:
@@ -1488,7 +1497,9 @@ paths:
         starting it. The body carries no ssh_user or ssh_pass: a daemon never
         holds guest secrets. disk_path and every extra_disks[].path must
         resolve inside a libvirt storage pool; anything else is 400. The VM
-        name in the path must be a plain name (letters, digits, `.`, `_`, `-`).
+        name in the path must be a plain name (letters, digits, `.`, `_`, `-`). A daemon whose host is a network home (`network_home: true` in its
+        config.yml) answers 409 "HOST is a network home and runs no VMs" before any
+        libvirt call.
       requestBody:
         required: true
         content:
@@ -1499,6 +1510,7 @@ paths:
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
     delete:
       operationId: deleteVMDefinition
