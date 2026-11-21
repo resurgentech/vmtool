@@ -93,6 +93,30 @@ func TestInventoryViewIsReadOnlyAndShowsTheStoresRecord(t *testing.T) {
 	}
 }
 
+// A VM with unreadable disks is marked in the view, last known disks shown.
+func TestInventoryViewMarksUnreadableDisks(t *testing.T) {
+	m, _ := inventoryModel()
+	m.readInventory = func(_ context.Context, host string, gone bool) (*app.Inventory, error) {
+		inv := invFixture(false)
+		yes := true
+		inv.Vms[0].DisksUnreadable = &yes
+		return inv, nil
+	}
+	next, cmd := m.Update(key("I"))
+	m = next.(model)
+	next, _ = m.Update(cmd())
+	out := next.(model).View()
+	if !strings.Contains(out, "disks unreadable on the host; last known shown") || !strings.Contains(out, "vda 20G thin") {
+		t.Errorf("view:\n%s", out)
+	}
+	m2, _ := inventoryModel()
+	next, cmd = m2.Update(key("I"))
+	next, _ = next.(model).Update(cmd())
+	if strings.Contains(next.(model).View(), "unreadable") {
+		t.Error("a mark with nothing to mark")
+	}
+}
+
 // With no store, or one that does not answer, the view says why (the same
 // text as the CLI) and shows no table.
 func TestInventoryViewWithoutStore(t *testing.T) {

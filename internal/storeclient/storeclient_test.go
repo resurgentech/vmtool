@@ -363,6 +363,7 @@ func TestContextDeadline(t *testing.T) {
 
 func TestInventoryClient(t *testing.T) {
 	var put storeapi.HostReport
+	yes := true
 	f := newFake(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method + " " + r.URL.Path {
 		case "PUT /v1/hosts/hv1/inventory":
@@ -385,12 +386,12 @@ func TestInventoryClient(t *testing.T) {
 	c := f.client(t, tok)
 	ctx := context.Background()
 
-	in := storeapi.HostReport{GeneratedAt: time.Now(), DaemonVersion: "2.6.0", Vms: []storeapi.ReportVM{{Name: "vm1", Uuid: uuid}}}
+	in := storeapi.HostReport{GeneratedAt: time.Now(), DaemonVersion: "2.6.0", Vms: []storeapi.ReportVM{{Name: "vm1", Uuid: uuid, DisksUnreadable: &yes}}}
 	r, err := c.PutHostInventory(ctx, "hv1", in)
 	if err != nil || r.Listed != 1 || r.NewlyGone != 2 || r.Relisted != 3 {
 		t.Fatalf("put = %+v %v", r, err)
 	}
-	if len(put.Vms) != 1 || put.Vms[0].Uuid != uuid || put.DaemonVersion != "2.6.0" {
+	if len(put.Vms) != 1 || put.Vms[0].Uuid != uuid || put.DaemonVersion != "2.6.0" || put.Vms[0].DisksUnreadable == nil || !*put.Vms[0].DisksUnreadable {
 		t.Fatalf("server got %+v", put)
 	}
 	if _, err := c.PutHostInventory(ctx, "hv2", in); !errors.Is(err, ErrForbidden) {

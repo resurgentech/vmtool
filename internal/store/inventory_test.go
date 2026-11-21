@@ -270,7 +270,10 @@ func TestStaleReportAnswered200(t *testing.T) {
 	e := newInvEnv(t)
 	e.clock.Advance(time.Hour)
 	e.report(t, "hv1", tokH, vm("vm1", invU1))
-	old := reportBody(t, e.clock.Now().Add(-time.Minute))
+	// Ordered by the store's clock: a report taken before the applied one is
+	// stale, whatever its generated_at says.
+	e.clock.Advance(-time.Minute)
+	old := reportBody(t, e.clock.Now().Add(24*time.Hour))
 	code, body := e.call(t, "PUT", "/v1/hosts/hv1/inventory", tokH, old)
 	var r storeapi.ReportResult
 	if code != 200 || json.Unmarshal([]byte(body), &r) != nil || !r.Stale {
@@ -278,6 +281,69 @@ func TestStaleReportAnswered200(t *testing.T) {
 	}
 	if inv := e.inventory(t, ""); len(inv.Vms) != 1 {
 		t.Fatalf("a stale empty report changed the inventory: %+v", inv)
+	}
+}
+
+func TestReportGeneratedAtDoesNotOrderReports(t *testing.T) {
+	e := newInvEnv(t)
+	year := 365 * 24 * time.Hour
+	body := func(at time.Time, vms ...storeapi.ReportVM) string { return reportBody(t, at, vms...) }
+	put := func(b string) storeapi.ReportResult {
+		code, resp := e.call(t, "PUT", "/v1/hosts/hv1/inventory", tokH, b)
+		var r storeapi.ReportResult
+		if code != 200 || json.Unmarshal([]byte(resp), &r) != nil {
+			t.Fatalf("report = %d %s", code, resp)
+		}
+		return r
+	}
+	if r := put(body(e.clock.Now().Add(year), vm("vm1", invU1))); r.Stale || r.Listed != 1 {
+		t.Fatalf("a year ahead = %+v", r)
+	}
+	e.clock.Advance(time.Minute)
+	if r := put(body(e.clock.Now(), vm("vm1", invU1), vm("vm2", invU2))); r.Stale || r.Listed != 2 {
+		t.Fatalf("honest after a year ahead = %+v", r)
+	}
+	e.clock.Advance(time.Minute)
+	if r := put(body(e.clock.Now().Add(-year), vm("vm1", invU1))); r.Stale || r.NewlyGone != 1 {
+		t.Fatalf("a year behind = %+v", r)
+	}
+	inv := e.inventory(t, "")
+	if len(inv.Vms) != 1 || !inv.Hosts[0].LastReport.Equal(e.clock.Now()) {
+		t.Fatalf("inventory = %+v", inv)
+	}
+}
+
+func TestReportDisksUnreadableMarksAndKeepsDisks(t *testing.T) {
+	e := newInvEnv(t)
+	e.report(t, "hv1", tokH, vm("vm1", invU1), vm("vm2", invU2))
+	e.clock.Advance(time.Minute)
+	u := vm("vm1", invU1)
+	u.State = "shutoff"
+	u.Disks = []storeapi.Disk{}
+	yes := true
+	u.DisksUnreadable = &yes
+	r := e.report(t, "hv1", tokH, u, vm("vm2", invU2))
+	if r.Listed != 2 || r.NewlyGone != 0 {
+		t.Fatalf("counts = %+v", r)
+	}
+	inv := e.inventory(t, "")
+	by := map[string]storeapi.InventoryVM{}
+	for _, v := range inv.Vms {
+		by[v.Name] = v
+	}
+	v1, v2 := by["vm1"], by["vm2"]
+	if v1.DisksUnreadable == nil || !*v1.DisksUnreadable || len(v1.Disks) != 1 || v1.Disks[0].Target != "vda" || v1.State != "shutoff" {
+		t.Fatalf("vm1 = %+v", v1)
+	}
+	if v2.DisksUnreadable != nil && *v2.DisksUnreadable {
+		t.Fatalf("vm2 marked: %+v", v2)
+	}
+	e.clock.Advance(time.Minute)
+	e.report(t, "hv1", tokH, vm("vm1", invU1), vm("vm2", invU2))
+	for _, v := range e.inventory(t, "").Vms {
+		if v.DisksUnreadable != nil && *v.DisksUnreadable {
+			t.Fatalf("%s still marked", v.Name)
+		}
 	}
 }
 

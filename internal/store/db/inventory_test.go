@@ -66,8 +66,8 @@ func TestMigration2UpgradesVersion1Database(t *testing.T) {
 		t.Fatalf("upgrade: %v", err)
 	}
 	defer d.Close()
-	if v, _ := d.version(ctx); v != 2 {
-		t.Fatalf("version %d want 2", v)
+	if v, _ := d.version(ctx); v != len(migrations) {
+		t.Fatalf("version %d want %d", v, len(migrations))
 	}
 	if _, err := d.GetVMCredential(ctx, "hv1", "vm1"); err != nil {
 		t.Fatalf("credential lost: %v", err)
@@ -163,9 +163,12 @@ func TestApplyReportRelist(t *testing.T) {
 func TestApplyReportStaleIgnored(t *testing.T) {
 	ctx := context.Background()
 	d, c := invDB(t)
-	d.ApplyReport(ctx, "hv1", t0.Add(time.Hour), "new", []VMRow{row(uuid1, "vm1")})
-	c.t = t0.Add(2 * time.Hour)
-	cnt, err := d.ApplyReport(ctx, "hv1", t0, "old", nil)
+	c.t = t0.Add(time.Hour)
+	d.ApplyReport(ctx, "hv1", t0, "new", []VMRow{row(uuid1, "vm1")})
+	// The store's clock (the receive time) is what orders reports: this one
+	// is received before the one already applied, whatever it says.
+	c.t = t0
+	cnt, err := d.ApplyReport(ctx, "hv1", t0.Add(24*time.Hour), "old", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,13 +179,132 @@ func TestApplyReportStaleIgnored(t *testing.T) {
 		t.Fatal("stale report changed rows")
 	}
 	inv, _ := d.ListInventory(ctx, "hv1", false)
-	if inv.Hosts[0].DaemonVersion != "new" || !inv.Hosts[0].LastReport.Equal(t0) {
+	if inv.Hosts[0].DaemonVersion != "new" || !inv.Hosts[0].LastReport.Equal(t0.Add(time.Hour)) {
 		t.Fatalf("host %+v", inv.Hosts[0])
 	}
-	// Same generated_at applies.
-	cnt, _ = d.ApplyReport(ctx, "hv1", t0.Add(time.Hour), "same", nil)
+	// The same receive time applies.
+	c.t = t0.Add(time.Hour)
+	cnt, _ = d.ApplyReport(ctx, "hv1", t0, "same", nil)
 	if cnt.Stale || cnt.NewlyGone != 1 {
 		t.Fatalf("counts %+v", cnt)
+	}
+}
+
+func TestApplyReportOrderedByReceiveTimeNotGeneratedAt(t *testing.T) {
+	ctx := context.Background()
+	d, c := invDB(t)
+	year := 365 * 24 * time.Hour
+	// A host with its clock a year ahead, then the same host honest.
+	cnt, err := d.ApplyReport(ctx, "hv1", t0.Add(year), "ahead", []VMRow{row(uuid1, "vm1")})
+	if err != nil || cnt.Stale || cnt.Listed != 1 {
+		t.Fatalf("ahead: %+v %v", cnt, err)
+	}
+	c.t = t0.Add(time.Minute)
+	cnt, err = d.ApplyReport(ctx, "hv1", t0.Add(time.Minute), "honest", []VMRow{row(uuid1, "vm1"), row(uuid2, "vm2")})
+	if err != nil || cnt.Stale || cnt.Listed != 2 {
+		t.Fatalf("honest after ahead: %+v %v", cnt, err)
+	}
+	if _, ok := vmByUUID(t, d, "hv1", uuid2, false); !ok {
+		t.Fatal("the honest report was not applied")
+	}
+	// A report dated a year behind is applied too.
+	c.t = t0.Add(2 * time.Minute)
+	cnt, err = d.ApplyReport(ctx, "hv1", t0.Add(-year), "behind", []VMRow{row(uuid1, "vm1")})
+	if err != nil || cnt.Stale || cnt.Listed != 1 || cnt.NewlyGone != 1 {
+		t.Fatalf("behind: %+v %v", cnt, err)
+	}
+	// generated_at is still stored and shown.
+	inv, _ := d.ListInventory(ctx, "hv1", false)
+	h := inv.Hosts[0]
+	if h.DaemonVersion != "behind" || !h.GeneratedAt.Equal(t0.Add(-year)) || !h.LastReport.Equal(t0.Add(2*time.Minute)) {
+		t.Fatalf("host %+v", h)
+	}
+}
+
+func TestApplyReportDisksUnreadableKeepsLastDisks(t *testing.T) {
+	ctx := context.Background()
+	d, c := invDB(t)
+	r1 := row(uuid1, "vm1")
+	r1.Disks = []byte(`[{"target":"vda","pool":"p","capacity_bytes":1,"kind":"file"}]`)
+	if _, err := d.ApplyReport(ctx, "hv1", t0, "v", []VMRow{r1, row(uuid2, "vm2")}); err != nil {
+		t.Fatal(err)
+	}
+	v, _ := vmByUUID(t, d, "hv1", uuid1, false)
+	if v.DisksUnreadable {
+		t.Fatal("flag set on a readable VM")
+	}
+	// vm1 is reported unreadable, with new fields but no disks; vm2 is a new
+	// VM that was never read.
+	c.t = t0.Add(time.Hour)
+	u := row(uuid1, "vm1")
+	u.State = "shutoff"
+	u.DisksUnreadable = true
+	u3 := row(uuid3, "vm3")
+	u3.DisksUnreadable = true
+	cnt, err := d.ApplyReport(ctx, "hv1", c.t, "v", []VMRow{u, row(uuid2, "vm2"), u3})
+	if err != nil || cnt.Listed != 3 || cnt.NewlyGone != 0 {
+		t.Fatalf("counts %+v %v", cnt, err)
+	}
+	v, _ = vmByUUID(t, d, "hv1", uuid1, false)
+	if !v.DisksUnreadable || v.State != "shutoff" || string(v.Disks) != string(r1.Disks) {
+		t.Fatalf("vm1 %+v disks %s", v, v.Disks)
+	}
+	v, _ = vmByUUID(t, d, "hv1", uuid3, false)
+	if !v.DisksUnreadable || string(v.Disks) != "[]" {
+		t.Fatalf("vm3 %+v disks %s", v, v.Disks)
+	}
+	// The next report that reads them clears the flag and replaces the disks.
+	c.t = t0.Add(2 * time.Hour)
+	r1.Disks = []byte(`[{"target":"vda","pool":"p","capacity_bytes":2,"kind":"file"}]`)
+	if _, err := d.ApplyReport(ctx, "hv1", c.t, "v", []VMRow{r1}); err != nil {
+		t.Fatal(err)
+	}
+	v, _ = vmByUUID(t, d, "hv1", uuid1, false)
+	if v.DisksUnreadable || string(v.Disks) != string(r1.Disks) {
+		t.Fatalf("vm1 after a readable report %+v disks %s", v, v.Disks)
+	}
+}
+
+func TestMigration3UpgradesVersion2Database(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "d", "store.db")
+	d, err := openMigrations(ctx, path, key(1), migrations[:2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A version-2 row, written with the version-2 columns only.
+	stamp := t0.Format(time.RFC3339Nano)
+	for _, q := range []string{
+		`INSERT INTO hosts(name, last_report, generated_at, daemon_version) VALUES ('hv1', '` + stamp + `', '` + stamp + `', '2.6.0')`,
+		`INSERT INTO vms(host, uuid, name, state, vcpus, memory_gib, ip, autostart, firmware, disks,
+		   origin_image, origin_sha256, origin_template, origin_clone, origin_pool, created, comment, first_seen, last_seen, gone_since)
+		 VALUES ('hv1', '` + uuid1 + `', 'vm1', 'running', 2, 4, '', 0, '', '[{"target":"vda","pool":"p","capacity_bytes":1,"kind":"file"}]',
+		   '', '', '', '', '', '', '', '` + stamp + `', '` + stamp + `', NULL)`,
+	} {
+		if _, err := d.sql.ExecContext(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	d.Close()
+	d, err = Open(ctx, path, key(1))
+	if err != nil {
+		t.Fatalf("upgrade: %v", err)
+	}
+	defer d.Close()
+	if v, _ := d.version(ctx); v != 3 {
+		t.Fatalf("version %d want 3", v)
+	}
+	v, ok := vmByUUID(t, d, "hv1", uuid1, false)
+	if !ok || v.DisksUnreadable || v.Name != "vm1" || len(v.Disks) < 10 {
+		t.Fatalf("row after upgrade %+v ok=%v", v, ok)
+	}
+	u := row(uuid1, "vm1")
+	u.DisksUnreadable = true
+	if _, err := d.ApplyReport(ctx, "hv1", t0.Add(time.Second), "2.6.0", []VMRow{u}); err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := vmByUUID(t, d, "hv1", uuid1, false); !v.DisksUnreadable {
+		t.Fatal("flag not stored after upgrade")
 	}
 }
 

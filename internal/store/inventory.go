@@ -74,6 +74,7 @@ func reportVM(v storeapi.ReportVM) (db.VMRow, string) {
 	row := db.VMRow{
 		UUID: strings.ToLower(v.Uuid), Name: v.Name, State: v.State, VCPUs: v.Vcpus, MemoryGiB: v.Memory,
 		IP: v.Ip, Autostart: v.Autostart, Firmware: v.Firmware, Disks: disks, Comment: v.Comment,
+		DisksUnreadable: v.DisksUnreadable != nil && *v.DisksUnreadable,
 	}
 	if o := v.Origin; o != nil {
 		for _, s := range []*string{o.Image, o.ImageSha256, o.Template, o.Clone, o.Pool, o.Created} {
@@ -144,6 +145,10 @@ func toInventoryVM(v db.InventoryVM) storeapi.InventoryVM {
 		Host: v.Host, Name: v.Name, Uuid: v.UUID, State: v.State, Vcpus: v.VCPUs, Memory: v.MemoryGiB,
 		Ip: v.IP, Autostart: v.Autostart, Firmware: v.Firmware, Disks: disksOf(v.Disks), Comment: v.Comment,
 		FirstSeen: v.FirstSeen, LastSeen: v.LastSeen, HasCredentials: v.HasCredentials,
+	}
+	if v.DisksUnreadable {
+		t := true
+		out.DisksUnreadable = &t
 	}
 	if v.OriginImage != "" || v.OriginSHA256 != "" || v.OriginTemplate != "" || v.OriginClone != "" || v.OriginPool != "" || v.Created != "" {
 		opt := func(s string) *string {

@@ -399,10 +399,16 @@ paths:
         inserted or updated and, if it was gone, listed again; each live row
         of the host that the list omits is marked gone; a login of the host
         that matches no row gets a gone row. A `comment` that is absent
-        leaves the stored comment; an empty one clears it. A report whose
-        `generated_at` is older than the last applied one for the host is
-        answered 200 with `stale` true and changes nothing. Nothing is marked
-        gone by age or silence.
+        leaves the stored comment; an empty one clears it. A VM with
+        `disks_unreadable` true keeps the disks the store last had for it
+        (the report's `disks` for it is ignored) and is marked; the next
+        report that reads its disks clears the mark. Reports are ordered by
+        the store's own clock at the time it took the request: one that
+        arrives while a later-received report of the same host has already
+        been applied is answered 200 with `stale` true and changes nothing.
+        `generated_at` is the daemon's own clock; it is stored and shown,
+        never used to order or refuse a report. Nothing is marked gone by
+        age or silence.
       requestBody:
         required: true
         content:
@@ -834,6 +840,13 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Disk"
+        disks_unreadable:
+          type: boolean
+          description: >
+            True when the daemon could not read this VM's disks (other than
+            the VM having just vanished). `disks` is then empty and ignored:
+            the store keeps its last known disks for the VM and marks it.
+            Absent or false means the disks were read.
         origin:
           $ref: "#/components/schemas/VMOrigin"
         comment:
@@ -869,7 +882,7 @@ components:
           type: integer
         stale:
           type: boolean
-          description: True when the report was older than the last applied one and was ignored.
+          description: True when a report of the same host received later had already been applied, so this one was ignored.
     InventoryHost:
       type: object
       required: [name, last_report, daemon_version, live, gone]
@@ -912,6 +925,11 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Disk"
+        disks_unreadable:
+          type: boolean
+          description: >
+            Present and true when the host could not read this VM's disks at
+            its last report; `disks` are then the last known ones.
         origin:
           $ref: "#/components/schemas/VMOrigin"
         comment:

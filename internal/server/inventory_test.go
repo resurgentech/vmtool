@@ -279,7 +279,7 @@ func TestStartInventoryReportsAtStart(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "tok"), []byte(tok+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg := &config.Config{Name: "hv1", Role: config.RoleHypervisor, Dir: dir, StoreURL: srv.URL, StoreTokenFile: "tok"}
+	cfg := &config.Config{Name: "hv1", Role: config.RoleHypervisor, Dir: dir, StoreURL: srv.URL, StoreTokenFile: "tok", IPWaitSeconds: 45}
 	fm := &fakeMgr{}
 	r := hosts.NewWith("hv1", config.RoleHypervisor, nil, func() (app.Manager, func(), error) { return fm, func() {}, nil })
 	var l startLog
@@ -292,6 +292,9 @@ func TestStartInventoryReportsAtStart(t *testing.T) {
 		cancel()
 		<-done
 	})
+	if got := rep.IPWait(); got != 45*time.Second {
+		t.Errorf("the reporter's address window = %v, want the daemon's ip_wait_seconds (45s)", got)
+	}
 	select {
 	case g := <-seen:
 		if g.auth != "Bearer "+tok || g.method != "PUT" || g.path != "/v1/hosts/hv1/inventory" {

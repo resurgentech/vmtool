@@ -59,9 +59,10 @@ func newSrvStore(t *testing.T) *srvStore {
 				"vms": []any{
 					map[string]any{"host": "hv1", "name": "vm1", "uuid": "00000000-0000-4000-8000-000000000001", "state": "running",
 						"vcpus": 2, "memory": 4, "ip": "10.0.0.5", "autostart": true, "firmware": "efi",
-						"disks":   []any{map[string]any{"target": "vda", "pool": "nvme", "capacity_bytes": 21474836480, "kind": "thin"}},
-						"origin":  map[string]any{"image": "img1", "image_sha256": strings.Repeat("a", 64), "clone": "thin", "pool": "nvme", "created": "2026-11-20T00:00:00Z"},
-						"comment": "placeholder comment", "first_seen": "2026-11-20T00:00:00Z", "last_seen": "2026-11-21T01:02:03Z", "has_credentials": true},
+						"disks":            []any{map[string]any{"target": "vda", "pool": "nvme", "capacity_bytes": 21474836480, "kind": "thin"}},
+						"origin":           map[string]any{"image": "img1", "image_sha256": strings.Repeat("a", 64), "clone": "thin", "pool": "nvme", "created": "2026-11-20T00:00:00Z"},
+						"disks_unreadable": true,
+						"comment":          "placeholder comment", "first_seen": "2026-11-20T00:00:00Z", "last_seen": "2026-11-21T01:02:03Z", "has_credentials": true},
 					map[string]any{"host": "hv1", "name": "vm2", "uuid": "00000000-0000-4000-8000-000000000002", "state": "shutoff",
 						"vcpus": 1, "memory": 1, "ip": "", "autostart": false, "firmware": "bios", "disks": []any{}, "comment": "",
 						"first_seen": "2026-11-20T00:00:00Z", "last_seen": "2026-11-20T00:00:00Z", "gone_since": "2026-11-21T01:02:03Z",

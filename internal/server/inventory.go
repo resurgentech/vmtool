@@ -49,6 +49,7 @@ func startInventory(ctx context.Context, cfg *config.Config, r *hosts.Resolver, 
 	}
 	rep := app.NewInventoryReporter(app.InventoryReporterConfig{
 		Host: r.Local(), Version: buildinfo.Version(), Store: client, Source: r.InventorySource(), Log: log,
+		IPWait: cfg.IPWait(),
 	})
 	return rep, rep.Start(ctx)
 }

@@ -1847,3 +1847,27 @@ are appended, never edited in; a hook refuses rewrites.
 - Red: assertion failures in app, server and CLI tests (a compile failure
   for the TUI); green; `just check` green.
 - Commits: the N9 commit on `clone-identity`.
+
+## 2026-11-21 — N11 Keep the inventory current: the new VM's address, a host's wrong clock, unreadable disks
+
+- XO's call, fixing assumptions N3 A5 and N5 A3, A7.
+- Address follow-up (`internal/app/inventory_reporter.go`): a VM running
+  with no address at a build (daemon start, kick or retry) is watched by
+  UUID for the daemon's `IPWait()` (`internal/server/inventory.go` passes
+  it); while any is watched, the reporter re-reads the list every 5 s and
+  sends one full report when a watched VM has an address; once per run (a
+  run ends when the VM is seen not running); no timer when nothing is
+  watched; the watch's own reads add no VM; no polling during a backoff.
+- Store ordering by receive time (`internal/store/db`): `ApplyReport` reads
+  the store's clock on entry; a report received before the last applied one
+  is stale; `generated_at` is stored only. A daemon's clock a year ahead or
+  behind no longer silences it.
+- Unreadable disks: such a VM is reported with `disks_unreadable` and no
+  disks; the store (migration 3) keeps its last known disks and the flag,
+  cleared by the next readable report; both specs carry the optional flag
+  (store.yaml 1.1.0, vmtool.yaml 2.6.0); `vmtool inventory` and the TUI mark
+  the disks cell with `*` and a footnote "disks unreadable on the host; last
+  known shown".
+- Red: assertion failures in db, store, reporter, CLI, TUI and server tests;
+  green; reporter tests 30 runs with no failure; `just check` green.
+- Commits: the N11 commit on `clone-identity`.

@@ -19,22 +19,25 @@ const GracePeriod = 7 * 24 * time.Hour
 // fields and Created are empty for a VM vmtool did not create. Disks is a
 // JSON array (nil is stored as []); it never holds a secret.
 type VMRow struct {
-	UUID           string
-	Name           string
-	State          string
-	VCPUs          int
-	MemoryGiB      int
-	IP             string
-	Autostart      bool
-	Firmware       string
-	Disks          json.RawMessage
-	OriginImage    string
-	OriginSHA256   string
-	OriginTemplate string
-	OriginClone    string
-	OriginPool     string
-	Created        string // creation time from the origin, as the daemon wrote it
-	Comment        *string
+	UUID      string
+	Name      string
+	State     string
+	VCPUs     int
+	MemoryGiB int
+	IP        string
+	Autostart bool
+	Firmware  string
+	Disks     json.RawMessage
+	// DisksUnreadable: the host could not read this VM's disks. ApplyReport
+	// then keeps the stored disks and sets the flag; Disks is ignored.
+	DisksUnreadable bool
+	OriginImage     string
+	OriginSHA256    string
+	OriginTemplate  string
+	OriginClone     string
+	OriginPool      string
+	Created         string // creation time from the origin, as the daemon wrote it
+	Comment         *string
 }
 
 // ReportCounts is what ApplyReport did. Stale is true when the report was
@@ -96,8 +99,13 @@ const vmCols = `uuid, name, state, vcpus, memory_gib, ip, autostart, firmware, d
 // VM is inserted or updated (last_seen = now, gone_since cleared); each live
 // row of the host not listed is marked gone; a credential record of the host
 // whose UUID matches no row gets a gone row. A comment of nil leaves the
-// stored comment. A report whose generatedAt is older than the last applied
-// one for the host changes nothing (Stale). An empty list marks every live
+// stored comment. A VM with DisksUnreadable keeps its stored disks and is
+// marked; a report that reads them clears the mark. Reports are ordered by
+// the store's own clock, read when the call starts (the time the request was
+// taken): a report received before the last applied one for the host changes
+// nothing (Stale). generatedAt, the daemon's clock, is stored and shown only,
+// so a host with a wrong clock is neither refused nor able to block its later
+// reports. An empty list marks every live
 // row gone and deletes nothing. Nothing reads last_seen or last_report.
 func (d *DB) ApplyReport(ctx context.Context, host string, generatedAt time.Time, version string, vms []VMRow) (ReportCounts, error) {
 	var cnt ReportCounts
@@ -109,19 +117,22 @@ func (d *DB) ApplyReport(ctx context.Context, host string, generatedAt time.Time
 			return cnt, errors.New("apply report: disks is not valid JSON")
 		}
 	}
+	// The receive time is taken before the transaction waits for its turn, so
+	// of two overlapping requests the one taken first is the older.
+	received := d.now().UTC()
+	now := received.Format(time.RFC3339Nano)
 	tx, err := d.sql.BeginTx(ctx, nil)
 	if err != nil {
 		return cnt, fmt.Errorf("apply report: %w", err)
 	}
 	defer tx.Rollback()
-	now := d.stamp()
 	gen := generatedAt.UTC()
 
 	var prev string
-	err = tx.QueryRowContext(ctx, `SELECT generated_at FROM hosts WHERE name=?`, host).Scan(&prev)
+	err = tx.QueryRowContext(ctx, `SELECT last_report FROM hosts WHERE name=?`, host).Scan(&prev)
 	switch {
 	case err == nil:
-		if gen.Before(parseTime(prev)) {
+		if received.Before(parseTime(prev)) {
 			return ReportCounts{Stale: true}, nil
 		}
 	case errors.Is(err, sql.ErrNoRows):
@@ -159,21 +170,23 @@ func (d *DB) ApplyReport(ctx context.Context, host string, generatedAt time.Time
 		}
 		if !exists {
 			_, err = tx.ExecContext(ctx,
-				`INSERT INTO vms(host, `+vmCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+				`INSERT INTO vms(host, `+vmCols+`, disks_unreadable) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
 				host, v.UUID, v.Name, v.State, v.VCPUs, v.MemoryGiB, v.IP, v.Autostart, v.Firmware, disks,
 				v.OriginImage, v.OriginSHA256, v.OriginTemplate, v.OriginClone, v.OriginPool,
-				v.Created, comment, now, now)
+				v.Created, comment, now, now, v.DisksUnreadable)
 		} else {
 			if gone.Valid {
 				cnt.Relisted++
 			}
 			// CASE keeps the stored comment when the report omitted the field.
 			_, err = tx.ExecContext(ctx,
-				`UPDATE vms SET name=?, state=?, vcpus=?, memory_gib=?, ip=?, autostart=?, firmware=?, disks=?,
+				`UPDATE vms SET name=?, state=?, vcpus=?, memory_gib=?, ip=?, autostart=?, firmware=?,
+				   disks=CASE WHEN ? THEN disks ELSE ? END, disks_unreadable=?,
 				   origin_image=?, origin_sha256=?, origin_template=?, origin_clone=?, origin_pool=?, created=?,
 				   comment=CASE WHEN ? THEN ? ELSE comment END, last_seen=?, gone_since=NULL
 				 WHERE host=? AND uuid=?`,
-				v.Name, v.State, v.VCPUs, v.MemoryGiB, v.IP, v.Autostart, v.Firmware, disks,
+				v.Name, v.State, v.VCPUs, v.MemoryGiB, v.IP, v.Autostart, v.Firmware,
+				v.DisksUnreadable, disks, v.DisksUnreadable,
 				v.OriginImage, v.OriginSHA256, v.OriginTemplate, v.OriginClone, v.OriginPool, v.Created,
 				v.Comment != nil, comment, now, host, v.UUID)
 		}
@@ -303,7 +316,7 @@ func (d *DB) ListInventory(ctx context.Context, host string, withGone bool) (Inv
 
 	vq := `SELECT v.host, v.uuid, v.name, v.state, v.vcpus, v.memory_gib, v.ip, v.autostart, v.firmware, v.disks,
 	         v.origin_image, v.origin_sha256, v.origin_template, v.origin_clone, v.origin_pool,
-	         v.created, v.comment, v.first_seen, v.last_seen, v.gone_since,
+	         v.created, v.comment, v.first_seen, v.last_seen, v.gone_since, v.disks_unreadable,
 	         EXISTS (SELECT 1 FROM vm_credentials c WHERE c.host=v.host AND c.name=v.name AND c.uuid=v.uuid)
 	       FROM vms v WHERE (?='' OR v.host=?) AND (? OR v.gone_since IS NULL)
 	       ORDER BY v.host, v.name, v.first_seen, v.uuid`
@@ -318,7 +331,7 @@ func (d *DB) ListInventory(ctx context.Context, host string, withGone bool) (Inv
 		var gone sql.NullString
 		if err := rows.Scan(&v.Host, &v.UUID, &v.Name, &v.State, &v.VCPUs, &v.MemoryGiB, &v.IP, &v.Autostart,
 			&v.Firmware, &disks, &v.OriginImage, &v.OriginSHA256, &v.OriginTemplate, &v.OriginClone,
-			&v.OriginPool, &v.Created, &v.Comment, &first, &last, &gone, &v.HasCredentials); err != nil {
+			&v.OriginPool, &v.Created, &v.Comment, &first, &last, &gone, &v.DisksUnreadable, &v.HasCredentials); err != nil {
 			return inv, fmt.Errorf("list inventory: %w", err)
 		}
 		v.Disks = json.RawMessage(disks)

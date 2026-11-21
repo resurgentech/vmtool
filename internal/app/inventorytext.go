@@ -40,10 +40,29 @@ func invGiB(b int64) string {
 	return fmt.Sprintf("%.1fG", float64(b)/float64(gib))
 }
 
+// invUnreadableMark follows the disks of a VM the host could not read, and
+// invUnreadableNote explains it under the table.
+const (
+	invUnreadableMark = " *"
+	invUnreadableNote = "* disks unreadable on the host; last known shown"
+)
+
+func invUnreadable(v InventoryVM) bool { return v.DisksUnreadable != nil && *v.DisksUnreadable }
+
 func invDisks(v InventoryVM) string {
 	if len(v.Disks) == 0 {
+		if invUnreadable(v) {
+			return "-" + invUnreadableMark
+		}
 		return "-"
 	}
+	if invUnreadable(v) {
+		return invDisksList(v) + invUnreadableMark
+	}
+	return invDisksList(v)
+}
+
+func invDisksList(v InventoryVM) string {
 	parts := make([]string, len(v.Disks))
 	for i, d := range v.Disks {
 		parts[i] = fmt.Sprintf("%s %s %s", d.Target, invGiB(d.CapacityBytes), d.Kind)
@@ -105,7 +124,9 @@ func WriteInventory(out io.Writer, inv *Inventory, gone bool) error {
 		head += "\tGONE SINCE\tKEPT UNTIL"
 	}
 	fmt.Fprintln(w, head)
+	anyUnreadable := false
 	for _, v := range inv.Vms {
+		anyUnreadable = anyUnreadable || invUnreadable(v)
 		row := fmt.Sprintf("%s/%s\t%s\t%d\t%dG\t%s\t%s\t%s\t%s\t%s\t%s",
 			oneLn(v.Host), oneLn(v.Name), invDash(oneLn(v.State)), v.Vcpus, v.Memory, invDash(oneLn(v.Ip)),
 			oneLn(invDisks(v)), oneLn(invOrigin(v)), oneLn(invCreated(v)), invDash(oneLn(v.Comment)), invTime(v.LastSeen))
@@ -123,6 +144,9 @@ func WriteInventory(out io.Writer, inv *Inventory, gone bool) error {
 	}
 	if len(inv.Vms) == 0 {
 		fmt.Fprintln(w, "(none)")
+	}
+	if anyUnreadable {
+		fmt.Fprintln(w, invUnreadableNote)
 	}
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "MACHINES")

@@ -114,6 +114,9 @@ var migrations = []string{
 		PRIMARY KEY (host, uuid)
 	);
 	CREATE INDEX vms_host_name ON vms(host, name);`,
+	// 3: a VM whose disks the host could not read keeps its last known disks
+	// and is marked.
+	`ALTER TABLE vms ADD COLUMN disks_unreadable INTEGER NOT NULL DEFAULT 0;`,
 }
 
 // DB is an open store database. It is safe for concurrent use.

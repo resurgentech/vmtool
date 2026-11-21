@@ -75,6 +75,44 @@ func TestInventoryTables(t *testing.T) {
 	}
 }
 
+const unreadableMark = "disks unreadable on the host; last known shown"
+
+// A VM whose disks the host could not read is marked, with the last known
+// disks still shown; without one there is no mark, in tables or JSON.
+func TestInventoryMarksUnreadableDisks(t *testing.T) {
+	s := newCLIStore(t)
+	s.inv = inventoryBody()
+	dir := storeWorkdir(t, s, storeTok)
+	r := runGate(t, dir, invKeep, "inventory")
+	if r.err != nil {
+		t.Fatalf("%v\n%s", r.err, r.errOut)
+	}
+	if strings.Contains(r.out, "unreadable") {
+		t.Errorf("a mark with nothing to mark:\n%s", r.out)
+	}
+
+	body := inventoryBody()
+	body["vms"].([]any)[0].(map[string]any)["disks_unreadable"] = true
+	s = newCLIStore(t)
+	s.inv = body
+	dir = storeWorkdir(t, s, storeTok)
+	r = runGate(t, dir, invKeep, "inventory")
+	if r.err != nil {
+		t.Fatalf("%v\n%s", r.err, r.errOut)
+	}
+	if !strings.Contains(r.out, unreadableMark) || !strings.Contains(r.out, "vda 20G thin") {
+		t.Errorf("no mark, or the last known disks are gone:\n%s", r.out)
+	}
+	r = runGate(t, dir, invKeep, "inventory", "--json")
+	var inv app.Inventory
+	if err := json.Unmarshal([]byte(r.out), &inv); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, r.out)
+	}
+	if inv.Vms[0].DisksUnreadable == nil || !*inv.Vms[0].DisksUnreadable || !strings.Contains(r.out, `"disks_unreadable": true`) && !strings.Contains(r.out, `"disks_unreadable":true`) {
+		t.Errorf("flag not in --json: %s", r.out)
+	}
+}
+
 func TestInventoryGoneAndHost(t *testing.T) {
 	s := newCLIStore(t)
 	s.inv = inventoryBody()

@@ -1811,6 +1811,7 @@ components:
         autostart: { type: boolean }
         firmware: { type: string }
         disks: { type: array, items: { $ref: '#/components/schemas/InventoryDisk' } }
+        disks_unreadable: { type: boolean, description: Present and true when the host could not read this VM's disks at its last report; disks are then the last known ones. }
         origin: { $ref: '#/components/schemas/InventoryOrigin' }
         comment: { type: string }
         first_seen: { type: string, format: date-time }

@@ -44,7 +44,8 @@ func toAPIInventory(in *storeclient.Inventory) api.Inventory {
 			Ip: v.Ip, Autostart: v.Autostart, Firmware: v.Firmware, Comment: v.Comment,
 			FirstSeen: v.FirstSeen, LastSeen: v.LastSeen, GoneSince: v.GoneSince,
 			CredentialsKeptUntil: v.CredentialsKeptUntil, HasCredentials: v.HasCredentials,
-			Disks: make([]api.InventoryDisk, len(v.Disks)),
+			DisksUnreadable: v.DisksUnreadable,
+			Disks:           make([]api.InventoryDisk, len(v.Disks)),
 		}
 		for j, d := range v.Disks {
 			o.Disks[j] = api.InventoryDisk{Target: d.Target, Pool: d.Pool, CapacityBytes: d.CapacityBytes, Kind: api.InventoryDiskKind(d.Kind)}

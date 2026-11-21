@@ -41,7 +41,13 @@ func TestGetInventoryReadsTheStore(t *testing.T) {
 	if v.Origin == nil || *v.Origin.Image != "img1" || *v.Origin.Clone != "thin" || *v.Origin.ImageSha256 != strings.Repeat("a", 64) {
 		t.Errorf("origin %+v", v.Origin)
 	}
+	if v.DisksUnreadable == nil || !*v.DisksUnreadable {
+		t.Errorf("vm1 lacks the disks_unreadable flag: %+v", v)
+	}
 	g := inv.Vms[1]
+	if g.DisksUnreadable != nil {
+		t.Errorf("vm2 carries the flag: %+v", g)
+	}
 	if g.GoneSince == nil || g.CredentialsKeptUntil == nil || g.CredentialsKeptUntil.Format("2006-01-02") != "2026-11-28" || g.Origin != nil {
 		t.Errorf("gone vm %+v", g)
 	}

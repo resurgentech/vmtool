@@ -446,12 +446,16 @@ func TestReporterListingError(t *testing.T) {
 }
 
 // A VM that vanishes between the list and its disks is left out; any other
-// disk error sends nothing (a missing VM would be delisted).
+// disk error still reports the VM, marked, with no disks, and the rest of the
+// report goes out (a missing VM would be delisted).
 func TestReporterDiskErrors(t *testing.T) {
 	e := startReporterWith(t,
 		vmtool.VMInfo{Name: "vm1", State: "running", UUID: repUUID1},
 		vmtool.VMInfo{Name: "vm2", State: "running", UUID: repUUID2})
 	e.waitSend(t)
+	if v := e.store.last().Vms[0]; v.DisksUnreadable != nil && *v.DisksUnreadable {
+		t.Fatalf("a VM whose disks were read is marked: %+v", v)
+	}
 	e.src.mu.Lock()
 	e.src.diskErr = map[string]error{"vm2": fmt.Errorf("gone: %w", vmtool.ErrNotFound)}
 	e.src.mu.Unlock()
@@ -464,11 +468,26 @@ func TestReporterDiskErrors(t *testing.T) {
 	e.src.diskErr = map[string]error{"vm2": errors.New("libvirt hiccup")}
 	e.src.mu.Unlock()
 	e.rep.Kick()
-	if w := e.waitWait(t); w.d != 30*time.Second {
-		t.Fatalf("wait %v", w.d)
+	e.waitSend(t)
+	r := e.store.last()
+	if len(r.Vms) != 2 {
+		t.Fatalf("one VM failing stopped the report or delisted it: %+v", r.Vms)
 	}
-	if n := e.store.count(); n != 2 {
-		t.Fatalf("a partial list was sent: %d sends", n)
+	v1, v2 := r.Vms[0], r.Vms[1]
+	if v1.Name != "vm1" || len(v1.Disks) != 1 || (v1.DisksUnreadable != nil && *v1.DisksUnreadable) {
+		t.Errorf("vm1 = %+v", v1)
+	}
+	if v2.Name != "vm2" || v2.DisksUnreadable == nil || !*v2.DisksUnreadable || v2.Disks == nil || len(v2.Disks) != 0 ||
+		v2.Uuid != repUUID2 || v2.State != "running" {
+		t.Errorf("vm2 = %+v", v2)
+	}
+	select {
+	case w := <-e.clock.waits:
+		t.Fatalf("a retry was scheduled: %v", w.d)
+	default:
+	}
+	if strings.Contains(e.logText(), "libvirt hiccup") && !strings.Contains(e.logText(), "vm2") {
+		t.Errorf("log: %s", e.logText())
 	}
 }
 
@@ -510,4 +529,237 @@ func TestReporterDeniedLoggedOnce(t *testing.T) {
 	if strings.Contains(text, repHostTok) {
 		t.Error("token in log")
 	}
+}
+
+// ---- the address follow-up -------------------------------------------------
+
+const watchWindow = 120 * time.Second
+
+// startWatcher starts a reporter with the address follow-up on (IPWait 120 s)
+// over the given VMs; the start send is waited for by the caller.
+func startWatcher(t *testing.T, vms ...vmtool.VMInfo) *repEnv {
+	t.Helper()
+	e := &repEnv{store: newRepStore(), src: &repSource{}, clock: newRepClock(), log: &bytes.Buffer{}, logMu: &sync.Mutex{}}
+	e.src.set(vms...)
+	e.rep = NewInventoryReporter(InventoryReporterConfig{
+		Host: "hv1", Version: "v-test", Store: e.store, Source: e.src, IPWait: watchWindow,
+		Now: e.clock.Now, After: e.clock.After,
+		Log: slog.New(slog.NewTextHandler(lockedBuf{e.logMu, e.log}, nil)),
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := e.rep.Start(ctx)
+	t.Cleanup(func() { cancel(); <-done })
+	return e
+}
+
+func (e *repEnv) tick(t *testing.T, w repWait) {
+	t.Helper()
+	e.clock.Advance(w.d)
+	w.ch <- e.clock.Now()
+}
+
+func (e *repEnv) setIP(name, ip string) {
+	e.src.mu.Lock()
+	defer e.src.mu.Unlock()
+	for i := range e.src.vms {
+		if e.src.vms[i].Name == name {
+			e.src.vms[i].IP = ip
+		}
+	}
+}
+
+func (e *repEnv) setState(name string, st vmtool.VMState) {
+	e.src.mu.Lock()
+	defer e.src.mu.Unlock()
+	for i := range e.src.vms {
+		if e.src.vms[i].Name == name {
+			e.src.vms[i].State = st
+		}
+	}
+}
+
+// barrier proves the goroutine is idle: a kick is answered by exactly the next
+// send, and by then no timer is outstanding unless the caller expects one.
+func (e *repEnv) quiet(t *testing.T, wantSends int) {
+	t.Helper()
+	e.rep.Kick()
+	if n := e.waitSend(t); n != wantSends+1 {
+		t.Fatalf("barrier send is #%d, want #%d: an extra send happened", n, wantSends+1)
+	}
+	if n := e.store.count(); n != wantSends+1 {
+		t.Fatalf("sends = %d, want %d", n, wantSends+1)
+	}
+}
+
+func (e *repEnv) noTimer(t *testing.T) {
+	t.Helper()
+	select {
+	case w := <-e.clock.waits:
+		t.Fatalf("a timer was requested: %v", w.d)
+	default:
+	}
+}
+
+// create-like sequence: define (stopped), start (running, no address), the
+// address appears 20 s later: exactly one extra send, with the address, and
+// no timer afterwards.
+func TestReporterAddressFollowUp(t *testing.T) {
+	e := startWatcher(t, vmtool.VMInfo{Name: "vm1", State: "shutoff", UUID: repUUID1})
+	e.waitSend(t) // start: a stopped VM is not watched
+	e.src.set(vmtool.VMInfo{Name: "vm1", State: "running", UUID: repUUID1})
+	e.rep.Kick()
+	e.waitSend(t) // the start operation's send
+	for i := 0; i < 3; i++ {
+		w := e.waitWait(t)
+		if w.d != 5*time.Second {
+			t.Fatalf("poll wait %d = %v, want 5s", i, w.d)
+		}
+		e.tick(t, w)
+	}
+	w := e.waitWait(t)
+	if n := e.store.count(); n != 2 {
+		t.Fatalf("sends while there was no address: %d", n)
+	}
+	e.setIP("vm1", "192.0.2.50")
+	e.tick(t, w) // 20 s after the start
+	if n := e.waitSend(t); n != 3 {
+		t.Fatalf("follow-up send is #%d, want 3", n)
+	}
+	if v := e.store.last().Vms[0]; v.Ip != "192.0.2.50" {
+		t.Fatalf("follow-up report ip = %q", v.Ip)
+	}
+	e.quiet(t, 3)
+	e.noTimer(t)
+}
+
+// No address within the window: no extra send, no timer once it ends, and the
+// VM is not watched again in the same run; seen stopped, its next run is.
+func TestReporterGivesUpAfterTheWindow(t *testing.T) {
+	e := startWatcher(t, vmtool.VMInfo{Name: "vm1", State: "running", UUID: repUUID1}) // the start counts
+	e.waitSend(t)
+	for i := 0; i < 24; i++ { // 120 s in 5 s steps; the last poll is at the end of the window
+		w := e.waitWait(t)
+		if w.d != 5*time.Second {
+			t.Fatalf("poll wait %d = %v", i, w.d)
+		}
+		e.tick(t, w)
+	}
+	if n := e.store.count(); n != 1 {
+		t.Fatalf("sends = %d, a give-up must not send", n)
+	}
+	// Still running, still no address, the same run: a kick sends but does not
+	// watch again.
+	e.quiet(t, 1)
+	e.noTimer(t)
+	// It stops, then runs again: a new run, watched again.
+	e.setState("vm1", vmtool.StateShutoff)
+	e.rep.Kick()
+	e.waitSend(t)
+	e.setState("vm1", vmtool.StateRunning)
+	e.rep.Kick()
+	e.waitSend(t)
+	if w := e.waitWait(t); w.d != 5*time.Second {
+		t.Fatalf("second run not watched: %v", w.d)
+	}
+}
+
+// Two VMs that start together share sends: both get an address at the same
+// poll, one extra send carries both; one that gets it later has its own.
+func TestReporterTwoVMsShareSends(t *testing.T) {
+	e := startWatcher(t,
+		vmtool.VMInfo{Name: "vm1", State: "shutoff", UUID: repUUID1},
+		vmtool.VMInfo{Name: "vm2", State: "shutoff", UUID: repUUID2})
+	e.waitSend(t)
+	e.src.set(
+		vmtool.VMInfo{Name: "vm1", State: "running", UUID: repUUID1},
+		vmtool.VMInfo{Name: "vm2", State: "running", UUID: repUUID2})
+	e.rep.Kick()
+	e.waitSend(t) // #2
+	w := e.waitWait(t)
+	e.tick(t, w)
+	w = e.waitWait(t)
+	e.setIP("vm1", "192.0.2.51")
+	e.setIP("vm2", "192.0.2.52")
+	e.tick(t, w)
+	if n := e.waitSend(t); n != 3 {
+		t.Fatalf("send #%d, want 3", n)
+	}
+	if r := e.store.last(); r.Vms[0].Ip != "192.0.2.51" || r.Vms[1].Ip != "192.0.2.52" {
+		t.Fatalf("report %+v", r.Vms)
+	}
+	e.quiet(t, 3)
+	e.noTimer(t)
+}
+
+// A VM that gets its address later than the other has its own send, and the
+// watch lasts only as long as one VM is still without an address.
+func TestReporterTwoVMsStaggered(t *testing.T) {
+	e := startWatcher(t,
+		vmtool.VMInfo{Name: "vm1", State: "running", UUID: repUUID1},
+		vmtool.VMInfo{Name: "vm2", State: "running", UUID: repUUID2})
+	e.waitSend(t)
+	w := e.waitWait(t)
+	e.setIP("vm1", "192.0.2.51")
+	e.tick(t, w)
+	e.waitSend(t) // #2: vm1's address
+	w = e.waitWait(t)
+	e.setIP("vm2", "192.0.2.52")
+	e.tick(t, w)
+	if n := e.waitSend(t); n != 3 {
+		t.Fatalf("send #%d, want 3", n)
+	}
+	e.quiet(t, 3)
+	e.noTimer(t)
+}
+
+// A kick that is pending when the address appears is coalesced with the
+// follow-up: one send, not two.
+func TestReporterKickDuringWatchCoalesces(t *testing.T) {
+	e := startWatcher(t, vmtool.VMInfo{Name: "vm1", State: "running", UUID: repUUID1})
+	e.waitSend(t)
+	w := e.waitWait(t)
+	e.setIP("vm1", "192.0.2.50")
+	e.rep.Kick()
+	e.tick(t, w)
+	if n := e.waitSend(t); n != 2 {
+		t.Fatalf("send #%d, want 2", n)
+	}
+	if e.store.last().Vms[0].Ip != "192.0.2.50" {
+		t.Fatalf("report %+v", e.store.last().Vms)
+	}
+	e.quiet(t, 2)
+	e.noTimer(t)
+}
+
+// The send a watch triggers adds no new VM to the watch: a VM that shows up
+// running without an address in it is not watched.
+func TestReporterWatchBuildAddsNoVM(t *testing.T) {
+	e := startWatcher(t, vmtool.VMInfo{Name: "vm1", State: "running", UUID: repUUID1})
+	e.waitSend(t)
+	w := e.waitWait(t)
+	e.setIP("vm1", "192.0.2.50")
+	e.src.mu.Lock()
+	e.src.vms = append(e.src.vms, vmtool.VMInfo{Name: "vm2", State: "running", UUID: repUUID2})
+	e.src.mu.Unlock()
+	e.tick(t, w)
+	e.waitSend(t)
+	if len(e.store.last().Vms) != 2 {
+		t.Fatalf("report %+v", e.store.last().Vms)
+	}
+	// vm2 goes away before the barrier, so the barrier's own build (a kick's,
+	// which may add VMs) cannot start a watch; only the watch's build could have.
+	e.src.set(vmtool.VMInfo{Name: "vm1", State: "running", UUID: repUUID1, IP: "192.0.2.50"})
+	e.quiet(t, 2)
+	e.noTimer(t)
+}
+
+// A VM that is stopped or deleted while watched drops out of the watch.
+func TestReporterWatchEndsWhenTheVMStops(t *testing.T) {
+	e := startWatcher(t, vmtool.VMInfo{Name: "vm1", State: "running", UUID: repUUID1})
+	e.waitSend(t)
+	w := e.waitWait(t)
+	e.setState("vm1", vmtool.StateShutoff)
+	e.tick(t, w)
+	e.quiet(t, 1)
+	e.noTimer(t)
 }
