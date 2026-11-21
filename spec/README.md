@@ -274,15 +274,26 @@ nothing else: another image, a changed digest, an expired or spent ticket, or
 any other route all answer 401.
 
 **Inventory.** A record of what each host daemon last said, not a live view:
-no up/down state, and nothing is marked gone by age or silence. A host's
+no up/down state, and nothing is marked gone by age or silence; the store never
+decides whether a host is up, and a sleeping host's VMs stay listed. A host's
 `putHostInventory` body is its whole VM list (JSON, at most 1 MiB and 4096 VMs,
 a comment at most 512 bytes on one line); a listed VM is inserted or updated,
-an omitted live row of that host goes gone, a report older than the last one
-applied is answered 200 and ignored. A gone row keeps its login for 7 days
-(`credentials_kept_until`); the sweep, at store start and every 24 hours,
-removes the row and the login of the same (host, name) only when its UUID
-matches. `delistVM` marks the live row gone; `deleteInventoryRow` removes a row
-at once and leaves the credential record alone.
+an omitted live row of that host goes gone. Reports are ordered by the store's
+own clock: a report received before the last one applied is answered 200 and
+ignored; `generated_at` is required and stored, and orders nothing, so a host
+with a wrong clock is not silenced. A VM reported with `disks_unreadable: true`
+(optional; its disks could not be read on the host) is updated in every other
+field and keeps its last known disks; the next report without the flag clears
+it. A gone row keeps its login for 7 days (`credentials_kept_until`); the
+sweep, at store start and every 24 hours, removes the row and the login of the
+same (host, name) only when its UUID matches. `delistVM` marks the live row
+gone (a client calls it when a host answers "no such VM" for a VM it named);
+`deleteInventoryRow` removes a row at once and leaves the credential record
+alone (`vmtool delete` calls it together with the credential `DELETE`, so
+login and row go at once). Hosts and VMs reach the store only through the
+daemons' reports, and are corrected at the next report (daemon start, or a
+change made through vmtool, plus one follow-up report when a new VM's address
+appears) or on touch; a change made outside vmtool waits for one of those.
 
 **Credentials.** The `GET` of a VM record carries the domain UUID the caller
 holds. A record for another UUID is 404 with `"stale": true` and no credential
@@ -716,6 +727,14 @@ TUI's `I` view also use. Query `host` limits hosts and VMs to one host;
 `credentials_kept_until`). Machines (metal and alien names and kinds) are never
 filtered by `host`. The answer is a record of what each daemon last said: no
 up/down state and no staleness mark, `last_report` a plain time.
+`InventoryVM.disks_unreadable` marks a VM whose disks the host could not read
+(its `disks` are the last known ones); `vmtool inventory` and the TUI show it
+as `*` with a footnote.
+
+A workflow that names a VM as `host/vm` and gets "no such VM" from a host that
+confirms it (an `Info` that is also a not-found) delists the VM in the store and
+says so in its error, with the date the login is kept until; the status stays
+404. A down store adds no line. The REST console route does not delist.
 
 | Status | When |
 |---|---|

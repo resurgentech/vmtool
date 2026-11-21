@@ -421,7 +421,8 @@ Base images, in store mode, `create` asks the store first:
 **A ticket opens one image only.** It is for one image at one digest,
 read-only, good for one download and 15 minutes, held by the store as a hash in
 memory only. Every other store route refuses it with 401. Daemons hold no
-store token and no S3 key.
+store token that opens credentials and no S3 key; each holds at most a host
+token, which only reports its own VMs (below).
 
 ```bash
 vmtool images push ./img1.qcow2 --name img1   # file into the store
@@ -435,6 +436,81 @@ and the name its token is known by. `just -f packer_images/justfile generate
 `config.yml` has `server:` and `./vmtool` is built; when the store does not
 answer, or there is no `server:`, it copies to `image_dir` with a line saying
 so.
+
+#### The inventory
+
+The store keeps an inventory: one row per VM (host, libvirt UUID) with its
+state, vCPUs, memory, address, disks, origin, comment and when it was last
+seen, plus the hosts and the metal and alien machines. It is a **record of what each
+daemon last said, not a live view**; `vmtool list` stays the live view. Its
+use is to find which host holds a VM so that a person or a tool can wake that
+host by other means.
+
+```bash
+vmtool inventory                 # hosts, VMs, machines
+vmtool inventory --host hv1      # one host's row and VMs (machines are always listed)
+vmtool inventory --gone          # also VMs their host no longer has, with removal dates
+vmtool inventory --json
+```
+
+It needs the store (a `server:` block and `VMTOOL_SERVER_TOKEN`); without one,
+or with one that does not answer, it says so and exits 1 (REST: 503). The TUI
+has the same view under `I` (`g` toggles gone VMs, `r` refreshes). A VM marked
+`*` had its disks unreadable on the host; its last known disks are shown. If
+a VM's disks cannot be read, it is still listed.
+
+**Who reports.** Each hypervisor's daemon sends its full VM list to the store
+when it starts and after each change made through vmtool (create, delete,
+start, stop, disk changes, comment). A new VM's address arrives with one
+follow-up report once it appears, for up to `ip_wait_seconds` after the VM
+starts. The store orders a host's reports by its own clock, so a host with a
+wrong clock is not silenced.
+
+**What the store does not do.** It never decides whether a host is up: no
+heartbeat, no "stale" mark, and a sleeping or switched-off host keeps its VMs
+listed as its last report left them. A report that is empty does not delete
+anything early: a VM a host stops listing is marked gone, hidden from the
+default listing, and its login is kept for **7 days** after that (the grace
+period), then the store's daily sweep deletes the row and the login for good.
+`vmtool delete` is explicit: it removes the login and the row at once.
+
+**What is and is not tracked.** Changes made outside vmtool (a `virsh`
+define or undefine, a VM added by hand) are not seen when they happen. They
+are fixed at the next report (a daemon start, or a change made through
+vmtool) or on touch: when a command names `host/vm`, the host says it has no
+such VM and the store had it, the store delists it and the error says so, with
+the date its login is kept until (a store that is down adds nothing). A host
+that is off is not touched, so its VMs stay listed. Origin (the image, how the
+VM was cloned, the time) is known only for VMs vmtool created from this
+version on; older VMs and VMs made outside vmtool show none.
+
+**Comments.** `vmtool create --comment TEXT` or `vmtool comment hv1/web
+TEXT` (`--clear` removes it) keeps a note of at most 512 bytes on one line
+with a VM. It is stored in plain text, in the VM's libvirt definition and in
+the store's inventory; never put a secret in it. `vmtool info` shows it, with
+the origin.
+
+**Host tokens.** A daemon reports with a *host token*, one per hypervisor,
+accepted by the store on its own report route and `whoami` and nowhere else
+(not on credentials, images or other hosts). In `ansible_labtwo`:
+
+```bash
+roles/vmtool_store/make_secrets.sh hosttokens hv1 hv2        # adds or replaces only these hosts' tokens
+roles/vmtool_store/make_secrets.sh hosttokens --revoke hv2   # removes only these hosts' tokens
+# then re-run the store playbook (above) so the store learns the hashes
+just deploy hv1                               # here: installs the token on the host
+```
+
+The tokens live in OpenBao under `BAO_STORE_HOST_TOKENS_PATH` (default
+`kv/infra/labtwo/vmtool_store/host_tokens`, one field per host). With a
+`server:` block, `just deploy` reads the host's field and installs it on the
+hypervisor as `store-host-token` in the daemon's directory (vmtool:vmtool,
+0600), and `config write --store-token-file store-host-token` names it as
+`store_token_file` in the host's `config.yml`; the token is never in
+`config.yml`, argv or a log. A host with no token gets one warning and the
+deploy goes on; its daemon does not report. To revoke: run `hosttokens
+--revoke`, re-run the store playbook, then `just deploy` that host again (a
+deploy with no token removes the old file).
 
 #### Building and deploying the store
 

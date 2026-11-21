@@ -1871,3 +1871,41 @@ are appended, never edited in; a hook refuses rewrites.
 - Red: assertion failures in db, store, reporter, CLI, TUI and server tests;
   green; reporter tests 30 runs with no failure; `just check` green.
 - Commits: the N11 commit on `clone-identity`.
+
+## 2026-11-21 — N7 ansible_labtwo: mint and render host tokens
+
+- Built after N11: ansible_labtwo was not clean at the first two checks (a
+  `.pyc` not ours), clean after its `e2cff11`.
+- `roles/vmtool_store/make_secrets.sh hosttokens NAME...` adds or replaces
+  only the named hosts' fields (patch, or put when the secret is absent;
+  values through a private file, never argv or output; any read error other
+  than "absent" stops it); `--revoke` removes fields.
+- The role reads `vault_vmtool_store_host_tokens` (new in
+  `inventories/group_vars/all`; missing: empty map and a warning), renders
+  `host_tokens.yaml` (SHA-256, 0600, uid 65532), sets `host_tokens_file`; a
+  change recreates the store as `tokens.yaml` does. README: mint, revoke,
+  `just deploy` fetches it.
+- Gate: `bash -n` and `ansible-playbook --syntax-check` green; `just check`
+  in vmtool unchanged. No red/green (no harness in the role).
+- Commits: `9d8d9ca` in ansible_labtwo on `simplify`, not pushed.
+
+## 2026-11-21 — N10 Docs for tranche 12
+
+- `README.md`: a new "The inventory" section in the store part (the command
+  and TUI view, who reports and when, the address follow-up, ordering by the
+  store's clock, that the store never judges a host up and keeps a sleeping
+  host's VMs, the 7-day grace and that an empty report never deletes early,
+  explicit delete, outside changes fixed at the next report or on touch,
+  origin only from this version on, plain-text comments, the unreadable-disks
+  mark, minting, deploying and revoking host tokens); the "daemons hold no
+  store token" line corrected.
+- `spec/README.md`: the stale-report rule replaced by receive-time ordering;
+  `disks_unreadable`, delist-on-touch and delete in the store and inventory
+  sections.
+- CLI help: `vmtool inventory` long help carries the rules; `create` says
+  origin is recorded from this version on; `TestInventoryHelpPinsKeyWords`
+  pins the words. `AGENTS.md`: one "Where to look" row for the inventory.
+- Red: the help test failing on 15 missing phrases; green; `just check`
+  green.
+- Commits: the N10 commit on `clone-identity` (it also carries the N7 entry
+  above).

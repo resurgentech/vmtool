@@ -56,5 +56,6 @@ These add to the hard rules above; they do not replace them.
 | Test stubs | `internal/testexec` |
 | The store's API and contract | `spec/openapi/store.yaml`, the store sections of [`spec/README.md`](spec/README.md); generated package `internal/storeapi` |
 | The store's code | `internal/store` (server, images, credentials, `blob/`, `db/`), `cmd/vmtool-store`, `deploy/vmtool-store.Dockerfile`; the client side is the store pieces of `internal/app` and `internal/storeclient` |
+| The VM inventory | the store: `internal/store/inventory.go`, `internal/store/db` (inventory tables); the daemon's reporter: `internal/app/inventory_reporter.go`; the read and delist: `internal/app/inventoryread.go`, `internal/app/inventorysource.go`; the CLI: `internal/cli/inventory.go` (`vmtool inventory`) |
 | Using and deploying the store | the store section of [`README.md`](README.md); the `vmtool_store` role in `ansible_labtwo` (`roles/vmtool_store/README.md`) |
 | Agent definitions | `architect`, `foreman`, `implementer`, `recon` (plugin); `.grok/agents/` (Grok) |

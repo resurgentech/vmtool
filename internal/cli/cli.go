@@ -544,7 +544,8 @@ grows it at first boot on images built with it).
 control characters; stored in plain text in the VM's definition, so never put
 a secret in it). Change it later with 'vmtool comment'. create also records
 what the VM was made from (image, its SHA-256 when known, how it was cloned,
-the pool, the time); 'vmtool info' shows both.
+the pool, the time), known only for VMs created from this version on;
+'vmtool info' shows both.
 
 When create ends, success or failure, it prints one line of stage timings on
 stdout, such as 'timings: clone 0.3s, start 1.1s, wait_ip 2.0s, wait_ssh 7.0s,

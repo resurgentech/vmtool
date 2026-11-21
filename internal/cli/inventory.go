@@ -23,10 +23,24 @@ VMs (state, vCPUs, memory, address, disks, what each was made from, when it was
 created, its comment, when the store last saw it) and the metal and alien
 machines the store keeps.
 
-It is a record, not a live view: it says nothing about whether a host is up,
-and a host that is off keeps its VMs listed as its last report left them. Use
-'vmtool list' for the live view. A VM its host no longer has is hidden unless
---gone is given; it then shows when the store removes its row and its login.
+It is a record, not a live view. The store never decides whether a host is up:
+a sleeping host keeps its VMs listed as its last report left them. Use
+'vmtool list' for the live view.
+
+A daemon sends its full VM list when it starts and after each change made
+through vmtool; a new VM's address follows in one more report once it appears
+(up to ip_wait_seconds). A change made outside vmtool is fixed at the
+next report, or when a vmtool command touches the VM and its host says it does not
+have it. The store orders a host's reports by its own clock, so a host with a
+wrong clock is not silenced.
+
+A VM its host no longer has is hidden unless --gone is given; it then shows
+when the store removes its row and its login. The login is kept 7 days after
+that; an empty report never deletes one earlier. 'vmtool delete' removes the
+login and the row at once. A VM's origin is known only for VMs vmtool created
+from this version on. A comment is kept in plain text, in the VM's definition
+and in the store. A VM marked * had its disks unreadable on the host; the
+last known disks are shown.
 
 Needs the store (a server: block in config.yml and VMTOOL_SERVER_TOKEN); with
 none, or one that does not answer, it says so and exits 1.`,
