@@ -749,7 +749,13 @@ func (m *Manager) List() ([]VMInfo, error) {
 		if state == libvirt.DOMAIN_RUNNING {
 			vi.IP, _ = m.getIP(&dom)
 		}
+		// The UUID is on the domain object and the XML is read anyway for
+		// the metadata, so the inventory report needs no second call per VM.
+		if u, err := dom.GetUUIDString(); err == nil {
+			vi.UUID = u
+		}
 		if xmlDesc, err := dom.GetXMLDesc(0); err == nil {
+			vi.Firmware = domainFirmware(xmlDesc)
 			vi.Origin, vi.Comment = ParseMetadata(xmlDesc)
 		}
 		vms = append(vms, vi)

@@ -113,7 +113,7 @@ type VMInfo struct {
 	Memory    uint    `json:"memory"` // GiB
 	IP        string  `json:"ip"`
 	Autostart bool    `json:"autostart"`
-	// Firmware is efi or bios, read from the domain XML by Info; List leaves it empty.
+	// Firmware is efi or bios, read from the domain XML by Info and List.
 	Firmware string `json:"firmware,omitempty"`
 	// DiskCache is the cache mode on vda's driver, read from the domain XML by
 	// Info; empty when the disk names none. List leaves it empty.
@@ -121,8 +121,8 @@ type VMInfo struct {
 	// DiskBacking is file or block for vda, read from the domain XML by Info;
 	// empty when unknown. List leaves it empty.
 	DiskBacking string `json:"disk_backing,omitempty"`
-	// UUID is the libvirt domain UUID, filled by Info; empty when unknown
-	// (List, or a daemon that predates the field).
+	// UUID is the libvirt domain UUID, filled by Info and List; empty when
+	// unknown (a daemon that predates the field).
 	UUID string `json:"uuid,omitempty"`
 	// Origin and Comment are read from the domain's metadata by Info and List;
 	// nil and empty for a VM made before they existed or outside vmtool.

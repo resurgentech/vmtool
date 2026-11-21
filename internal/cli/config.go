@@ -58,6 +58,7 @@ func configCmd(dirFn func() (string, error)) *cobra.Command {
 	f.StringVar(&opts.TLSCert, "tls-cert", "", "TLS certificate path")
 	f.StringVar(&opts.TLSKey, "tls-key", "", "TLS key path")
 	f.StringVar(&opts.StoreURL, "store-url", "", "https URL of the store a hypervisor daemon fetches images from")
+	f.StringVar(&opts.StoreTokenFile, "store-token-file", "", "path of the file holding the host token a hypervisor daemon reports to the store with (a path, never the token)")
 	f.BoolVar(&tokenStdin, "token-stdin", false, "read the token from one line of stdin")
 
 	serverURL := &cobra.Command{

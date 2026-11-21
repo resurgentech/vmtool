@@ -48,6 +48,10 @@ type handlers struct {
 	// (poolDirOf in images.go); poolMu guards it.
 	poolMu  sync.Mutex
 	poolDir string
+	// kicker is the inventory reporter (hypervisor daemon with a store and a
+	// host token); nil means none. slogRequests kicks it after a 2xx answer
+	// of an operation in vmChangeOps.
+	kicker Kicker
 	// console is the open consoles and their limits (console.go).
 	console consoles
 	// storeURL, storeToken and storeOpts are the optional central store of a

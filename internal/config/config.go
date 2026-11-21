@@ -96,6 +96,12 @@ type Config struct {
 	// writes it from the client's server.url. Optional; unused by a
 	// workstation, and never used for anything but that download.
 	StoreURL string `yaml:"store_url"`
+	// StoreTokenFile is the path of the file holding a hypervisor daemon's
+	// host token for the store (tranche 12): the one credential it uses to
+	// report its VMs to store_url. A path, like tls_key (relative to the
+	// config directory); the token itself is never in config.yml. Optional:
+	// without it, or without store_url, the daemon does not report.
+	StoreTokenFile string `yaml:"store_token_file"`
 	// Dir is the directory config.yml was loaded from.
 	Dir string `yaml:"-"`
 }
@@ -124,6 +130,41 @@ func checkStoreAddress(key, raw string) error {
 		return errors.New(key + " must be an https URL with a host, like https://vmtool-store.labtwo (no credentials, query or fragment)")
 	}
 	return nil
+}
+
+// StoreHostToken reads the host token named by store_token_file. It fails,
+// with a reason that never contains the token or any part of the file, when
+// store_url or store_token_file is not set, the file does not exist or cannot
+// be read, its mode is not 0600, or it holds nothing. The caller treats any
+// failure as "do not report".
+func (c *Config) StoreHostToken() (string, error) {
+	if c.StoreURL == "" {
+		return "", errors.New("store_url is not set")
+	}
+	if c.StoreTokenFile == "" {
+		return "", errors.New("store_token_file is not set")
+	}
+	p := c.Path(c.StoreTokenFile)
+	fi, err := os.Stat(p)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return "", errors.New("store_token_file does not exist")
+	case err != nil:
+		return "", errors.New("store_token_file cannot be read")
+	case !fi.Mode().IsRegular():
+		return "", errors.New("store_token_file is not a regular file")
+	case fi.Mode().Perm() != 0o600:
+		return "", errors.New("store_token_file is not 0600")
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return "", errors.New("store_token_file cannot be read")
+	}
+	tok := strings.TrimSpace(string(b))
+	if tok == "" {
+		return "", errors.New("store_token_file is empty")
+	}
+	return tok, nil
 }
 
 // Host is a remote hypervisor the workstation can reach.
@@ -416,6 +457,8 @@ type WriteOptions struct {
 	Name, Role, Listen, TLSCert, TLSKey string
 	// StoreURL is a hypervisor's store_url (https only; validated).
 	StoreURL string
+	// StoreTokenFile is a hypervisor's store_token_file: a path, never a token.
+	StoreTokenFile string
 }
 
 // Write creates or updates dir/config.yml: it applies opts, sets
@@ -430,6 +473,7 @@ func Write(dir, token string, opts WriteOptions) error {
 		for _, kv := range []struct{ k, v string }{
 			{"name", opts.Name}, {"role", opts.Role}, {"listen", opts.Listen},
 			{"tls_cert", opts.TLSCert}, {"tls_key", opts.TLSKey}, {"store_url", opts.StoreURL},
+			{"store_token_file", opts.StoreTokenFile},
 			{"token_sha256", Hash(token)},
 		} {
 			if kv.v != "" {

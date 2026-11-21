@@ -25,6 +25,24 @@ func TestConfigWriteStoreURL(t *testing.T) {
 	}
 }
 
+// `config write --store-token-file` records the path of the host token's file,
+// never a token.
+func TestConfigWriteStoreTokenFile(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("VMTOOL_TOKEN", "PLACEHOLDER-not-a-secret-1")
+	if _, err := runConfig(t, dir, "", "write", "--name", "hv1", "--role", "hypervisor", "--store-token-file", "store-host-token"); err != nil {
+		t.Fatal(err)
+	}
+	c, err := config.Load(dir)
+	if err != nil || c.StoreTokenFile != "store-host-token" {
+		t.Fatalf("%q %v", c.StoreTokenFile, err)
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, "config.yml"))
+	if strings.Contains(string(b), "PLACEHOLDER-not-a-secret-3") {
+		t.Error("a token is in config.yml")
+	}
+}
+
 // `config server-url` prints the client's server.url, nothing when it has
 // none; deploy.sh reads it to pass --store-url.
 func TestConfigServerURL(t *testing.T) {

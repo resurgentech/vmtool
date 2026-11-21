@@ -65,9 +65,10 @@ func (s *Server) Handler() http.Handler {
 	}
 	if s.Config != nil {
 		h.role = s.Config.Role
-		// A hypervisor daemon holds no store token and never uses the store
-		// as a client; its one use is fetchImage's download from store_url,
-		// with a ticket the request brings.
+		// A hypervisor daemon's own use of the store is the inventory
+		// reporter (inventory.go, with its host token from store_token_file,
+		// read at start); fetchImage's download from store_url uses a ticket
+		// the request brings.
 		if s.Config.Role == config.RoleHypervisor {
 			h.fetchURL = s.Config.StoreURL
 			h.fetchRoots = s.FetchRootCAs
@@ -231,6 +232,13 @@ func (s *Server) ListenAndServe() error {
 			s.h.warmPoolDir()
 		}
 	}
+	// The reporter runs in the background after the bind, so it never delays
+	// serving; a VM operation only kicks it. Stopped when the server ends.
+	ctx, stopReporter := context.WithCancel(context.Background())
+	defer stopReporter()
+	if rep, _ := startInventory(ctx, s.Config, r, slog.Default()); rep != nil && s.h != nil {
+		s.h.kicker = rep
+	}
 	slog.Info("vmtool API listening", "url", "https://"+srv.Addr+"/")
 	return serve(srv, ln)
 }
@@ -358,6 +366,9 @@ func slogRequests(h *handlers, next http.Handler) http.Handler {
 		note := &reqNote{}
 		next.ServeHTTP(sw, r.WithContext(context.WithValue(r.Context(), noteKey, note)))
 		d := time.Since(start)
+		if h.kicker != nil && sw.code >= 200 && sw.code < 300 && vmChangeOps[note.op] {
+			h.kicker.Kick()
+		}
 		slog.Info("http",
 			"method", r.Method,
 			"path", r.URL.Path,

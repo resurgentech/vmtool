@@ -112,3 +112,46 @@ func (m *Manager) BlockResizeBoot(name string, sizeBytes uint64) error {
 	}
 	return nil
 }
+
+// VMDisk is one disk of a domain as the inventory records it. Pool and
+// CapacityBytes come from the libvirt volume at Path; a disk whose path is no
+// volume of any libvirt pool (a raw LV, say) has an empty Pool and a zero
+// capacity, which a caller that knows better (the thin report) may fill.
+type VMDisk struct {
+	Target        string
+	Path          string
+	Kind          string // DiskBackingFile or DiskBackingBlock
+	Pool          string
+	CapacityBytes int64
+}
+
+// VMDisks lists the domain's file- and block-backed disks with their pool and
+// capacity. An unknown domain is an error wrapping ErrNotFound.
+func (m *Manager) VMDisks(name string) ([]VMDisk, error) {
+	dom, err := m.conn.LookupDomainByName(name)
+	if err != nil {
+		return nil, fmt.Errorf("looking up domain %q: %w", name, err)
+	}
+	defer dom.Free()
+	xmlDesc, err := dom.GetXMLDesc(0)
+	if err != nil {
+		return nil, fmt.Errorf("getting domain XML: %w", err)
+	}
+	parsed := parseDisks(xmlDesc)
+	out := make([]VMDisk, 0, len(parsed))
+	for _, d := range parsed {
+		vd := VMDisk{Target: d.Target, Path: d.Path, Kind: d.Kind}
+		if vol, err := m.conn.LookupStorageVolByPath(d.Path); err == nil {
+			if info, err := vol.GetInfo(); err == nil {
+				vd.CapacityBytes = int64(info.Capacity)
+			}
+			if pool, err := vol.LookupPoolByVolume(); err == nil {
+				vd.Pool, _ = pool.GetName()
+				pool.Free()
+			}
+			vol.Free()
+		}
+		out = append(out, vd)
+	}
+	return out, nil
+}

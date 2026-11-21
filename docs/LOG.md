@@ -1757,3 +1757,29 @@ are appended, never edited in; a hook refuses rewrites.
 - Red: build failures on the missing types and methods; green; `just check`
   green.
 - Commits: the N4 commit on `clone-identity`.
+
+## 2026-11-21 — N5 The daemon reports its VMs
+
+- `internal/config`: `store_token_file` (a path, resolved like `tls_key`);
+  `StoreHostToken()` refuses a missing, non-regular, non-0600 or empty file,
+  or no `store_url`, with a reason that never quotes the content.
+  `internal/cli`: `config write --store-token-file`.
+- `internal/app/inventory_reporter.go` (new; `inventory.go` already held
+  other code): one goroutine; sends the full list at start and after kicks
+  (coalesced; `Kick` never blocks); no timer-driven send; backoff 30 s
+  doubling to 5 min with the list rebuilt each try; a listing or disk error
+  sends nothing; 401/403 retried at 5 min and logged once per change of
+  state; every VM carries origin and its comment ("" when none); 10 s send
+  limit.
+- `pkg/vmtool`: `List` fills UUID and firmware; new `Manager.VMDisks`
+  (target, kind, pool, capacity). `internal/hosts/inventory.go`: the
+  reporter's source, thin volumes reported as `thin`.
+- `internal/server`: `vmChangeOps` (the 14 operations); the request log
+  kicks the reporter after a 2xx of one; the reporter starts after bind,
+  hypervisor role only, or logs one line why not.
+- Tests: reporter (start, comment, no timer send over 30 days, coalescing,
+  backoff, denied, listing and disk errors), every `vmtool.yaml` operation
+  classified, kick on success only, an operation returns at once with a
+  hung store, start-time refusals, a report reaching an in-process store.
+- Red: build failures on the missing symbols; green; `just check` green.
+- Commits: the N5 commit on `clone-identity`.
