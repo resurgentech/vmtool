@@ -2127,3 +2127,17 @@ are appended, never edited in; a hook refuses rewrites.
   refusals), deploy tests, `pkg/vmtool/netlink_test.go`. Red: a skeleton
   helper (assertion failures); green; `just check` green.
 - Commits: the V4 commit on `clone-identity`.
+
+## 2026-11-21 — F4 Make `TestImageBlobServesAnExportWithATrailer` deterministic
+
+- Test only (`internal/server/export_test.go`); no product change. The fake
+  export reader can hold the send after a first part (`holdReader`, fields
+  `holdAfter`, `hold`); the test serves 192 KiB, holds after 128 KiB (more
+  than the server's write buffers), reads the headers and the first part,
+  asserts no tag yet, releases, reads the rest and asserts the trailer
+  digest and exactly one tag, as before.
+- No other `internal/server` test had the same timing assumption.
+- Red: the old test failed 1 in 500 under `-count=500` ("tagged before the
+  body was read", :768). Green: `-count=500`, and `-count=500 -race`;
+  `just check` green.
+- Commits: the F4 commit on `clone-identity`.

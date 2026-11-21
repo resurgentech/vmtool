@@ -51,6 +51,10 @@ type exportMgr struct {
 	exportOf   app.TemplateInfo
 	expSHA     string
 	breakAfter int
+	// and, for a test, a send that serves holdAfter bytes and then waits until
+	// hold is closed
+	holdAfter int
+	hold      chan struct{}
 }
 
 func (m *exportMgr) ecall(format string, a ...any) {
@@ -136,6 +140,27 @@ func (f *failReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
+// holdReader serves the first n bytes, then waits until hold is closed before
+// serving the rest: the test decides when the send may finish.
+type holdReader struct {
+	r    io.Reader
+	n    int
+	hold <-chan struct{}
+}
+
+func (h *holdReader) Read(p []byte) (int, error) {
+	if h.n <= 0 && h.hold != nil {
+		<-h.hold
+		h.hold = nil
+	}
+	if h.n > 0 && len(p) > h.n {
+		p = p[:h.n]
+	}
+	n, err := h.r.Read(p)
+	h.n -= n
+	return n, err
+}
+
 // OpenExport finds the export volume by its LV name or its template's name.
 func (m *exportMgr) OpenExport(name string) (io.ReadCloser, app.ExportVolume, error) {
 	m.ecall("open %s", name)
@@ -147,6 +172,9 @@ func (m *exportMgr) OpenExport(name string) (io.ReadCloser, app.ExportVolume, er
 	var r io.Reader = bytes.NewReader(m.data)
 	if m.breakAfter > 0 {
 		r = &failReader{r: r, n: m.breakAfter}
+	}
+	if m.hold != nil {
+		r = &holdReader{r: r, n: m.holdAfter, hold: m.hold}
 	}
 	return io.NopCloser(r), m.volume(), nil
 }
@@ -750,6 +778,24 @@ func exported(t *testing.T) *expFixture {
 // body went out, and the next send has the digest in its header.
 func TestImageBlobServesAnExportWithATrailer(t *testing.T) {
 	f := exported(t)
+	// The volume is larger than the server's write buffers, and its reader stops
+	// after the first part until the test lets it go on: the client sees the
+	// headers and the first part while the handler is still copying, so "no
+	// tag yet" is checked at a known point, not raced.
+	const first = 128 << 10
+	hold := make(chan struct{})
+	f.em.emu.Lock()
+	f.em.data = randomBytes(t, first+64<<10)
+	f.em.holdAfter, f.em.hold = first, hold
+	f.em.emu.Unlock()
+	released := false
+	release := func() {
+		if !released {
+			released = true
+			close(hold)
+		}
+	}
+	t.Cleanup(release)
 	srv := httptest.NewServer(f.srv)
 	t.Cleanup(srv.Close)
 	want := hexSum(f.em.data)
@@ -758,18 +804,24 @@ func TestImageBlobServesAnExportWithATrailer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer resp.Body.Close()
 	if resp.StatusCode != 200 || resp.ContentLength != -1 || resp.Header.Get("X-Image-Size") != strconv.Itoa(len(f.em.data)) || resp.Header.Get("X-Image-SHA256") != "" {
 		t.Fatalf("status %d, length %d, headers %v", resp.StatusCode, resp.ContentLength, resp.Header)
 	}
 	if _, declared := resp.Trailer["X-Image-Sha256"]; !declared {
 		t.Errorf("the trailer was not declared: %v", resp.Trailer)
 	}
-	if n := f.em.ncalls("tag "); n != 0 {
-		t.Errorf("tagged before the body was read: %v", f.em.ecalls)
+	head := make([]byte, first)
+	if _, err := io.ReadFull(resp.Body, head); err != nil || !bytes.Equal(head, f.em.data[:first]) {
+		t.Fatalf("first part: %v", err)
 	}
-	body, err := io.ReadAll(resp.Body)
+	if n := f.em.ncalls("tag "); n != 0 {
+		t.Errorf("tagged before the whole body went out: %v", f.em.ecalls)
+	}
+	release()
+	rest, err := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if err != nil || !bytes.Equal(body, f.em.data) {
+	if body := append(head, rest...); err != nil || !bytes.Equal(body, f.em.data) {
 		t.Fatalf("body: %d bytes, %v", len(body), err)
 	}
 	if got := resp.Trailer.Get("X-Image-SHA256"); got != want {
