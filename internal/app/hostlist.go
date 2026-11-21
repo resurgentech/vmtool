@@ -84,10 +84,12 @@ func listOne(ctx context.Context, host string, open HostOpener, timeout time.Dur
 
 // HostStatus is one host's row of `vmtool hosts` and GET /v1/hosts.
 type HostStatus struct {
-	Host    string
-	Role    string
-	Local   bool
-	Address string
+	Host  string
+	Role  string
+	Local bool
+	// NetworkHome is true for a host whose config.yml entry says vms: false.
+	NetworkHome bool
+	Address     string
 	// Reachable is true when the host answered (the local host always does).
 	Reachable  bool
 	APIVersion string

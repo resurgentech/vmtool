@@ -211,7 +211,7 @@ func TestPrereqsDocsAgree(t *testing.T) {
 			var hits []string
 			for _, l := range strings.Split(string(b), "\n") {
 				l = strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(l), "#"))
-				if mm := re.FindStringSubmatch(l); mm != nil && strings.Contains(mm[2], "vmtool_nvme_thin") == thin {
+				if mm := re.FindStringSubmatch(l); mm != nil && strings.Contains(mm[2], "vmtool_nvme_drives") && strings.Contains(mm[2], "vmtool_nvme_thin") == thin {
 					hits = append(hits, l)
 					m = mm
 				}
@@ -388,8 +388,8 @@ func TestSetupHostInstallsOVMF(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, c := range []struct{ list, pkg string }{
-		{"vmtool_packages_debian", "ovmf"},
-		{"vmtool_packages_arch", "edk2-ovmf"},
+		{"vmtool_packages_vm_debian", "ovmf"},
+		{"vmtool_packages_vm_arch", "edk2-ovmf"},
 	} {
 		found := false
 		for _, p := range plays {

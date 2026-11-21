@@ -744,6 +744,9 @@ func (h *handlers) ListHosts(ctx context.Context, _ api.ListHostsRequestObject) 
 			Name: s.Host, Role: api.HostInfoRole(s.Role), Local: s.Local,
 			Reachable: &s.Reachable,
 		}
+		if s.NetworkHome {
+			hi.NetworkHome = &s.NetworkHome
+		}
 		if s.Address != "" {
 			hi.Address = &s.Address
 		}

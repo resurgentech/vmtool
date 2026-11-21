@@ -174,6 +174,9 @@ func (s *Service) CreateVM(ctx context.Context, m Manager, in CreateVMInput) (*v
 	if err := validRef("create", ref); err != nil {
 		return nil, err
 	}
+	if s.NetworkHome != nil && s.NetworkHome(in.Host) {
+		return nil, conflict("create", fmt.Errorf("host %s is a network home (vms: false in config.yml) and runs no VMs; create the VM on another host", in.Host))
+	}
 	if in.NetType != "" && in.NetType != "nat" && in.NetType != "bridge" && in.NetType != "direct" {
 		return nil, invalid("create", fmt.Errorf("invalid net_type %q", in.NetType))
 	}

@@ -27,7 +27,9 @@ func listCmd(e *env) *cobra.Command {
 		Short: "List VMs on every host (or one), named host/vm",
 		Long: `List VMs on this host and every configured host, each queried concurrently
 with a 5 s timeout. An unreachable host is one row, "<host>  ERROR: <why>",
-and does not change the exit status: the listing ran. Name a host to list only
+and does not change the exit status: the listing ran. A network home (hosts:
+vms: false) that has no VMs is one row, "<host>  network home: runs no VMs".
+Name a host to list only
 that host; then its failure is the command's error.`,
 		Aliases: []string{"ls"},
 		Args:    cobra.MaximumNArgs(1),
@@ -45,7 +47,7 @@ that host; then its failure is the command's error.`,
 				return rows[0].Err
 			}
 			rows = leaveOutOwnName(cmd.ErrOrStderr(), r, rows)
-			return printVMTable(cmd.OutOrStdout(), rows)
+			return printVMTable(cmd.OutOrStdout(), rows, r.NetworkHome)
 		},
 	}
 }
@@ -71,13 +73,18 @@ func leaveOutOwnName(stderr io.Writer, r *hosts.Resolver, rows []app.HostVMs) []
 }
 
 // printVMTable writes the combined listing: one row per VM, one ERROR row
-// per host that did not answer.
-func printVMTable(out io.Writer, rows []app.HostVMs) error {
+// per host that did not answer, and one row for a network home (a host that
+// runs no VMs) that has none to list.
+func printVMTable(out io.Writer, rows []app.HostVMs, networkHome func(string) bool) error {
 	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(w, "NAME\tSTATE\tVCPUS\tMEMORY\tAUTOSTART\tIP")
 	for _, h := range rows {
 		if h.Err != nil {
 			fmt.Fprintf(w, "%s\tERROR: %s\n", h.Host, oneLine(h.Err.Error()))
+			continue
+		}
+		if len(h.VMs) == 0 && networkHome(h.Host) {
+			fmt.Fprintf(w, "%s\tnetwork home: runs no VMs\n", h.Host)
 			continue
 		}
 		for _, vm := range h.VMs {
@@ -103,7 +110,8 @@ func hostsCmd(e *env) *cobra.Command {
 		Long: `Probe this host and every configured host (GET /version over TLS, 5 s timeout,
 concurrently) and print name, address, whether it answered, the API version it
 reports (informational, never compared) and the days left on the certificate it presented. A warning line
-follows for each certificate with fewer than 30 days left.`,
+follows for each certificate with fewer than 30 days left. A network home (hosts:
+vms: false) is written "<host> (network home)".`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			st := e.resolver().Status(cmd.Context(), app.ListTimeout)
@@ -144,7 +152,11 @@ func printHosts(out io.Writer, st []app.HostStatus, now time.Time) error {
 		if addr == "" {
 			addr = "-"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", s.Host, addr, reach, api, days, msg)
+		name := s.Host
+		if s.NetworkHome {
+			name += " (network home)"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", name, addr, reach, api, days, msg)
 	}
 	if err := w.Flush(); err != nil {
 		return err

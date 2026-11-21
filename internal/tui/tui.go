@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -172,6 +173,8 @@ type model struct {
 	manager app.Manager
 	// ownListed is whether the own name has a daemon (no local pools).
 	ownListed bool
+	// networkHome is whether a host runs no VMs (hosts: vms: false); nil: none.
+	networkHome func(host string) bool
 	// store is the run's session with the central store (nil: none).
 	store *app.StoreSession
 	// imageDir is the config's resolved image_dir ("" when unset), where
@@ -307,12 +310,21 @@ func (m model) fetchRows() []vmRow {
 			rows = append(rows, vmRow{Host: h.Host, Err: h.Err})
 			continue
 		}
+		// A network home has no VMs: one row says so (it is not an action target).
+		if len(h.VMs) == 0 && m.networkHome != nil && m.networkHome(h.Host) {
+			rows = append(rows, vmRow{Host: h.Host, Err: errNetworkHome})
+			continue
+		}
 		for _, vm := range h.VMs {
 			rows = append(rows, vmRow{VMInfo: vm, Host: h.Host})
 		}
 	}
 	return rows
 }
+
+// errNetworkHome is the row of a host that runs no VMs; the view words it as a
+// note, not an error.
+var errNetworkHome = errors.New("network home: runs no VMs")
 
 type refreshMsg struct {
 	vms        []vmRow
@@ -404,7 +416,7 @@ func (m *model) addLog(title string) int {
 
 func (m model) svc() *app.Service {
 	s := &app.Service{PlaybookDir: m.playbookDir, InventoryPath: m.inventoryPath, HostNames: m.hostNames,
-		IPTimeout: m.ipTimeout, SSHTimeout: m.sshTimeout}
+		NetworkHome: m.networkHome, IPTimeout: m.ipTimeout, SSHTimeout: m.sshTimeout}
 	// create on a remote host uploads the image from this host's pools.
 	// The TUI is a workstation tool: a miss refreshes the pools once. With
 	// the own name listed there are no local pools; with no libvirt either
@@ -1559,6 +1571,10 @@ func (m model) View() string {
 
 		lines := make([]string, 0, m.rowCount())
 		for _, vm := range m.vms {
+			if vm.Err == errNetworkHome {
+				lines = append(lines, fmt.Sprintf("  %-28s %s", vm.Host, vm.Err))
+				continue
+			}
 			if vm.Err != nil {
 				lines = append(lines, fmt.Sprintf("  %-28s ERROR: %s", vm.Host, strings.Join(strings.Fields(vm.Err.Error()), " ")))
 				continue
@@ -1854,6 +1870,7 @@ func newModel(r *hosts.Resolver, tunnel vmtool.Tunnel, ipWait, sshWait time.Dura
 	m := initialModel(nil, host, playbookDir, inventoryPath)
 	m.ownListed = r.OwnListed()
 	m.hostNames = r.AllNames()
+	m.networkHome = r.NetworkHome
 	m.resolve = r.Resolve
 	m.listAll = func(ctx context.Context) []app.HostVMs {
 		return app.ListAll(ctx, m.hostNames, m.resolve, app.ListTimeout)

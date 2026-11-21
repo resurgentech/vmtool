@@ -91,6 +91,9 @@ type Service struct {
 	// hosts.<name>.address), "" for a host it does not know. A host joining a
 	// network asks the kernel which of its own addresses reaches the home's.
 	HostAddr func(host string) string
+	// NetworkHome reports whether a host runs no VMs (config.yml hosts.<name>.vms:
+	// false): CreateVM refuses it. nil means no host is one.
+	NetworkHome func(host string) bool
 }
 
 // WithTunnel returns a shallow copy of s that reaches guests through t. The

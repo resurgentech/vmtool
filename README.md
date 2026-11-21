@@ -244,6 +244,39 @@ an older `vmtool.service` that ran from `/opt/vmtool` (the daemon's name
 before `vmtool-daemon.service`); a `vmtool.service` that runs from anywhere
 else is left alone.
 
+#### A network home (a host that runs no VMs)
+
+A network that spans hosts has a *home*: the host whose libvirt does the
+routing, addresses and names. The home can be a small host or VM that runs no
+VMs of its own (here `vmnet`). Set it up with the VM switch off, then deploy as
+usual:
+
+```bash
+just prereqs vmnet -e '{"vmtool_vm_host":false}'
+just deploy vmnet
+```
+
+With `vmtool_vm_host` false the playbook still installs libvirt, dnsmasq, the
+`vmtool` user and directories, and what `just deploy` builds with (Go, the
+libvirt development files, a C compiler). It leaves out QEMU, the UEFI
+firmware, the storage pools, the NVMe stripe and the `/dev/kvm` check. Naming
+`vmtool_nvme_drives` or `vmtool_extra_pools` with it is an error. The default is
+true, so an existing host is prepared exactly as before.
+
+Then mark the host in the workstation's `config.yml`:
+
+```yaml
+hosts:
+  vmnet: { address: 192.0.2.13, ssh_user: ubuntu, vms: false }
+```
+
+A `vms: false` host is a full daemon host: its inventory report is an empty
+list, and networks and links work on it. `vmtool create` on it is refused
+("host vmnet is a network home (vms: false in config.yml) and runs no VMs"),
+`vmtool hosts` writes `vmnet (network home)`, `vmtool list` shows one
+`vmnet  network home: runs no VMs` row, and the TUI and `GET /v1/hosts`
+(`network_home`) carry the same mark.
+
 ### One daemon per host
 
 Every host in `hosts:` is reached through its daemon. Per host:

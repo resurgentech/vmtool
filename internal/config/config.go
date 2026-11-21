@@ -175,7 +175,14 @@ type Host struct {
 	// DefaultPool is where new VM disks on this host go when a request names
 	// no pool (a plain pool name). Optional.
 	DefaultPool string `yaml:"default_pool"`
+	// VMs is false for a network home: a host that runs no VMs (it routes,
+	// addresses and names for networks that span hosts). Absent means true.
+	VMs *bool `yaml:"vms"`
 }
+
+// HoldsVMs is whether VMs may be created on the host: true unless its entry
+// says vms: false.
+func (h Host) HoldsVMs() bool { return h.VMs == nil || *h.VMs }
 
 // IPWait is how long create waits for an address.
 func (c *Config) IPWait() time.Duration {

@@ -850,6 +850,14 @@ CLI's `vmtool networks` marks vmtool's by asking `getNetwork` for each name.
 - **VMs are not changed by these three.** A VM keeps its own NAT card first;
   cards are the next section.
 
+### A host that runs no VMs (API 2.7.0, same version)
+
+`HostInfo.network_home` (`GET /v1/hosts`) is true for a host whose `config.yml`
+entry says `vms: false` (a network home); it is omitted otherwise. `createVM`
+on such a host is 409 with a plain message, before anything reaches the host.
+No other operation changes: the host is a full daemon host (its inventory
+report is an empty list; networks and links work).
+
 ### VMs on a vmtool network (API 2.7.0, same version)
 
 A VM gets an extra card on a vmtool network, with a fixed address and a name.

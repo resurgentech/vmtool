@@ -51,6 +51,9 @@ type Host struct {
 	Name  string
 	Role  string
 	Local bool
+	// NetworkHome is true for a host whose entry says vms: false: it runs no
+	// VMs.
+	NetworkHome bool
 }
 
 // Resolver maps host names to Managers. It is immutable; WithRemote and
@@ -68,6 +71,8 @@ type Resolver struct {
 	// host and for each remote host: where an empty pool sends a new VM disk.
 	defaultPool string
 	hostPools   map[string]string
+	// homes are the hosts whose hosts: entry says vms: false (network homes).
+	homes map[string]bool
 	// thin is the helper client of a hypervisor's thin pools; nil lists none.
 	thin *vmtool.Thin
 	// builds is the one build-lock table every ThinPools of this resolver (and
@@ -110,6 +115,13 @@ func New(cfg *config.Config, opts ...remote.Option) *Resolver {
 			pools[n] = h.DefaultPool
 		}
 		r = r.WithDefaultPools(cfg.DefaultPool, pools)
+		var homes []string
+		for n, h := range cfg.Hosts {
+			if !h.HoldsVMs() {
+				homes = append(homes, n)
+			}
+		}
+		r = r.WithNetworkHomes(homes...)
 	}
 	return r.WithRemote(func(host, token string) (app.Manager, func(), error) {
 		m, err := remote.New(host, addrs[host], token, opts...)
@@ -153,6 +165,21 @@ func (r *Resolver) WithRemote(rc RemoteConnector) *Resolver {
 	c.remote = rc
 	return &c
 }
+
+// WithNetworkHomes returns a copy of r that knows the named hosts run no VMs
+// (hosts.<name>.vms: false). They are served like any other host; create
+// refuses them (app.Service.NetworkHome) and listings mark them.
+func (r *Resolver) WithNetworkHomes(names ...string) *Resolver {
+	c := *r
+	c.homes = map[string]bool{}
+	for _, n := range names {
+		c.homes[n] = true
+	}
+	return &c
+}
+
+// NetworkHome reports whether host is a network home: a host that runs no VMs.
+func (r *Resolver) NetworkHome(host string) bool { return r.homes[host] }
 
 // WithThin returns a copy of r whose hypervisor-role local Manager also lists
 // the thin pools t reports (see ThinPools). New sets it for a hypervisor;
@@ -272,12 +299,12 @@ func (r *Resolver) ParseVM(s string) (app.VMRef, error) {
 // List is the own name followed by the configured hosts in name order. A
 // listed own name is a hypervisor row, not a local one.
 func (r *Resolver) List() []Host {
-	out := []Host{{Name: r.name, Role: r.role, Local: true}}
+	out := []Host{{Name: r.name, Role: r.role, Local: true, NetworkHome: r.homes[r.name]}}
 	if r.ownListed {
-		out[0] = Host{Name: r.name, Role: config.RoleHypervisor}
+		out[0] = Host{Name: r.name, Role: config.RoleHypervisor, NetworkHome: r.homes[r.name]}
 	}
 	for _, n := range r.configured {
-		out = append(out, Host{Name: n, Role: config.RoleHypervisor})
+		out = append(out, Host{Name: n, Role: config.RoleHypervisor, NetworkHome: r.homes[n]})
 	}
 	return out
 }
@@ -360,6 +387,7 @@ func (r *Resolver) Status(ctx context.Context, timeout time.Duration) []app.Host
 	probed := app.ProbeAll(ctx, names, r.Resolve, timeout)
 	for i := range probed {
 		probed[i].Role = config.RoleHypervisor
+		probed[i].NetworkHome = r.homes[probed[i].Host]
 	}
 	return append(out, probed...)
 }

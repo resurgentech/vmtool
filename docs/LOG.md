@@ -2200,3 +2200,23 @@ are appended, never edited in; a hook refuses rewrites.
   hosts and the playbook test. Green; `just check` green; opt-in
   `VMTOOL_TEST_ANSIBLE_SYNTAX=1 just test ./scripts/` green.
 - Commits: the V5 commit on `clone-identity`.
+
+## 2026-11-21 — V6 The home host (`vmnet`)
+
+- `config.yml` `hosts.<h>.vms: false` (`Host.HoldsVMs`, absent = true); the
+  resolver carries it (`NetworkHome`); such a host is still a daemon host
+  (reporter sends an empty list; networks and links unchanged).
+- Create on a network home is refused in `internal/app` (409, "host H is a
+  network home (vms: false in config.yml) and runs no VMs; create the VM
+  on another host"), wired in CLI, TUI and the REST server.
+- `vmtool hosts` shows `name (network home)`; `vmtool list` and the TUI a
+  "network home: runs no VMs" row; REST `HostInfo.network_home` (optional;
+  API stays 2.7.0).
+- `setup_host.yml`: `vmtool_vm_host` (default true); false skips QEMU,
+  OVMF, the `/dev/kvm` check, pools and the NVMe stripe, and refuses pools
+  or drives given with it; `gcc` (and `libc6-dev` on Debian) added for
+  `just deploy`'s build. README "A network home".
+- Red: playbook structural tests before the playbook change; the create
+  refusal by disabling the check (app, cli, server); some marks have no
+  recorded red. Green; `just check` green; opt-in syntax check green.
+- Commits: the V6 commit on `clone-identity`.

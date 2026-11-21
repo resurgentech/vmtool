@@ -53,6 +53,7 @@ func (s *Server) Handler() http.Handler {
 		svc: &app.Service{
 			PlaybookDir: s.PlaybookDir,
 			HostNames:   r.AllNames(),
+			NetworkHome: r.NetworkHome,
 			// create's waits are the workstation's config.yml (nil: 120s).
 			IPTimeout:  s.Config.IPWait(),
 			SSHTimeout: s.Config.SSHWait(),
@@ -129,6 +130,12 @@ func chain(h *handlers, auth func(http.Handler) http.Handler) http.Handler {
 	}
 	if h.svc == nil {
 		h.svc = &app.Service{PlaybookDir: "ansible/playbooks", HostNames: h.hosts.AllNames()}
+	}
+	// create refuses a network home (hosts: vms: false), whoever built the service.
+	if h.svc.NetworkHome == nil {
+		c := *h.svc
+		c.NetworkHome = h.hosts.NetworkHome
+		h.svc = &c
 	}
 	// tunnelMux serves openVMTunnel itself (it takes over the connection);
 	// every other operation goes to the strict adapter.

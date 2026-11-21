@@ -2468,6 +2468,9 @@ components:
         name: { type: string }
         role: { type: string, enum: [workstation, hypervisor] }
         local: { type: boolean, description: "true for the host this server runs on" }
+        network_home:
+          type: boolean
+          description: "true for a host whose config.yml entry says vms: false (API 2.7.0): a network home, which runs no VMs and refuses createVM with 409; omitted otherwise"
         address:
           type: string
           description: "host:port of the daemon this server probed; \"local\" for the host this server runs on"

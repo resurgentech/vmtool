@@ -12,6 +12,17 @@
 # libvirt dir pool `vmtool` under /var/lib/vmtool/images (instead of a `default`
 # pool), and Go only when none at or above vmtool_go_min is found.
 #
+# A network home runs no VMs (it routes, hands out addresses and names for the
+# networks that span hosts; `hosts.<name>.vms: false` in config.yml). Prepare it
+# with the switch off:
+#
+#   just prereqs vmnet -e '{"vmtool_vm_host":false}'
+#
+# That keeps libvirt, dnsmasq, the vmtool user and the Go, libvirt headers and C
+# compiler `just deploy` builds with, and skips QEMU, OVMF, the storage pools,
+# the NVMe stripe and the /dev/kvm check. Naming pools or drives with it is an
+# error.
+#
 # Optional, for hypervisors with blank NVMe drives (Debian/Ubuntu only):
 #
 #   just prereqs veritech02 -e '{"vmtool_nvme_drives":["/dev/disk/by-id/nvme-A","/dev/disk/by-id/nvme-B"]}'
@@ -111,29 +122,44 @@
     # Set false on a host without hardware virtualization.
     vmtool_require_kvm: true
 
+    # true: the host runs VMs. false: a network home (`vms: false` in
+    # config.yml hosts:). libvirt, dnsmasq, the vmtool user and the build tools
+    # `just deploy` needs stay; QEMU, OVMF, the storage pools and the NVMe
+    # stripe are skipped, and no /dev/kvm is needed.
+    vmtool_vm_host: true
+
     vmtool_packages_debian:
-      - qemu-kvm
-      - qemu-utils
       - libvirt-daemon-system
       - libvirt-clients
       - libvirt-dev          # C headers for the Go bindings
       - pkg-config           # cgo needs it to find libvirt
+      - gcc                  # cgo's C compiler (`just deploy` builds on the host)
+      - libc6-dev            # C library headers for gcc
       - dnsmasq-base         # DHCP/DNS for the default NAT network
       - bridge-utils
       - ansible              # vmtool shells out to ansible-playbook
       - sshpass              # vmtool shells out to sshpass for password SSH
       - openssh-client
+
+    # What only a host that runs VMs needs (vmtool_vm_host true, the default):
+    # QEMU and the UEFI firmware. A network home leaves these out.
+    vmtool_packages_vm_debian:
+      - qemu-kvm
+      - qemu-utils
       - ovmf                 # UEFI firmware for VMs and packer builds
 
     vmtool_packages_arch:
       - libvirt              # daemon and headers are one package on Arch
       - pkgconf
-      - qemu-desktop         # qemu-full only adds non-x86 targets
+      - gcc                  # cgo's C compiler (`just deploy` builds on the host)
       - dnsmasq
       - iptables-nft         # optional dep of libvirt the NAT network needs
       - ansible
       - sshpass
       - openssh
+
+    vmtool_packages_vm_arch:
+      - qemu-desktop         # qemu-full only adds non-x86 targets
       - edk2-ovmf            # UEFI firmware for VMs and packer builds
 
     vmtool_packages_go_arch: [go]
@@ -203,8 +229,21 @@
           /dev/kvm is missing. Enable VT-x/AMD-V in firmware, or re-run with
           -e vmtool_require_kvm=false to continue without it.
       when:
+        - vmtool_vm_host | bool
         - vmtool_require_kvm | bool
         - not vmtool_kvm.stat.exists
+
+    # A network home has no pools and no stripe; naming some is a mistake to
+    # report, not to skip in silence.
+    - name: Refuse pools or NVMe drives on a host that runs no VMs
+      ansible.builtin.fail:
+        msg: >-
+          vmtool_vm_host is false (a network home runs no VMs), so it has no
+          storage pools and no NVMe stripe; drop vmtool_nvme_drives and
+          vmtool_extra_pools, or set vmtool_vm_host to true.
+      when:
+        - not (vmtool_vm_host | bool)
+        - (vmtool_nvme_drives | length > 0) or (vmtool_extra_pools | length > 0)
 
     - name: Require a non-root vmtool user
       ansible.builtin.fail:
@@ -215,10 +254,12 @@
 
     - name: Build the package list
       ansible.builtin.set_fact:
-        vmtool_packages: "{{ _base + _go + _packer }}"
+        vmtool_packages: "{{ _base + _vm + _go + _packer }}"
       vars:
         _debian: "{{ vmtool_family == 'debian' }}"
         _base: "{{ _debian | ternary(vmtool_packages_debian, vmtool_packages_arch) }}"
+        _vm: "{{ (vmtool_vm_host | bool)
+                 | ternary(_debian | ternary(vmtool_packages_vm_debian, vmtool_packages_vm_arch), []) }}"
         _go: "{{ ((vmtool_install_go | bool) and not _debian) | ternary(vmtool_packages_go_arch, []) }}"
         _packer: "{{ (vmtool_install_packer_deps | bool)
                      | ternary(_debian | ternary(vmtool_packages_packer_debian,
@@ -565,6 +606,7 @@
     # any other pool. Its XML names the vmtool uid/gid so pool-build/pool-start
     # keep that ownership.
     - name: Ensure the storage pools
+      when: vmtool_vm_host | bool
       ansible.builtin.include_tasks: tasks/libvirt_pool.yml
       vars:
         _pw: "{{ (ansible_facts.getent_passwd | default({}))[vmtool_hv_user] | default(['', '', '', '']) }}"
@@ -586,7 +628,9 @@
     # See tasks/nvme_stripe.yml.
     - name: Build the NVMe stripe and its logical pool
       ansible.builtin.include_tasks: tasks/nvme_stripe.yml
-      when: vmtool_nvme_drives | length > 0
+      when:
+        - vmtool_vm_host | bool
+        - vmtool_nvme_drives | length > 0
 
     # ----------------------------------------------------------------- summary
 

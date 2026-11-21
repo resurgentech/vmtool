@@ -53,8 +53,8 @@ func TestListAndNames(t *testing.T) {
 	cfg := &config.Config{Name: "ws", Role: config.RoleWorkstation, Hosts: map[string]config.Host{"zeta": {}, "alpha": {}}}
 	r := New(cfg)
 	got := r.List()
-	if len(got) != 3 || got[0] != (Host{"ws", config.RoleWorkstation, true}) ||
-		got[1] != (Host{"alpha", config.RoleHypervisor, false}) || got[2].Name != "zeta" {
+	if len(got) != 3 || got[0] != (Host{Name: "ws", Role: config.RoleWorkstation, Local: true}) ||
+		got[1] != (Host{Name: "alpha", Role: config.RoleHypervisor}) || got[2].Name != "zeta" {
 		t.Fatalf("List() = %+v", got)
 	}
 	if n := r.Names(); len(n) != 3 || n[0] != "ws" {

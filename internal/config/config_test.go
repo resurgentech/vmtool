@@ -431,7 +431,7 @@ func TestSetHostRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := after.Hosts["PLACEHOLDER-HOST"]; got != (Host{"10.0.0.9", "ops", 9474, "nvme2"}) {
+	if got := after.Hosts["PLACEHOLDER-HOST"]; got != (Host{Address: "10.0.0.9", SSHUser: "ops", Port: 9474, DefaultPool: "nvme2"}) {
 		t.Fatalf("new entry %+v", got)
 	}
 	if after.Hosts["hv1"] != before.Hosts["hv1"] {
@@ -457,7 +457,7 @@ func TestSetHostRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	after, _ = Load(dir)
-	if got := after.Hosts["hv1"]; got != (Host{"b.example", "x", DefaultPort, ""}) || len(after.Hosts) != 2 {
+	if got := after.Hosts["hv1"]; got != (Host{Address: "b.example", SSHUser: "x", Port: DefaultPort}) || len(after.Hosts) != 2 {
 		t.Fatalf("replaced %+v (%d hosts)", got, len(after.Hosts))
 	}
 }
@@ -489,5 +489,21 @@ func TestSetHostOnMissingFileAndInvalid(t *testing.T) {
 	after, _ := os.ReadFile(filepath.Join(dir, "config.yml"))
 	if string(before) != string(after) {
 		t.Fatal("file changed by rejected set-host")
+	}
+}
+
+// V6: hosts.<h>.vms: false marks a network home, a host that runs no VMs.
+func TestHostVMsSwitch(t *testing.T) {
+	setHost(t, "jetfire")
+	dir := t.TempDir()
+	writeFile(t, dir, "config.yml", "hosts:\n  hv1: { address: a, ssh_user: u }\n  home1: { address: b, ssh_user: u, vms: false }\n  hv2: { address: c, ssh_user: u, vms: true }\n")
+	c, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]bool{"hv1": true, "home1": false, "hv2": true} {
+		if got := c.Hosts[name].HoldsVMs(); got != want {
+			t.Errorf("%s HoldsVMs = %v, want %v", name, got, want)
+		}
 	}
 }

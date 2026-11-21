@@ -370,8 +370,9 @@ func (e *env) service(inventory string) *app.Service {
 		Images:        app.LocalImages{Dir: e.imageDir(), Pools: e.localImages},
 		Store:         e.session(),
 		// Networks that span hosts reach a network's home and its other members.
-		OpenHost: e.resolver().Resolve,
-		HostAddr: e.hostAddr,
+		OpenHost:    e.resolver().Resolve,
+		HostAddr:    e.hostAddr,
+		NetworkHome: e.resolver().NetworkHome,
 		// create's waits come from the workstation's config.yml (nil: 120s).
 		IPTimeout:  e.cfg.IPWait(),
 		SSHTimeout: e.cfg.SSHWait(),
