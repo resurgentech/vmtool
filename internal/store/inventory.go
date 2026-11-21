@@ -302,7 +302,7 @@ func RunSweep(ctx context.Context, d SweepDeps) (db.SweepCounts, error) {
 		d.Log.Error("inventory sweep failed", "op", "sweep", "class", "sweep")
 		return n, err
 	}
-	d.Log.Info("inventory sweep done", "op", "sweep", "rows", n.Rows, "credentials", n.Credentials, "orphan_notes", n.Notes)
+	d.Log.Info("inventory sweep done", "op", "sweep", "rows", n.Rows, "credentials", n.Credentials, "orphan_notes", n.Notes, "orphaned_reservations", n.Orphaned)
 	return n, nil
 }
 

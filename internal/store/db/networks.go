@@ -319,6 +319,64 @@ type NetworkReservation struct {
 	Host    string
 	VM      string
 	Created time.Time
+	// UUID is the VM's libvirt UUID, empty when not known.
+	UUID string
+	// OrphanedAt is when the record was marked orphaned; zero when it is not.
+	OrphanedAt time.Time
+}
+
+const resCols = `mac, ip, host, vm, created, uuid, orphaned_at`
+
+// scanReservation reads resCols of one row of network.
+func scanReservation(network string, sc interface{ Scan(...any) error }) (NetworkReservation, error) {
+	r := NetworkReservation{Network: network}
+	var created string
+	var orphaned sql.NullString
+	if err := sc.Scan(&r.MAC, &r.IP, &r.Host, &r.VM, &created, &r.UUID, &orphaned); err != nil {
+		return NetworkReservation{}, err
+	}
+	r.Created = parseTime(created)
+	if orphaned.Valid {
+		r.OrphanedAt = parseTime(orphaned.String)
+	}
+	return r, nil
+}
+
+// MarkReservationOrphaned sets orphaned_at to now on the record of mac; a
+// record already marked keeps its first time. ErrNotFound if there is no such
+// record. The caller knows a positive fact (it could not remove the
+// reservation on the home); the store reaches no host.
+func (d *DB) MarkReservationOrphaned(ctx context.Context, network, mac string) (NetworkReservation, error) {
+	if err := affected(d.sql.ExecContext(ctx,
+		`UPDATE network_reservations SET orphaned_at=COALESCE(orphaned_at, ?) WHERE network=? AND mac=?`,
+		d.stamp(), network, mac)); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return NetworkReservation{}, ErrNotFound
+		}
+		return NetworkReservation{}, fmt.Errorf("mark reservation orphaned: %w", err)
+	}
+	r, err := scanReservation(network, d.sql.QueryRowContext(ctx,
+		`SELECT `+resCols+` FROM network_reservations WHERE network=? AND mac=?`, network, mac))
+	if err != nil {
+		return NetworkReservation{}, fmt.Errorf("mark reservation orphaned: %w", err)
+	}
+	return r, nil
+}
+
+// OrphanedReservations lists a network's records that are marked orphaned, in
+// address order, or ErrNotFound if there is no such network.
+func (d *DB) OrphanedReservations(ctx context.Context, network string) ([]NetworkReservation, error) {
+	all, err := d.NetworkReservations(ctx, network)
+	if err != nil {
+		return nil, err
+	}
+	out := []NetworkReservation{}
+	for _, r := range all {
+		if !r.OrphanedAt.IsZero() {
+			out = append(out, r)
+		}
+	}
+	return out, nil
 }
 
 // PutNetworkReservation records r (idempotent per MAC: the same MAC takes the
@@ -345,20 +403,22 @@ func (d *DB) PutNetworkReservation(ctx context.Context, r NetworkReservation) (N
 		return NetworkReservation{}, ErrAddressTaken
 	}
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO network_reservations(network, mac, ip, host, vm, created) VALUES (?, ?, ?, ?, ?, ?)
-		 ON CONFLICT(network, mac) DO UPDATE SET ip=excluded.ip, host=excluded.host, vm=excluded.vm`,
-		r.Network, r.MAC, r.IP, r.Host, r.VM, d.stamp()); err != nil {
+		`INSERT INTO network_reservations(network, mac, ip, host, vm, created, uuid) VALUES (?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(network, mac) DO UPDATE SET ip=excluded.ip, host=excluded.host, vm=excluded.vm,
+		   uuid=CASE WHEN excluded.uuid<>'' THEN excluded.uuid ELSE network_reservations.uuid END,
+		   orphaned_at=NULL`,
+		r.Network, r.MAC, r.IP, r.Host, r.VM, d.stamp(), r.UUID); err != nil {
 		return NetworkReservation{}, fmt.Errorf("put network reservation: %w", err)
 	}
-	var created string
-	if err := tx.QueryRowContext(ctx, `SELECT created FROM network_reservations WHERE network=? AND mac=?`, r.Network, r.MAC).Scan(&created); err != nil {
+	got, err := scanReservation(r.Network, tx.QueryRowContext(ctx,
+		`SELECT `+resCols+` FROM network_reservations WHERE network=? AND mac=?`, r.Network, r.MAC))
+	if err != nil {
 		return NetworkReservation{}, fmt.Errorf("put network reservation: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return NetworkReservation{}, fmt.Errorf("put network reservation: %w", err)
 	}
-	r.Created = parseTime(created)
-	return r, nil
+	return got, nil
 }
 
 // NetworkReservations lists a network's recorded reservations in address
@@ -371,19 +431,17 @@ func (d *DB) NetworkReservations(ctx context.Context, network string) ([]Network
 	if n == 0 {
 		return nil, ErrNotFound
 	}
-	rows, err := d.sql.QueryContext(ctx, `SELECT mac, ip, host, vm, created FROM network_reservations WHERE network=?`, network)
+	rows, err := d.sql.QueryContext(ctx, `SELECT `+resCols+` FROM network_reservations WHERE network=?`, network)
 	if err != nil {
 		return nil, fmt.Errorf("network reservations: %w", err)
 	}
 	defer rows.Close()
 	out := []NetworkReservation{}
 	for rows.Next() {
-		r := NetworkReservation{Network: network}
-		var created string
-		if err := rows.Scan(&r.MAC, &r.IP, &r.Host, &r.VM, &created); err != nil {
+		r, err := scanReservation(network, rows)
+		if err != nil {
 			return nil, fmt.Errorf("network reservations: %w", err)
 		}
-		r.Created = parseTime(created)
 		out = append(out, r)
 	}
 	if err := rows.Err(); err != nil {

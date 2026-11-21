@@ -606,6 +606,77 @@ func (s *Service) Underlay(_ context.Context, m Manager, to string) (*vmtool.Und
 	return u, nil
 }
 
+// NetworkShow is a network as `net show` shows it, with its orphaned
+// reservations that were not removed.
+type NetworkShow struct {
+	Info    *vmtool.NetworkInfo
+	Orphans []storeclient.NetworkReservation
+}
+
+// ShowNetwork describes the network as the host has it (Network) and, in
+// store mode, first removes the network's orphaned reservations when the home
+// answers (removeOrphans); the orphans it could not remove are listed. A home
+// that does not answer changes nothing and is not an error of a show.
+func (s *Service) ShowNetwork(ctx context.Context, host string, m Manager, name string) (*NetworkShow, error) {
+	n, err := s.Network(ctx, m, name)
+	if err != nil {
+		return nil, err
+	}
+	out := &NetworkShow{Info: n}
+	if !n.Vmtool {
+		return out, nil
+	}
+	if cs, _, serr := s.openSite(ctx, "net show", m, host, name); serr == nil {
+		out.Orphans, _ = s.removeOrphans(ctx, cs, name)
+		cs.close()
+	} else if reg := s.Store.registryClient(ctx); reg != nil {
+		// The home does not answer (or the network has none to ask): nothing
+		// is removed, and the store's marked reservations are listed.
+		cctx, cancel := s.credCtx(ctx)
+		defer cancel()
+		if rs, lerr := reg.OrphanedNetworkReservations(cctx, name); lerr == nil {
+			out.Orphans = rs
+		}
+	}
+	return out, nil
+}
+
+// removeOrphans removes the orphaned reservations of network (the ones the
+// store has marked) on the reservation host cs.resv, which is the home, and
+// then their records in the store, saying one line for each. It is the whole
+// cleanup: there is no timer, so each command that makes, lists, removes or
+// shows a reservation on the network calls it first. Without a store, or a
+// store that does not list the network, it does nothing; a home that fails to
+// remove one stops it with that reservation and the rest left as they are.
+// It returns the orphans not removed and how many it removed on the home.
+func (s *Service) removeOrphans(ctx context.Context, cs *cardSite, network string) (left []storeclient.NetworkReservation, removed int) {
+	if cs == nil || cs.reg == nil {
+		return nil, 0
+	}
+	cctx, cancel := s.credCtx(ctx)
+	orphans, err := cs.reg.OrphanedNetworkReservations(cctx, network)
+	cancel()
+	if err != nil {
+		return nil, 0
+	}
+	say := s.noter(nil)
+	for i, o := range orphans {
+		if err := cs.resv.RemoveReservation(network, o.Mac); err != nil && !vmtool.IsNotFound(err) {
+			return orphans[i:], removed
+		}
+		removed++
+		fctx, cancel := s.credCtx(ctx)
+		err := cs.reg.DeleteNetworkReservation(fctx, network, o.Mac)
+		cancel()
+		if err != nil && !errors.Is(err, storeclient.ErrNotFound) {
+			say(fmt.Sprintf("the orphaned reservation of %s (%s) for %s on network %q was removed on its home but the registry at %s could not forget it: %v", o.Ip, o.Mac, o.Vm, network, s.Store.Host(), err))
+			continue
+		}
+		say(fmt.Sprintf("removed the orphaned reservation of %s (%s) for %s of %s on network %q", o.Ip, o.Mac, o.Vm, o.Host, network))
+	}
+	return nil, removed
+}
+
 // DeleteNetworkResult is what a delete did.
 type DeleteNetworkResult struct {
 	Network string

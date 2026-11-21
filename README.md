@@ -1450,7 +1450,14 @@ records whether a host is up.
   address. `net attach`, `net detach`, `create --network` and `delete` for a VM
   on a member need the home (and the store, to find it); they stop with a
   message rather than guess. `vmtool delete` still deletes the VM, and the
-  error names the reservation left on the home.
+  error names the reservation left on the home, and the registry marks it
+  orphaned. The next `net attach`, `net detach`, `create --network`, `delete`
+  or `net show` on that network, with the home answering, removes the orphaned
+  reservations on the home and then their records, one line each; with the
+  home silent it changes nothing (`net show` lists them). The registry also
+  marks the reservations of a VM whose gone inventory row the 7-day sweep
+  removes (a reservation records its VM's UUID); a host that is only silent
+  marks nothing, and a VM with no row yet is never orphaned.
 - **A member is asleep.** `net join` and `net leave` only need the host being
   changed (and, on the first join, the home). Every other member that answers
   gets the new peer list; one that does not is skipped with a line and

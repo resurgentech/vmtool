@@ -393,9 +393,17 @@ func (s *Service) CreateVM(ctx context.Context, m Manager, in CreateVMInput) (*v
 	// takes back the cards already made (and their reservations) and leaves the
 	// VM defined, not started.
 	var cards []vmtool.NetAttachment
+	// The reservations carry the VM's UUID (store mode), which the host gave the
+	// domain at Define.
+	cardUUID := ""
+	if len(in.Networks) > 0 && s.storeMode(ctx) {
+		if info, ierr := m.Info(cfg.Name); ierr == nil && info != nil {
+			cardUUID = info.UUID
+		}
+	}
 	for _, r := range in.Networks {
 		emit(in, "network", "start", "attaching a card on network "+r.Network, "")
-		att, err := s.attachCard(ctx, sites[r.Network], cfg.Name, r.Network, r.IP)
+		att, err := s.attachCard(ctx, sites[r.Network], cfg.Name, cardUUID, r.Network, r.IP)
 		if err != nil {
 			for i := len(cards) - 1; i >= 0; i-- {
 				if uerr := s.detachCard(ctx, sites[cards[i].Network], cfg.Name, cards[i].Network, cards[i].MAC); uerr != nil {

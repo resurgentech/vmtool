@@ -26,7 +26,78 @@ func normMAC(s string) (string, bool) {
 }
 
 func resToAPI(r db.NetworkReservation) storeapi.NetworkReservation {
-	return storeapi.NetworkReservation{Network: r.Network, Mac: r.MAC, Ip: r.IP, Host: r.Host, Vm: r.VM, Created: r.Created}
+	out := storeapi.NetworkReservation{Network: r.Network, Mac: r.MAC, Ip: r.IP, Host: r.Host, Vm: r.VM, Created: r.Created}
+	if r.UUID != "" {
+		u := r.UUID
+		out.Uuid = &u
+	}
+	if !r.OrphanedAt.IsZero() {
+		t := r.OrphanedAt
+		out.OrphanedAt = &t
+	}
+	return out
+}
+
+// validUUID reports whether s is a libvirt UUID (canonical lowercase form).
+func validUUID(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	for i, c := range s {
+		switch {
+		case i == 8 || i == 13 || i == 18 || i == 23:
+			if c != '-' {
+				return false
+			}
+		case !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f'):
+			return false
+		}
+	}
+	return true
+}
+
+func (h *handlers) ListOrphanedNetworkReservations(ctx context.Context, req storeapi.ListOrphanedNetworkReservationsRequestObject) (storeapi.ListOrphanedNetworkReservationsResponseObject, error) {
+	if !validMachineName(req.Name) {
+		return storeapi.ListOrphanedNetworkReservations400JSONResponse{BadRequestJSONResponse: fieldErr("name")}, nil
+	}
+	if !h.img.dbReady() {
+		return storeapi.ListOrphanedNetworkReservations500JSONResponse{InternalErrorJSONResponse: internalErr}, nil
+	}
+	rs, err := h.img.db.OrphanedReservations(ctx, req.Name)
+	switch {
+	case errors.Is(err, db.ErrNotFound):
+		return storeapi.ListOrphanedNetworkReservations404JSONResponse{NotFoundJSONResponse: notFound}, nil
+	case err != nil:
+		h.img.fail("list orphaned network reservations", err)
+		return storeapi.ListOrphanedNetworkReservations500JSONResponse{InternalErrorJSONResponse: internalErr}, nil
+	}
+	out := storeapi.NetworkReservationList{Reservations: make([]storeapi.NetworkReservation, 0, len(rs))}
+	for _, r := range rs {
+		out.Reservations = append(out.Reservations, resToAPI(r))
+	}
+	return storeapi.ListOrphanedNetworkReservations200JSONResponse(out), nil
+}
+
+func (h *handlers) MarkNetworkReservationOrphaned(ctx context.Context, req storeapi.MarkNetworkReservationOrphanedRequestObject) (storeapi.MarkNetworkReservationOrphanedResponseObject, error) {
+	if !validMachineName(req.Name) {
+		return storeapi.MarkNetworkReservationOrphaned400JSONResponse{BadRequestJSONResponse: fieldErr("name")}, nil
+	}
+	mac, ok := normMAC(req.Mac)
+	if !ok {
+		return storeapi.MarkNetworkReservationOrphaned400JSONResponse{BadRequestJSONResponse: fieldErr("mac")}, nil
+	}
+	if !h.img.dbReady() {
+		return storeapi.MarkNetworkReservationOrphaned500JSONResponse{InternalErrorJSONResponse: internalErr}, nil
+	}
+	r, err := h.img.db.MarkReservationOrphaned(ctx, req.Name, mac)
+	switch {
+	case errors.Is(err, db.ErrNotFound):
+		return storeapi.MarkNetworkReservationOrphaned404JSONResponse{NotFoundJSONResponse: notFound}, nil
+	case err != nil:
+		h.img.fail("mark network reservation orphaned", err)
+		return storeapi.MarkNetworkReservationOrphaned500JSONResponse{InternalErrorJSONResponse: internalErr}, nil
+	}
+	return storeapi.MarkNetworkReservationOrphaned200JSONResponse(resToAPI(r)), nil
 }
 
 func (h *handlers) ListNetworkReservations(ctx context.Context, req storeapi.ListNetworkReservationsRequestObject) (storeapi.ListNetworkReservationsResponseObject, error) {
@@ -74,10 +145,16 @@ func (h *handlers) PutNetworkReservation(ctx context.Context, req storeapi.PutNe
 		return bad("host")
 	case !validMachineName(b.Vm):
 		return bad("vm")
+	case b.Uuid != nil && *b.Uuid != "" && !validUUID(*b.Uuid):
+		return bad("uuid")
 	case !h.img.dbReady():
 		return storeapi.PutNetworkReservation500JSONResponse{InternalErrorJSONResponse: internalErr}, nil
 	}
-	r, err := h.img.db.PutNetworkReservation(ctx, db.NetworkReservation{Network: req.Name, MAC: mac, IP: ip, Host: b.Host, VM: b.Vm})
+	uuid := ""
+	if b.Uuid != nil {
+		uuid = *b.Uuid
+	}
+	r, err := h.img.db.PutNetworkReservation(ctx, db.NetworkReservation{Network: req.Name, MAC: mac, IP: ip, Host: b.Host, VM: b.Vm, UUID: uuid})
 	switch {
 	case errors.Is(err, db.ErrNotFound):
 		return storeapi.PutNetworkReservation404JSONResponse{NotFoundJSONResponse: notFound}, nil

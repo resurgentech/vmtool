@@ -27,7 +27,8 @@ type cardMgr struct {
 	failNth int
 	count   map[string]int
 	macSeq  int
-	missing bool // Info answers not found
+	missing bool   // Info answers not found
+	uuid    string // the UUID Info answers for any VM ("" when not set)
 }
 
 func newCardMgr() *cardMgr {
@@ -134,7 +135,7 @@ func (m *cardMgr) Info(name string) (*vmtool.VMInfo, error) {
 	if m.missing {
 		return nil, fmt.Errorf("looking up domain %q: %w", name, vmtool.ErrNotFound)
 	}
-	vi := &vmtool.VMInfo{Name: name, State: vmtool.StateRunning, IP: "192.0.2.12"}
+	vi := &vmtool.VMInfo{Name: name, State: vmtool.StateRunning, IP: "192.0.2.12", UUID: m.uuid}
 	vi.Networks = append(vi.Networks, m.cards...)
 	for i := range vi.Networks {
 		vi.Networks[i].IP = m.ip(vi.Networks[i].Network, vi.Networks[i].MAC)

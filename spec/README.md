@@ -452,6 +452,24 @@ bump costs nothing if it was).
   reservations recorded, a network that is not (made without a store) has none.
   Deleting a network deletes its records. Version stays 1.2.0 (deployed
   nowhere).
+  **Orphans** (migration 8: `uuid`, `orphaned_at`). `putNetworkReservation`
+  takes an optional `uuid` (the VM's libvirt UUID; a put without one keeps the
+  recorded one, and a put clears `orphaned_at`); records and lists carry `uuid`
+  and `orphaned_at` when set. User-token routes `listOrphanedNetworkReservations`
+  (`GET …/reservations/orphaned`, address order, `404` for an unknown network)
+  and `markNetworkReservationOrphaned` (`POST …/reservations/{mac}/orphan`, no
+  body, no content type needed; keeps the first time; `404` when none). A
+  reservation is orphaned only on a positive fact the store holds: a client
+  marks it (its `delete` or a failed undo could not remove it on the home), or
+  the inventory sweep marks every reservation of the UUID of the gone row it
+  removes after 7 days (`orphaned_reservations` in the sweep's log line). A
+  record with no UUID (made before migration 8 with no live row of the same
+  host and name) is never orphaned by the sweep; a host's silence marks
+  nothing. The store removes nothing and reaches no host: a client that
+  reaches the home removes the orphans on the home, then deletes their
+  records, whenever it makes, lists, removes or shows a reservation on the
+  network (`net attach`, `net detach`, `create --network`, `delete`, `net
+  show`); a silent home changes nothing. Host tokens have neither route.
 - **Store mode and local mode.** `vmtool net create HOST NAME` in store mode
   has the registry allocate the VNI and subnet (home = HOST) and then has the
   host define the network on bridge `vmt-<VNI>`; if the host refuses, the

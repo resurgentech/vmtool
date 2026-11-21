@@ -161,6 +161,34 @@ func (c *Client) NetworkReservations(ctx context.Context, network string) ([]Net
 	return r.JSON200.Reservations, nil
 }
 
+// OrphanedNetworkReservations lists a network's reservations marked orphaned
+// (GET /v1/networks/{name}/reservations/orphaned); ErrNotFound when the network
+// is not registered.
+func (c *Client) OrphanedNetworkReservations(ctx context.Context, network string) ([]NetworkReservation, error) {
+	r, err := c.api.ListOrphanedNetworkReservationsWithResponse(ctx, network)
+	if err != nil {
+		return nil, transportErr("list orphaned network reservations", err)
+	}
+	if r.StatusCode() != http.StatusOK || r.JSON200 == nil {
+		return nil, registryErr("list orphaned network reservations", r.StatusCode())
+	}
+	return r.JSON200.Reservations, nil
+}
+
+// MarkNetworkReservationOrphaned marks a recorded reservation orphaned
+// (POST /v1/networks/{name}/reservations/{mac}/orphan); ErrNotFound when there
+// is none.
+func (c *Client) MarkNetworkReservationOrphaned(ctx context.Context, network, mac string) error {
+	r, err := c.api.MarkNetworkReservationOrphanedWithResponse(ctx, network, mac)
+	if err != nil {
+		return transportErr("mark network reservation orphaned", err)
+	}
+	if r.StatusCode() != http.StatusOK {
+		return registryErr("mark network reservation orphaned", r.StatusCode())
+	}
+	return nil
+}
+
 // DeleteNetworkReservation removes a recorded reservation
 // (DELETE /v1/networks/{name}/reservations/{mac}); ErrNotFound when there is none.
 func (c *Client) DeleteNetworkReservation(ctx context.Context, network, mac string) error {

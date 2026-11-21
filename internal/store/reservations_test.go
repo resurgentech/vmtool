@@ -138,9 +138,86 @@ func TestNetworkReservationsRefuseAHostToken(t *testing.T) {
 		{"GET", "/v1/networks/net1/reservations"},
 		{"PUT", "/v1/networks/net1/reservations/52:54:00:00:00:01"},
 		{"DELETE", "/v1/networks/net1/reservations/52:54:00:00:00:01"},
+		{"GET", "/v1/networks/net1/reservations/orphaned"},
+		{"POST", "/v1/networks/net1/reservations/52:54:00:00:00:01/orphan"},
 	} {
 		if code, _ := e.call(t, r[0], r[1], tokH, `{"ip":"10.77.0.109","host":"hv1","vm":"web1"}`); code != 401 {
 			t.Errorf("%s %s with a host token = %d, want 401", r[0], r[1], code)
 		}
+	}
+}
+
+// G3: a record carries the VM's UUID; a user token marks one orphaned and lists
+// a network's orphans; nothing is orphaned by listing.
+func TestOrphanedReservationRoutes(t *testing.T) {
+	e := newInvEnv(t)
+	e.newNet(t, `{"name":"net1","home":"home1"}`)
+	const u1 = "00000000-0000-4000-8000-000000000001"
+	put := func(mac, ip, vm, extra string) (int, string) {
+		return e.call(t, "PUT", "/v1/networks/net1/reservations/"+mac, tokA, `{"ip":"`+ip+`","host":"hv1","vm":"`+vm+`"`+extra+`}`)
+	}
+	if code, raw := put("52:54:00:00:00:01", "10.77.0.100", "web1", `,"uuid":"`+u1+`"`); code != 200 || !strings.Contains(raw, `"uuid":"`+u1+`"`) || strings.Contains(raw, "orphaned_at") {
+		t.Fatalf("put = %d %s", code, raw)
+	}
+	if code, _ := put("52:54:00:00:00:02", "10.77.0.101", "web2", ``); code != 200 {
+		t.Fatalf("put 2 = %d", code)
+	}
+	orphans := func() []storeapi.NetworkReservation {
+		t.Helper()
+		code, raw := e.call(t, "GET", "/v1/networks/net1/reservations/orphaned", tokA, "")
+		if code != 200 {
+			t.Fatalf("list orphans = %d %s", code, raw)
+		}
+		var l storeapi.NetworkReservationList
+		if err := json.Unmarshal([]byte(raw), &l); err != nil {
+			t.Fatal(err)
+		}
+		if l.Reservations == nil {
+			t.Fatalf("orphans = null, want an empty list: %s", raw)
+		}
+		return l.Reservations
+	}
+	if got := orphans(); len(got) != 0 {
+		t.Fatalf("orphans before any mark: %+v", got)
+	}
+	code, raw := e.call(t, "POST", "/v1/networks/net1/reservations/52:54:00:00:00:01/orphan", tokA, "")
+	if code != 200 || !strings.Contains(raw, `"orphaned_at"`) {
+		t.Fatalf("mark = %d %s", code, raw)
+	}
+	got := orphans()
+	if len(got) != 1 || got[0].Mac != "52:54:00:00:00:01" || got[0].OrphanedAt == nil || got[0].Uuid == nil || *got[0].Uuid != u1 {
+		t.Fatalf("orphans = %+v", got)
+	}
+	if all := e.reservations(t, "net1"); len(all) != 2 {
+		t.Errorf("the full list = %+v, want both records", all)
+	}
+	if code, _ := e.call(t, "POST", "/v1/networks/net1/reservations/52:54:00:00:00:09/orphan", tokA, ""); code != 404 {
+		t.Errorf("mark of a missing record = %d, want 404", code)
+	}
+	if code, _ := e.call(t, "POST", "/v1/networks/net1/reservations/garbage/orphan", tokA, ""); code != 400 {
+		t.Errorf("mark with a bad MAC = %d, want 400", code)
+	}
+	if code, _ := e.call(t, "GET", "/v1/networks/nonet/reservations/orphaned", tokA, ""); code != 404 {
+		t.Errorf("orphans of an unknown network = %d, want 404", code)
+	}
+	if code, _ := e.call(t, "POST", "/v1/networks/nonet/reservations/52:54:00:00:00:01/orphan", tokA, ""); code != 404 {
+		t.Errorf("mark on an unknown network = %d, want 404", code)
+	}
+	e.noSecretsInLogs(t)
+}
+
+// A host token can neither mark nor list orphans, with a real token of a real host.
+func TestHostTokenCannotMarkOrListOrphans(t *testing.T) {
+	ts, logs := hostServer(t)
+	for _, r := range [][2]string{
+		{"GET", "/v1/networks/PLACEHOLDER-name/reservations/orphaned"},
+		{"POST", "/v1/networks/PLACEHOLDER-name/reservations/52:54:00:00:00:01/orphan"},
+	} {
+		if resp, body := do(t, r[0], ts.URL+r[1], "Bearer "+tokH, ""); resp.StatusCode != 401 || strings.Contains(body, tokH) {
+			t.Errorf("%s %s with a host token = %d, want 401", r[0], r[1], resp.StatusCode)
+		}
+	}
+	if strings.Contains(logs.String(), tokH) {
+		t.Errorf("log carries the host token")
 	}
 }

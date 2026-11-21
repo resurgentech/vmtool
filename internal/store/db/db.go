@@ -188,6 +188,17 @@ var migrations = []string{
 		PRIMARY KEY (network, mac),
 		UNIQUE (network, ip)
 	);`,
+	// 8: a reservation carries its VM's UUID, and may be marked orphaned
+	// (orphaned_at): a client marked it, or the inventory sweep removed its
+	// VM's gone row. An existing record takes the UUID of the live inventory
+	// row of the same (host, name), else has none and is never orphaned by the
+	// sweep.
+	`ALTER TABLE network_reservations ADD COLUMN uuid TEXT NOT NULL DEFAULT '';
+	ALTER TABLE network_reservations ADD COLUMN orphaned_at TEXT;
+	UPDATE network_reservations SET uuid = COALESCE(
+		(SELECT v.uuid FROM vms v
+		  WHERE v.host = network_reservations.host AND v.name = network_reservations.vm AND v.gone_since IS NULL
+		  ORDER BY v.first_seen DESC, v.uuid LIMIT 1), '');`,
 }
 
 // DB is an open store database. It is safe for concurrent use.

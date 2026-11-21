@@ -202,14 +202,27 @@ func netShowCmd(e *env) *cobra.Command {
 		Args:  cobra.ExactArgs(2),
 	}
 	cmd.RunE = withNetHost(e, func(m app.Manager, cmd *cobra.Command, args []string) error {
-		n, err := e.service("").Network(cmd.Context(), m, args[1])
+		show, err := e.service("").ShowNetwork(cmd.Context(), args[0], m, args[1])
 		if err != nil {
 			return err
 		}
-		writeNetwork(cmd.OutOrStdout(), n)
+		writeNetworkShow(cmd.OutOrStdout(), show)
 		return nil
 	})
 	return cmd
+}
+
+// writeNetworkShow is writeNetwork and, after it, the network's orphaned
+// reservations that were not removed (the home did not answer).
+func writeNetworkShow(w io.Writer, s *app.NetworkShow) {
+	writeNetwork(w, s.Info)
+	for i, o := range s.Orphans {
+		label := ""
+		if i == 0 {
+			label = "orphaned:"
+		}
+		fmt.Fprintf(w, "%-9s %s %s %s (%s)\n", label, o.Ip, o.Mac, o.Vm, o.Host)
+	}
 }
 
 // withNetHost resolves args[0] as a host this vmtool serves, then runs fn on

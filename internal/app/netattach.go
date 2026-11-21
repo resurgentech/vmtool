@@ -132,6 +132,13 @@ func (s *Service) checkNetwork(ctx context.Context, op string, m Manager, host, 
 	if err != nil {
 		return nil, err
 	}
+	// Orphaned reservations go first (the home answered, or openSite refused),
+	// so their addresses are free for the check below.
+	if _, removed := s.removeOrphans(ctx, cs, r.Network); removed > 0 {
+		if hn, herr := cs.resv.Network(r.Network); herr == nil && hn != nil {
+			n = hn
+		}
+	}
 	if _, err := vmtool.PlanReservation(*n, vm, placeholderMAC, r.IP, nil); err != nil {
 		cs.close()
 		return nil, netErr(op, err)
@@ -143,15 +150,38 @@ func (s *Service) checkNetwork(ctx context.Context, op string, m Manager, host, 
 // address, host, VM). A network the registry does not have (made without a
 // store) records nothing; a registry that fails to answer is one line, never an
 // error: the reservation itself is made.
-func (s *Service) recordReservation(ctx context.Context, cs *cardSite, network, vm string, res vmtool.Reservation) {
+func (s *Service) recordReservation(ctx context.Context, cs *cardSite, network, vm, uuid string, res vmtool.Reservation) bool {
 	if cs.reg == nil {
+		return false
+	}
+	cctx, cancel := s.credCtx(ctx)
+	defer cancel()
+	in := storeclient.NetworkReservationInput{Ip: res.IP, Host: cs.vmHost, Vm: vm}
+	if uuid != "" {
+		in.Uuid = &uuid
+	}
+	_, err := cs.reg.PutNetworkReservation(cctx, network, res.MAC, in)
+	if err != nil && !errors.Is(err, storeclient.ErrNotFound) {
+		s.noter(nil)(fmt.Sprintf("the reservation of %s (%s) on network %q was made but the registry at %s could not record it: %v", res.IP, res.MAC, network, s.Store.Host(), err))
+		return false
+	}
+	return err == nil
+}
+
+// markOrphan tells the registry that the reservation of mac on network is left
+// on the home: the caller tried to remove it there and could not. This is a
+// positive fact the caller holds; a record the registry does not have, or a
+// registry that does not answer, is not an error (the reservation stays, and
+// the error the caller returns already names it).
+func (s *Service) markOrphan(ctx context.Context, reg *storeclient.Client, network, mac string) {
+	if reg == nil {
 		return
 	}
 	cctx, cancel := s.credCtx(ctx)
 	defer cancel()
-	_, err := cs.reg.PutNetworkReservation(cctx, network, res.MAC, storeclient.NetworkReservationInput{Ip: res.IP, Host: cs.vmHost, Vm: vm})
+	err := reg.MarkNetworkReservationOrphaned(cctx, network, mac)
 	if err != nil && !errors.Is(err, storeclient.ErrNotFound) {
-		s.noter(nil)(fmt.Sprintf("the reservation of %s (%s) on network %q was made but the registry at %s could not record it: %v", res.IP, res.MAC, network, s.Store.Host(), err))
+		s.noter(nil)(fmt.Sprintf("the reservation of %s on network %q is left on its home but the registry at %s could not be told: %v", mac, network, s.Store.Host(), err))
 	}
 }
 
@@ -172,7 +202,12 @@ func (s *Service) forgetReservation(ctx context.Context, cs *cardSite, network, 
 // attaches the card, in that order: the reservation on the reservation host, the
 // card on the VM's. If the card fails the reservation is removed; if that fails
 // too the error says which reservation is left.
-func (s *Service) attachCard(ctx context.Context, cs *cardSite, vm, network, ip string) (*vmtool.NetAttachment, error) {
+//
+// uuid is the VM's libvirt UUID when the caller has it (store mode), recorded
+// with the reservation so the store can tell when the VM's row is gone for good.
+// A failed undo leaves a reservation with no card: it is recorded with the UUID
+// and marked orphaned, for the next command on the network to remove.
+func (s *Service) attachCard(ctx context.Context, cs *cardSite, vm, uuid, network, ip string) (*vmtool.NetAttachment, error) {
 	res, err := cs.resv.AddReservation(network, vm, "", ip)
 	if err != nil {
 		return nil, err
@@ -181,6 +216,9 @@ func (s *Service) attachCard(ctx context.Context, cs *cardSite, vm, network, ip 
 	if err != nil {
 		if uerr := cs.resv.RemoveReservation(network, res.MAC); uerr != nil && !vmtool.IsNotFound(uerr) {
 			err = fmt.Errorf("%w; and the reservation of %s for %s on network %q could not be removed: %v", err, res.IP, res.MAC, network, uerr)
+			if s.recordReservation(ctx, cs, network, vm, uuid, *res) {
+				s.markOrphan(ctx, cs.reg, network, res.MAC)
+			}
 		}
 		return nil, err
 	}
@@ -188,7 +226,7 @@ func (s *Service) attachCard(ctx context.Context, cs *cardSite, vm, network, ip 
 		att = &vmtool.NetAttachment{Network: network, MAC: res.MAC}
 	}
 	att.IP = res.IP // the reservation just made is the card's address
-	s.recordReservation(ctx, cs, network, vm, *res)
+	s.recordReservation(ctx, cs, network, vm, uuid, *res)
 	return att, nil
 }
 
@@ -202,6 +240,9 @@ func (s *Service) detachCard(ctx context.Context, cs *cardSite, vm, network, mac
 	}
 	if err := cs.resv.RemoveReservation(network, mac); err != nil && !vmtool.IsNotFound(err) {
 		if _, rerr := cs.vm.AttachInterface(vm, network, mac); rerr != nil {
+			// The card is gone and its reservation could not be removed: the
+			// reservation is left on the home with no card.
+			s.markOrphan(ctx, cs.reg, network, mac)
 			return fmt.Errorf("%w; and the card %s could not be put back: %v", err, mac, rerr)
 		}
 		return err
@@ -223,7 +264,8 @@ func (s *Service) AttachNetwork(ctx context.Context, m Manager, ref VMRef, netwo
 	if network == "" {
 		return nil, invalid(op, fmt.Errorf("a network name is required"))
 	}
-	if _, err := m.Info(ref.Name); err != nil {
+	info, err := m.Info(ref.Name)
+	if err != nil {
 		return nil, wrap(op, err)
 	}
 	cs, err := s.checkNetwork(ctx, op, m, ref.Host, ref.Name, NetworkRequest{Network: network, IP: ip})
@@ -231,7 +273,7 @@ func (s *Service) AttachNetwork(ctx context.Context, m Manager, ref VMRef, netwo
 		return nil, err
 	}
 	defer cs.close()
-	att, err := s.attachCard(ctx, cs, ref.Name, network, ip)
+	att, err := s.attachCard(ctx, cs, ref.Name, info.UUID, network, ip)
 	if err != nil {
 		return nil, netErr(op, err)
 	}
@@ -277,6 +319,7 @@ func (s *Service) DetachNetwork(ctx context.Context, m Manager, ref VMRef, netwo
 		return err
 	}
 	defer cs.close()
+	s.removeOrphans(ctx, cs, hit[0].Network)
 	return netErr(op, s.detachCard(ctx, cs, ref.Name, hit[0].Network, hit[0].MAC))
 }
 
@@ -313,13 +356,18 @@ func (s *Service) removeReservations(ctx context.Context, m Manager, host string
 					// %v: the site's error is an *Error, and the caller's wrap would
 					// otherwise swap this line for it.
 					errs = append(errs, fmt.Errorf("the reservation of %s (%s) on network %q could not be removed: %v", c.IP, c.MAC, c.Network, err))
+					// The VM is gone and its reservation is left on the home: a
+					// positive fact; the next command on the network removes it.
+					s.markOrphan(ctx, s.Store.registryClient(ctx), c.Network, c.MAC)
 				}
 				continue
 			}
 			sites[c.Network] = cs
+			s.removeOrphans(ctx, cs, c.Network)
 		}
 		if err := cs.resv.RemoveReservation(c.Network, c.MAC); err != nil && !vmtool.IsNotFound(err) {
 			errs = append(errs, fmt.Errorf("the reservation of %s (%s) on network %q could not be removed: %w", c.IP, c.MAC, c.Network, err))
+			s.markOrphan(ctx, cs.reg, c.Network, c.MAC)
 			continue
 		}
 		s.forgetReservation(ctx, cs, c.Network, c.MAC)

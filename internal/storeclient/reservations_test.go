@@ -59,3 +59,34 @@ func TestNetworkReservationClient(t *testing.T) {
 		t.Errorf("delete of none: %v, want ErrNotFound", err)
 	}
 }
+
+// G3: the orphan routes.
+func TestOrphanedReservationClient(t *testing.T) {
+	at := time.Date(2026, 11, 21, 0, 0, 0, 0, time.UTC)
+	r1 := NetworkReservation{Network: "net1", Mac: "52:54:00:00:00:01", Ip: "10.77.1.100", Host: "hv1", Vm: "web1", Created: at, OrphanedAt: &at}
+	f := newFake(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method + " " + r.URL.Path {
+		case "GET /v1/networks/net1/reservations/orphaned":
+			js(w, 200, map[string]any{"reservations": []NetworkReservation{r1}})
+		case "POST /v1/networks/net1/reservations/52:54:00:00:00:01/orphan":
+			js(w, 200, r1)
+		default:
+			js(w, 404, map[string]string{"error": "not found"})
+		}
+	})
+	c := f.client(t, tok)
+	ctx := context.Background()
+	list, err := c.OrphanedNetworkReservations(ctx, "net1")
+	if err != nil || len(list) != 1 || list[0].OrphanedAt == nil {
+		t.Fatalf("orphans = %+v, %v", list, err)
+	}
+	if _, err := c.OrphanedNetworkReservations(ctx, "nonet"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("unknown network: %v, want ErrNotFound", err)
+	}
+	if err := c.MarkNetworkReservationOrphaned(ctx, "net1", "52:54:00:00:00:01"); err != nil {
+		t.Errorf("mark: %v", err)
+	}
+	if err := c.MarkNetworkReservationOrphaned(ctx, "net1", "52:54:00:00:00:09"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("mark of none: %v, want ErrNotFound", err)
+	}
+}

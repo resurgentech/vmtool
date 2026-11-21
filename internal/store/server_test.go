@@ -77,7 +77,7 @@ func concrete(p string) string {
 func TestAuthEveryOperation(t *testing.T) {
 	ts, _ := testServer(t)
 	ops := specOps(t)
-	if len(ops) != 30 {
+	if len(ops) != 32 {
 		t.Fatalf("only %d operations in the spec", len(ops))
 	}
 	for op, public := range ops {

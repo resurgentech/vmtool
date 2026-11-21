@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/jaredeh/vmtool/internal/store/db"
 	"github.com/jaredeh/vmtool/internal/storeclient"
 	"github.com/jaredeh/vmtool/pkg/vmtool"
 )
@@ -105,6 +106,7 @@ func (h *netHost) DeleteNetwork(name string) error {
 type spanEnv struct {
 	s      *Service
 	cl     *storeclient.Client
+	db     *db.DB // the store's database, for its clock and sweep
 	hosts  map[string]*netHost
 	down   map[string]bool
 	opened []string
@@ -113,8 +115,8 @@ type spanEnv struct {
 
 func newSpanEnv(t *testing.T) *spanEnv {
 	t.Helper()
-	sess, cl := realStoreSession(t)
-	e := &spanEnv{cl: cl, down: map[string]bool{}, hosts: map[string]*netHost{
+	sess, cl, d := realStoreSessionDB(t)
+	e := &spanEnv{cl: cl, db: d, down: map[string]bool{}, hosts: map[string]*netHost{
 		"home1": newNetHost("home1", "192.0.2.13"),
 		"hv1":   newNetHost("hv1", "192.0.2.11"),
 		"hv2":   newNetHost("hv2", "192.0.2.12"),

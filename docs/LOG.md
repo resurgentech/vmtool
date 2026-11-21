@@ -2276,3 +2276,23 @@ are appended, never edited in; a hook refuses rewrites.
   tests passed on the stub. Green; `just check` green.
 - Commits: the G2 commit on `clone-identity` (the G1 entry above landed
   with it too).
+
+## 2026-11-21 — G3 Orphan reservations are removed, driven only by the store's facts
+
+- `store.yaml` (1.2.0): reservation records gain `uuid` and `orphaned_at`;
+  user-token routes `GET /v1/networks/{name}/reservations/orphaned` and
+  `POST /v1/networks/{name}/reservations/{mac}/orphan`. Migration 8 adds
+  the two columns; existing records take the UUID of the live inventory
+  row of the same (host, name), else none.
+- Marked only on a store fact: the client could not remove a reservation
+  on the home (`vmtool delete`, detach, failed undo), or the sweep removed
+  the VM's gone row and no other row has its UUID. Silence marks nothing;
+  a VM with no row is never orphaned. A new put of the MAC clears the mark.
+- Cleanup with no timer: `net attach`, `net detach`, create with
+  `--network`, `vmtool delete` and `net show` first remove the network's
+  orphans on the home and then their records, one line each; with the home
+  down nothing changes and `net show` lists them.
+- Red: assertion failures in db, store server, app and CLI against stubs;
+  two absence tests (no row yet; host token) passed before the code. Green;
+  `just check` green.
+- Commits: the G3 commit on `clone-identity`.

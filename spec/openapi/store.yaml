@@ -762,6 +762,61 @@ paths:
           $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
+  /v1/networks/{name}/reservations/orphaned:
+    parameters:
+      - $ref: "#/components/parameters/Name"
+    get:
+      operationId: listOrphanedNetworkReservations
+      summary: A network's orphaned reservations
+      description: >
+        User tokens only. The recorded reservations of the network that are
+        marked orphaned (`orphaned_at` set), in address order. A reservation is
+        orphaned only on a positive fact the store holds: a client marked it
+        (its `delete` or a failed undo could not remove it on the home), or the
+        inventory sweep removed the gone row of the VM whose `uuid` it carries.
+        A host that is silent marks nothing. A client that reaches the home
+        removes these on the home and then deletes their records.
+      responses:
+        "200":
+          description: The orphaned reservations, ordered by address.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NetworkReservationList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/networks/{name}/reservations/{mac}/orphan:
+    parameters:
+      - $ref: "#/components/parameters/Name"
+      - $ref: "#/components/parameters/Mac"
+    post:
+      operationId: markNetworkReservationOrphaned
+      summary: Mark a recorded reservation orphaned
+      description: >
+        User tokens only. Sets `orphaned_at` to now on the record of `mac`; one
+        already marked keeps its first time. Records what the caller knows (a
+        reservation it could not remove on the home); the store reaches no host.
+      responses:
+        "200":
+          description: The reservation, as stored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NetworkReservation"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /v1/networks/{name}/reservations/{mac}:
     parameters:
       - $ref: "#/components/parameters/Name"
@@ -1453,6 +1508,12 @@ components:
         vm:
           type: string
           description: The VM's name.
+        uuid:
+          type: string
+          description: >
+            The VM's libvirt UUID when the client knows it; empty otherwise. A
+            record without one is never orphaned by the inventory sweep. A
+            PUT with none keeps the UUID already recorded.
     NetworkReservation:
       type: object
       required: [network, mac, ip, host, vm, created]
@@ -1468,6 +1529,15 @@ components:
           type: string
         vm:
           type: string
+        uuid:
+          type: string
+          description: The VM's UUID, empty when not known.
+        orphaned_at:
+          type: string
+          format: date-time
+          description: >
+            Set when the reservation is orphaned (see
+            `listOrphanedNetworkReservations`); absent otherwise.
         created:
           type: string
           format: date-time

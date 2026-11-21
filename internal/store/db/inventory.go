@@ -88,6 +88,7 @@ type SweepCounts struct {
 	Rows        int
 	Credentials int
 	Notes       int
+	Orphaned    int // reservation records marked orphaned
 }
 
 const vmCols = `uuid, name, state, vcpus, memory_gib, ip, autostart, firmware, disks,
@@ -426,6 +427,22 @@ func (d *DB) Sweep(ctx context.Context, now time.Time) (SweepCounts, error) {
 			return out, fmt.Errorf("sweep: %w", err)
 		}
 		out.Credentials += int(n)
+		// The row is gone for good: the reservations of that VM's UUID are
+		// orphaned, unless another row still has the UUID. A record with no
+		// UUID is never marked.
+		if k.uuid == "" {
+			continue
+		}
+		res, err = tx.ExecContext(ctx,
+			`UPDATE network_reservations SET orphaned_at=? WHERE uuid=? AND orphaned_at IS NULL
+			   AND NOT EXISTS (SELECT 1 FROM vms WHERE uuid=?)`, now.UTC().Format(time.RFC3339Nano), k.uuid, k.uuid)
+		if err != nil {
+			return out, fmt.Errorf("sweep: %w", err)
+		}
+		if n, err = res.RowsAffected(); err != nil {
+			return out, fmt.Errorf("sweep: %w", err)
+		}
+		out.Orphaned += int(n)
 	}
 	orphans, err := orphanNotesDue(ctx, tx, cutoff)
 	if err != nil {

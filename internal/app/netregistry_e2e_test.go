@@ -54,6 +54,14 @@ func (h *planHost) DeleteNetwork(name string) error {
 
 func realStoreSession(t *testing.T) (*StoreSession, *storeclient.Client) {
 	t.Helper()
+	sess, cl, _ := realStoreSessionDB(t)
+	return sess, cl
+}
+
+// realStoreSessionDB is realStoreSession with the store's database, for a test
+// that drives the store's own clock and sweep.
+func realStoreSessionDB(t *testing.T) (*StoreSession, *storeclient.Client, *db.DB) {
+	t.Helper()
 	dir := filepath.Join(t.TempDir(), "data")
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		t.Fatal(err)
@@ -73,7 +81,7 @@ func realStoreSession(t *testing.T) (*StoreSession, *storeclient.Client) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return OpenStoreSession(ts.URL, func() (string, error) { return stTok, nil }, opts, nil), cl
+	return OpenStoreSession(ts.URL, func() (string, error) { return stTok, nil }, opts, nil), cl, d
 }
 
 func TestCreateNetworkEndToEndWithTheRealStore(t *testing.T) {

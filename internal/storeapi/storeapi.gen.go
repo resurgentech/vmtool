@@ -289,7 +289,13 @@ type NetworkReservation struct {
 	// Mac Lowercase, colon-separated.
 	Mac     string `json:"mac"`
 	Network string `json:"network"`
-	Vm      string `json:"vm"`
+
+	// OrphanedAt Set when the reservation is orphaned (see `listOrphanedNetworkReservations`); absent otherwise.
+	OrphanedAt *time.Time `json:"orphaned_at,omitempty"`
+
+	// Uuid The VM's UUID, empty when not known.
+	Uuid *string `json:"uuid,omitempty"`
+	Vm   string  `json:"vm"`
 }
 
 // NetworkReservationInput defines model for NetworkReservationInput.
@@ -299,6 +305,9 @@ type NetworkReservationInput struct {
 
 	// Ip The reserved IPv4 address.
 	Ip string `json:"ip"`
+
+	// Uuid The VM's libvirt UUID when the client knows it; empty otherwise. A record without one is never orphaned by the inventory sweep. A PUT with none keeps the UUID already recorded.
+	Uuid *string `json:"uuid,omitempty"`
 
 	// Vm The VM's name.
 	Vm string `json:"vm"`
@@ -682,6 +691,9 @@ type ClientInterface interface {
 	// ListNetworkReservations request
 	ListNetworkReservations(ctx context.Context, name Name, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListOrphanedNetworkReservations request
+	ListOrphanedNetworkReservations(ctx context.Context, name Name, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// DeleteNetworkReservation request
 	DeleteNetworkReservation(ctx context.Context, name Name, mac Mac, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -689,6 +701,9 @@ type ClientInterface interface {
 	PutNetworkReservationWithBody(ctx context.Context, name Name, mac Mac, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	PutNetworkReservation(ctx context.Context, name Name, mac Mac, body PutNetworkReservationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// MarkNetworkReservationOrphaned request
+	MarkNetworkReservationOrphaned(ctx context.Context, name Name, mac Mac, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// Whoami request
 	Whoami(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1081,6 +1096,18 @@ func (c *Client) ListNetworkReservations(ctx context.Context, name Name, reqEdit
 	return c.Client.Do(req)
 }
 
+func (c *Client) ListOrphanedNetworkReservations(ctx context.Context, name Name, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListOrphanedNetworkReservationsRequest(c.Server, name)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) DeleteNetworkReservation(ctx context.Context, name Name, mac Mac, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDeleteNetworkReservationRequest(c.Server, name, mac)
 	if err != nil {
@@ -1107,6 +1134,18 @@ func (c *Client) PutNetworkReservationWithBody(ctx context.Context, name Name, m
 
 func (c *Client) PutNetworkReservation(ctx context.Context, name Name, mac Mac, body PutNetworkReservationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPutNetworkReservationRequest(c.Server, name, mac, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) MarkNetworkReservationOrphaned(ctx context.Context, name Name, mac Mac, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewMarkNetworkReservationOrphanedRequest(c.Server, name, mac)
 	if err != nil {
 		return nil, err
 	}
@@ -2224,6 +2263,40 @@ func NewListNetworkReservationsRequest(server string, name Name) (*http.Request,
 	return req, nil
 }
 
+// NewListOrphanedNetworkReservationsRequest generates requests for ListOrphanedNetworkReservations
+func NewListOrphanedNetworkReservationsRequest(server string, name Name) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "name", runtime.ParamLocationPath, name)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/networks/%s/reservations/orphaned", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewDeleteNetworkReservationRequest generates requests for DeleteNetworkReservation
 func NewDeleteNetworkReservationRequest(server string, name Name, mac Mac) (*http.Request, error) {
 	var err error
@@ -2315,6 +2388,47 @@ func NewPutNetworkReservationRequestWithBody(server string, name Name, mac Mac, 
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewMarkNetworkReservationOrphanedRequest generates requests for MarkNetworkReservationOrphaned
+func NewMarkNetworkReservationOrphanedRequest(server string, name Name, mac Mac) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "name", runtime.ParamLocationPath, name)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "mac", runtime.ParamLocationPath, mac)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/networks/%s/reservations/%s/orphan", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -2506,6 +2620,9 @@ type ClientWithResponsesInterface interface {
 	// ListNetworkReservationsWithResponse request
 	ListNetworkReservationsWithResponse(ctx context.Context, name Name, reqEditors ...RequestEditorFn) (*ListNetworkReservationsResponse, error)
 
+	// ListOrphanedNetworkReservationsWithResponse request
+	ListOrphanedNetworkReservationsWithResponse(ctx context.Context, name Name, reqEditors ...RequestEditorFn) (*ListOrphanedNetworkReservationsResponse, error)
+
 	// DeleteNetworkReservationWithResponse request
 	DeleteNetworkReservationWithResponse(ctx context.Context, name Name, mac Mac, reqEditors ...RequestEditorFn) (*DeleteNetworkReservationResponse, error)
 
@@ -2513,6 +2630,9 @@ type ClientWithResponsesInterface interface {
 	PutNetworkReservationWithBodyWithResponse(ctx context.Context, name Name, mac Mac, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutNetworkReservationResponse, error)
 
 	PutNetworkReservationWithResponse(ctx context.Context, name Name, mac Mac, body PutNetworkReservationJSONRequestBody, reqEditors ...RequestEditorFn) (*PutNetworkReservationResponse, error)
+
+	// MarkNetworkReservationOrphanedWithResponse request
+	MarkNetworkReservationOrphanedWithResponse(ctx context.Context, name Name, mac Mac, reqEditors ...RequestEditorFn) (*MarkNetworkReservationOrphanedResponse, error)
 
 	// WhoamiWithResponse request
 	WhoamiWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*WhoamiResponse, error)
@@ -3191,6 +3311,32 @@ func (r ListNetworkReservationsResponse) StatusCode() int {
 	return 0
 }
 
+type ListOrphanedNetworkReservationsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *NetworkReservationList
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON404      *NotFound
+	JSON500      *InternalError
+}
+
+// Status returns HTTPResponse.Status
+func (r ListOrphanedNetworkReservationsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListOrphanedNetworkReservationsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type DeleteNetworkReservationResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -3238,6 +3384,32 @@ func (r PutNetworkReservationResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r PutNetworkReservationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type MarkNetworkReservationOrphanedResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *NetworkReservation
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON404      *NotFound
+	JSON500      *InternalError
+}
+
+// Status returns HTTPResponse.Status
+func (r MarkNetworkReservationOrphanedResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r MarkNetworkReservationOrphanedResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -3571,6 +3743,15 @@ func (c *ClientWithResponses) ListNetworkReservationsWithResponse(ctx context.Co
 	return ParseListNetworkReservationsResponse(rsp)
 }
 
+// ListOrphanedNetworkReservationsWithResponse request returning *ListOrphanedNetworkReservationsResponse
+func (c *ClientWithResponses) ListOrphanedNetworkReservationsWithResponse(ctx context.Context, name Name, reqEditors ...RequestEditorFn) (*ListOrphanedNetworkReservationsResponse, error) {
+	rsp, err := c.ListOrphanedNetworkReservations(ctx, name, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListOrphanedNetworkReservationsResponse(rsp)
+}
+
 // DeleteNetworkReservationWithResponse request returning *DeleteNetworkReservationResponse
 func (c *ClientWithResponses) DeleteNetworkReservationWithResponse(ctx context.Context, name Name, mac Mac, reqEditors ...RequestEditorFn) (*DeleteNetworkReservationResponse, error) {
 	rsp, err := c.DeleteNetworkReservation(ctx, name, mac, reqEditors...)
@@ -3595,6 +3776,15 @@ func (c *ClientWithResponses) PutNetworkReservationWithResponse(ctx context.Cont
 		return nil, err
 	}
 	return ParsePutNetworkReservationResponse(rsp)
+}
+
+// MarkNetworkReservationOrphanedWithResponse request returning *MarkNetworkReservationOrphanedResponse
+func (c *ClientWithResponses) MarkNetworkReservationOrphanedWithResponse(ctx context.Context, name Name, mac Mac, reqEditors ...RequestEditorFn) (*MarkNetworkReservationOrphanedResponse, error) {
+	rsp, err := c.MarkNetworkReservationOrphaned(ctx, name, mac, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseMarkNetworkReservationOrphanedResponse(rsp)
 }
 
 // WhoamiWithResponse request returning *WhoamiResponse
@@ -4977,6 +5167,60 @@ func ParseListNetworkReservationsResponse(rsp *http.Response) (*ListNetworkReser
 	return response, nil
 }
 
+// ParseListOrphanedNetworkReservationsResponse parses an HTTP response from a ListOrphanedNetworkReservationsWithResponse call
+func ParseListOrphanedNetworkReservationsResponse(rsp *http.Response) (*ListOrphanedNetworkReservationsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListOrphanedNetworkReservationsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest NetworkReservationList
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseDeleteNetworkReservationResponse parses an HTTP response from a DeleteNetworkReservationWithResponse call
 func ParseDeleteNetworkReservationResponse(rsp *http.Response) (*DeleteNetworkReservationResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -5079,6 +5323,60 @@ func ParsePutNetworkReservationResponse(rsp *http.Response) (*PutNetworkReservat
 			return nil, err
 		}
 		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseMarkNetworkReservationOrphanedResponse parses an HTTP response from a MarkNetworkReservationOrphanedWithResponse call
+func ParseMarkNetworkReservationOrphanedResponse(rsp *http.Response) (*MarkNetworkReservationOrphanedResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &MarkNetworkReservationOrphanedResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest NetworkReservation
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalError
@@ -5231,12 +5529,18 @@ type ServerInterface interface {
 	// A network's recorded reservations
 	// (GET /v1/networks/{name}/reservations)
 	ListNetworkReservations(w http.ResponseWriter, r *http.Request, name Name)
+	// A network's orphaned reservations
+	// (GET /v1/networks/{name}/reservations/orphaned)
+	ListOrphanedNetworkReservations(w http.ResponseWriter, r *http.Request, name Name)
 	// Remove a recorded reservation
 	// (DELETE /v1/networks/{name}/reservations/{mac})
 	DeleteNetworkReservation(w http.ResponseWriter, r *http.Request, name Name, mac Mac)
 	// Record a reservation of a network
 	// (PUT /v1/networks/{name}/reservations/{mac})
 	PutNetworkReservation(w http.ResponseWriter, r *http.Request, name Name, mac Mac)
+	// Mark a recorded reservation orphaned
+	// (POST /v1/networks/{name}/reservations/{mac}/orphan)
+	MarkNetworkReservationOrphaned(w http.ResponseWriter, r *http.Request, name Name, mac Mac)
 	// The name of the calling token
 	// (GET /v1/whoami)
 	Whoami(w http.ResponseWriter, r *http.Request)
@@ -6183,6 +6487,37 @@ func (siw *ServerInterfaceWrapper) ListNetworkReservations(w http.ResponseWriter
 	handler.ServeHTTP(w, r)
 }
 
+// ListOrphanedNetworkReservations operation middleware
+func (siw *ServerInterfaceWrapper) ListOrphanedNetworkReservations(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "name" -------------
+	var name Name
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListOrphanedNetworkReservations(w, r, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // DeleteNetworkReservation operation middleware
 func (siw *ServerInterfaceWrapper) DeleteNetworkReservation(w http.ResponseWriter, r *http.Request) {
 
@@ -6254,6 +6589,46 @@ func (siw *ServerInterfaceWrapper) PutNetworkReservation(w http.ResponseWriter, 
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PutNetworkReservation(w, r, name, mac)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// MarkNetworkReservationOrphaned operation middleware
+func (siw *ServerInterfaceWrapper) MarkNetworkReservationOrphaned(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "name" -------------
+	var name Name
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "mac" -------------
+	var mac Mac
+
+	err = runtime.BindStyledParameterWithOptions("simple", "mac", r.PathValue("mac"), &mac, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "mac", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.MarkNetworkReservationOrphaned(w, r, name, mac)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -6443,8 +6818,10 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("DELETE "+options.BaseURL+"/v1/networks/{name}/members/{host}", wrapper.DeleteNetworkMember)
 	m.HandleFunc("PUT "+options.BaseURL+"/v1/networks/{name}/members/{host}", wrapper.PutNetworkMember)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/networks/{name}/reservations", wrapper.ListNetworkReservations)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/networks/{name}/reservations/orphaned", wrapper.ListOrphanedNetworkReservations)
 	m.HandleFunc("DELETE "+options.BaseURL+"/v1/networks/{name}/reservations/{mac}", wrapper.DeleteNetworkReservation)
 	m.HandleFunc("PUT "+options.BaseURL+"/v1/networks/{name}/reservations/{mac}", wrapper.PutNetworkReservation)
+	m.HandleFunc("POST "+options.BaseURL+"/v1/networks/{name}/reservations/{mac}/orphan", wrapper.MarkNetworkReservationOrphaned)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/whoami", wrapper.Whoami)
 	m.HandleFunc("GET "+options.BaseURL+"/version", wrapper.GetVersion)
 
@@ -7874,6 +8251,59 @@ func (response ListNetworkReservations500JSONResponse) VisitListNetworkReservati
 	return json.NewEncoder(w).Encode(response)
 }
 
+type ListOrphanedNetworkReservationsRequestObject struct {
+	Name Name `json:"name"`
+}
+
+type ListOrphanedNetworkReservationsResponseObject interface {
+	VisitListOrphanedNetworkReservationsResponse(w http.ResponseWriter) error
+}
+
+type ListOrphanedNetworkReservations200JSONResponse NetworkReservationList
+
+func (response ListOrphanedNetworkReservations200JSONResponse) VisitListOrphanedNetworkReservationsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ListOrphanedNetworkReservations400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response ListOrphanedNetworkReservations400JSONResponse) VisitListOrphanedNetworkReservationsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ListOrphanedNetworkReservations401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response ListOrphanedNetworkReservations401JSONResponse) VisitListOrphanedNetworkReservationsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ListOrphanedNetworkReservations404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response ListOrphanedNetworkReservations404JSONResponse) VisitListOrphanedNetworkReservationsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ListOrphanedNetworkReservations500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response ListOrphanedNetworkReservations500JSONResponse) VisitListOrphanedNetworkReservationsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
 type DeleteNetworkReservationRequestObject struct {
 	Name Name `json:"name"`
 	Mac  Mac  `json:"mac"`
@@ -7994,6 +8424,60 @@ func (response PutNetworkReservation413JSONResponse) VisitPutNetworkReservationR
 type PutNetworkReservation500JSONResponse struct{ InternalErrorJSONResponse }
 
 func (response PutNetworkReservation500JSONResponse) VisitPutNetworkReservationResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type MarkNetworkReservationOrphanedRequestObject struct {
+	Name Name `json:"name"`
+	Mac  Mac  `json:"mac"`
+}
+
+type MarkNetworkReservationOrphanedResponseObject interface {
+	VisitMarkNetworkReservationOrphanedResponse(w http.ResponseWriter) error
+}
+
+type MarkNetworkReservationOrphaned200JSONResponse NetworkReservation
+
+func (response MarkNetworkReservationOrphaned200JSONResponse) VisitMarkNetworkReservationOrphanedResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type MarkNetworkReservationOrphaned400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response MarkNetworkReservationOrphaned400JSONResponse) VisitMarkNetworkReservationOrphanedResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type MarkNetworkReservationOrphaned401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response MarkNetworkReservationOrphaned401JSONResponse) VisitMarkNetworkReservationOrphanedResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type MarkNetworkReservationOrphaned404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response MarkNetworkReservationOrphaned404JSONResponse) VisitMarkNetworkReservationOrphanedResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type MarkNetworkReservationOrphaned500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response MarkNetworkReservationOrphaned500JSONResponse) VisitMarkNetworkReservationOrphanedResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(500)
 
@@ -8121,12 +8605,18 @@ type StrictServerInterface interface {
 	// A network's recorded reservations
 	// (GET /v1/networks/{name}/reservations)
 	ListNetworkReservations(ctx context.Context, request ListNetworkReservationsRequestObject) (ListNetworkReservationsResponseObject, error)
+	// A network's orphaned reservations
+	// (GET /v1/networks/{name}/reservations/orphaned)
+	ListOrphanedNetworkReservations(ctx context.Context, request ListOrphanedNetworkReservationsRequestObject) (ListOrphanedNetworkReservationsResponseObject, error)
 	// Remove a recorded reservation
 	// (DELETE /v1/networks/{name}/reservations/{mac})
 	DeleteNetworkReservation(ctx context.Context, request DeleteNetworkReservationRequestObject) (DeleteNetworkReservationResponseObject, error)
 	// Record a reservation of a network
 	// (PUT /v1/networks/{name}/reservations/{mac})
 	PutNetworkReservation(ctx context.Context, request PutNetworkReservationRequestObject) (PutNetworkReservationResponseObject, error)
+	// Mark a recorded reservation orphaned
+	// (POST /v1/networks/{name}/reservations/{mac}/orphan)
+	MarkNetworkReservationOrphaned(ctx context.Context, request MarkNetworkReservationOrphanedRequestObject) (MarkNetworkReservationOrphanedResponseObject, error)
 	// The name of the calling token
 	// (GET /v1/whoami)
 	Whoami(ctx context.Context, request WhoamiRequestObject) (WhoamiResponseObject, error)
@@ -8887,6 +9377,32 @@ func (sh *strictHandler) ListNetworkReservations(w http.ResponseWriter, r *http.
 	}
 }
 
+// ListOrphanedNetworkReservations operation middleware
+func (sh *strictHandler) ListOrphanedNetworkReservations(w http.ResponseWriter, r *http.Request, name Name) {
+	var request ListOrphanedNetworkReservationsRequestObject
+
+	request.Name = name
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListOrphanedNetworkReservations(ctx, request.(ListOrphanedNetworkReservationsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListOrphanedNetworkReservations")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListOrphanedNetworkReservationsResponseObject); ok {
+		if err := validResponse.VisitListOrphanedNetworkReservationsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // DeleteNetworkReservation operation middleware
 func (sh *strictHandler) DeleteNetworkReservation(w http.ResponseWriter, r *http.Request, name Name, mac Mac) {
 	var request DeleteNetworkReservationRequestObject
@@ -8948,6 +9464,33 @@ func (sh *strictHandler) PutNetworkReservation(w http.ResponseWriter, r *http.Re
 	}
 }
 
+// MarkNetworkReservationOrphaned operation middleware
+func (sh *strictHandler) MarkNetworkReservationOrphaned(w http.ResponseWriter, r *http.Request, name Name, mac Mac) {
+	var request MarkNetworkReservationOrphanedRequestObject
+
+	request.Name = name
+	request.Mac = mac
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.MarkNetworkReservationOrphaned(ctx, request.(MarkNetworkReservationOrphanedRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "MarkNetworkReservationOrphaned")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(MarkNetworkReservationOrphanedResponseObject); ok {
+		if err := validResponse.VisitMarkNetworkReservationOrphanedResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // Whoami operation middleware
 func (sh *strictHandler) Whoami(w http.ResponseWriter, r *http.Request) {
 	var request WhoamiRequestObject
@@ -8999,139 +9542,146 @@ func (sh *strictHandler) GetVersion(w http.ResponseWriter, r *http.Request) {
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"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",
+	"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",
+	"8tLko5PRIZgn/38Ah1S6Zc2lAAA=",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

@@ -70,7 +70,9 @@ func guardCredentialBody(next http.Handler) http.Handler {
 		writes := r.Method == http.MethodPut || r.Method == http.MethodPost
 		if (r.Method == http.MethodPut && (strings.HasPrefix(r.URL.Path, "/v1/credentials/") || strings.HasPrefix(r.URL.Path, "/v1/hosts/"))) ||
 			(writes && (r.URL.Path == "/v1/networks" || strings.HasPrefix(r.URL.Path, "/v1/networks/"))) {
-			if mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mt != "application/json" {
+			// The orphan mark has no body: it needs no content type.
+			bodyless := r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/orphan")
+			if mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); !bodyless && (err != nil || mt != "application/json") {
 				writeError(w, http.StatusBadRequest, "invalid field: Content-Type")
 				return
 			}
