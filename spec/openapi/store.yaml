@@ -385,6 +385,137 @@ paths:
           $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
+  /v1/hosts/{host}/inventory:
+    parameters:
+      - $ref: "#/components/parameters/Host"
+    put:
+      operationId: putHostInventory
+      summary: A host daemon reports its full VM list
+      description: >
+        Only a host token for this very `{host}` may call it (another host's
+        token and every user token get 403). The body is the host's whole VM
+        list, never a diff: JSON only, at most 1 MiB (413) and 4096 VMs, a
+        comment at most 512 bytes on one line. Each listed (host, uuid) is
+        inserted or updated and, if it was gone, listed again; each live row
+        of the host that the list omits is marked gone; a login of the host
+        that matches no row gets a gone row. A `comment` that is absent
+        leaves the stored comment; an empty one clears it. A report whose
+        `generated_at` is older than the last applied one for the host is
+        answered 200 with `stale` true and changes nothing. Nothing is marked
+        gone by age or silence.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/HostReport"
+      responses:
+        "200":
+          description: Applied (or ignored as stale).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "413":
+          $ref: "#/components/responses/TooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/inventory:
+    get:
+      operationId: getInventory
+      summary: The store's inventory of hosts, VMs and machines
+      description: >
+        User tokens only. A record of what each host daemon last said, not a
+        live view; it carries no up/down state and no staleness mark. Gone
+        VMs are listed only with `gone=true`. Hosts, VMs and machines are
+        ordered by (host,) name. Machines are not filtered by `host`.
+      parameters:
+        - name: host
+          in: query
+          required: false
+          description: Only this host's row and VMs.
+          schema:
+            type: string
+        - name: gone
+          in: query
+          required: false
+          description: Also list VMs their host no longer has.
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: The inventory.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Inventory"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/inventory/{host}/{name}/delist:
+    parameters:
+      - $ref: "#/components/parameters/Host"
+      - $ref: "#/components/parameters/Name"
+    post:
+      operationId: delistVM
+      summary: Mark a VM's live row gone
+      description: >
+        User tokens only. Marks the live row of (host, name) gone now; its
+        login is kept for 7 days (`credentials_kept_until`), then the sweep
+        removes both. 404 when there is no live row.
+      responses:
+        "200":
+          description: The row is gone.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Delisted"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/inventory/{host}/{name}:
+    parameters:
+      - $ref: "#/components/parameters/Host"
+      - $ref: "#/components/parameters/Name"
+    delete:
+      operationId: deleteInventoryRow
+      summary: Remove a VM's inventory row at once
+      description: >
+        User tokens only. An explicit delete: the row of (host, name, uuid)
+        goes immediately, live or gone. It leaves the credential record
+        alone (`vmtool delete` removes that itself). 404 when no such row.
+      parameters:
+        - name: uuid
+          in: query
+          required: true
+          description: The domain UUID of the row (canonical 8-4-4-4-12 hex).
+          schema:
+            type: string
+      responses:
+        "204":
+          description: The row is removed.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
 components:
   securitySchemes:
     bearerAuth:
@@ -423,8 +554,14 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: The token may not do this; the body is fixed text.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
     NotFound:
-      description: No such image, VM record or machine.
+      description: No such image, VM record, inventory row or machine.
       content:
         application/json:
           schema:
@@ -636,3 +773,189 @@ components:
           description: >
             Which kind of token called. Absent from a store older than
             1.1.0, which has only user tokens.
+    Disk:
+      type: object
+      required: [target, pool, capacity_bytes, kind]
+      properties:
+        target:
+          type: string
+        pool:
+          type: string
+        capacity_bytes:
+          type: integer
+          format: int64
+        kind:
+          type: string
+          enum: [file, block, thin]
+    VMOrigin:
+      type: object
+      description: What a VM was made from; known only when vmtool created it.
+      properties:
+        image:
+          type: string
+        image_sha256:
+          type: string
+        template:
+          type: string
+        clone:
+          type: string
+        pool:
+          type: string
+        created:
+          type: string
+          description: Creation time as the daemon wrote it.
+    ReportVM:
+      type: object
+      required: [name, uuid, state, vcpus, memory, ip, autostart, firmware, disks]
+      properties:
+        name:
+          type: string
+          description: >-
+            The libvirt name: any name libvirt allows, at most 128 bytes of
+            UTF-8 on one line, no control character and no '/'. Not limited
+            to the names vmtool gives, so a VM made outside vmtool does not
+            cost its host the whole report.
+        uuid:
+          type: string
+        state:
+          type: string
+        vcpus:
+          type: integer
+        memory:
+          type: integer
+          description: Memory in GiB.
+        ip:
+          type: string
+        autostart:
+          type: boolean
+        firmware:
+          type: string
+        disks:
+          type: array
+          items:
+            $ref: "#/components/schemas/Disk"
+        origin:
+          $ref: "#/components/schemas/VMOrigin"
+        comment:
+          type: string
+          maxLength: 512
+          description: >
+            At most 512 bytes of UTF-8 on one line, no control characters.
+            Absent keeps the stored comment; empty clears it. Not a secret:
+            stored in plain text.
+    HostReport:
+      type: object
+      required: [generated_at, daemon_version, vms]
+      properties:
+        generated_at:
+          type: string
+          format: date-time
+        daemon_version:
+          type: string
+        vms:
+          type: array
+          maxItems: 4096
+          items:
+            $ref: "#/components/schemas/ReportVM"
+    ReportResult:
+      type: object
+      required: [listed, newly_gone, relisted, stale]
+      properties:
+        listed:
+          type: integer
+        newly_gone:
+          type: integer
+        relisted:
+          type: integer
+        stale:
+          type: boolean
+          description: True when the report was older than the last applied one and was ignored.
+    InventoryHost:
+      type: object
+      required: [name, last_report, daemon_version, live, gone]
+      properties:
+        name:
+          type: string
+        last_report:
+          type: string
+          format: date-time
+        daemon_version:
+          type: string
+        live:
+          type: integer
+        gone:
+          type: integer
+    InventoryVM:
+      type: object
+      required: [host, name, uuid, state, vcpus, memory, ip, autostart, firmware, disks, comment, first_seen, last_seen, has_credentials]
+      properties:
+        host:
+          type: string
+        name:
+          type: string
+        uuid:
+          type: string
+        state:
+          type: string
+        vcpus:
+          type: integer
+        memory:
+          type: integer
+          description: Memory in GiB.
+        ip:
+          type: string
+        autostart:
+          type: boolean
+        firmware:
+          type: string
+        disks:
+          type: array
+          items:
+            $ref: "#/components/schemas/Disk"
+        origin:
+          $ref: "#/components/schemas/VMOrigin"
+        comment:
+          type: string
+        first_seen:
+          type: string
+          format: date-time
+        last_seen:
+          type: string
+          format: date-time
+        gone_since:
+          type: string
+          format: date-time
+          description: Present only on a VM its host no longer has.
+        credentials_kept_until:
+          type: string
+          format: date-time
+          description: On a gone VM, when the sweep removes the row and its login.
+        has_credentials:
+          type: boolean
+    Inventory:
+      type: object
+      required: [hosts, vms, machines]
+      properties:
+        hosts:
+          type: array
+          items:
+            $ref: "#/components/schemas/InventoryHost"
+        vms:
+          type: array
+          items:
+            $ref: "#/components/schemas/InventoryVM"
+        machines:
+          type: array
+          items:
+            $ref: "#/components/schemas/MachineSummary"
+    Delisted:
+      type: object
+      required: [uuid, credentials_kept_until, had_credentials]
+      properties:
+        uuid:
+          type: string
+        credentials_kept_until:
+          type: string
+          format: date-time
+        had_credentials:
+          type: boolean

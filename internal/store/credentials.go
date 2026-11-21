@@ -61,12 +61,12 @@ func deref(p *string) string {
 }
 
 // guardCredentialBody sits in front of the generated routes. For a PUT to a
-// credential route it requires a JSON content type, refuses a declared body
+// credential route or a host's inventory report (/v1/hosts/) it requires a JSON content type, refuses a declared body
 // over maxCredentialBody (413) and caps what an undeclared (chunked) body can
 // deliver; the decoder then fails with the fixed "bad request".
 func guardCredentialBody(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/v1/credentials/") {
+		if r.Method == http.MethodPut && (strings.HasPrefix(r.URL.Path, "/v1/credentials/") || strings.HasPrefix(r.URL.Path, "/v1/hosts/")) {
 			if mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mt != "application/json" {
 				writeError(w, http.StatusBadRequest, "invalid field: Content-Type")
 				return

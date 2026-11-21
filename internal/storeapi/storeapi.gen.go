@@ -29,6 +29,13 @@ const (
 	TicketAuthScopes = "ticketAuth.Scopes"
 )
 
+// Defines values for DiskKind.
+const (
+	Block DiskKind = "block"
+	File  DiskKind = "file"
+	Thin  DiskKind = "thin"
+)
+
 // Defines values for MachineCredentialInputKind.
 const (
 	Alien MachineCredentialInputKind = "alien"
@@ -49,9 +56,34 @@ type CredentialNotFound struct {
 	Stale *bool `json:"stale,omitempty"`
 }
 
+// Delisted defines model for Delisted.
+type Delisted struct {
+	CredentialsKeptUntil time.Time `json:"credentials_kept_until"`
+	HadCredentials       bool      `json:"had_credentials"`
+	Uuid                 string    `json:"uuid"`
+}
+
+// Disk defines model for Disk.
+type Disk struct {
+	CapacityBytes int64    `json:"capacity_bytes"`
+	Kind          DiskKind `json:"kind"`
+	Pool          string   `json:"pool"`
+	Target        string   `json:"target"`
+}
+
+// DiskKind defines model for Disk.Kind.
+type DiskKind string
+
 // Error defines model for Error.
 type Error struct {
 	Error string `json:"error"`
+}
+
+// HostReport defines model for HostReport.
+type HostReport struct {
+	DaemonVersion string     `json:"daemon_version"`
+	GeneratedAt   time.Time  `json:"generated_at"`
+	Vms           []ReportVM `json:"vms"`
 }
 
 // Image defines model for Image.
@@ -65,6 +97,51 @@ type Image struct {
 // ImageList defines model for ImageList.
 type ImageList struct {
 	Images []Image `json:"images"`
+}
+
+// Inventory defines model for Inventory.
+type Inventory struct {
+	Hosts    []InventoryHost  `json:"hosts"`
+	Machines []MachineSummary `json:"machines"`
+	Vms      []InventoryVM    `json:"vms"`
+}
+
+// InventoryHost defines model for InventoryHost.
+type InventoryHost struct {
+	DaemonVersion string    `json:"daemon_version"`
+	Gone          int       `json:"gone"`
+	LastReport    time.Time `json:"last_report"`
+	Live          int       `json:"live"`
+	Name          string    `json:"name"`
+}
+
+// InventoryVM defines model for InventoryVM.
+type InventoryVM struct {
+	Autostart bool   `json:"autostart"`
+	Comment   string `json:"comment"`
+
+	// CredentialsKeptUntil On a gone VM, when the sweep removes the row and its login.
+	CredentialsKeptUntil *time.Time `json:"credentials_kept_until,omitempty"`
+	Disks                []Disk     `json:"disks"`
+	Firmware             string     `json:"firmware"`
+	FirstSeen            time.Time  `json:"first_seen"`
+
+	// GoneSince Present only on a VM its host no longer has.
+	GoneSince      *time.Time `json:"gone_since,omitempty"`
+	HasCredentials bool       `json:"has_credentials"`
+	Host           string     `json:"host"`
+	Ip             string     `json:"ip"`
+	LastSeen       time.Time  `json:"last_seen"`
+
+	// Memory Memory in GiB.
+	Memory int    `json:"memory"`
+	Name   string `json:"name"`
+
+	// Origin What a VM was made from; known only when vmtool created it.
+	Origin *VMOrigin `json:"origin,omitempty"`
+	State  string    `json:"state"`
+	Uuid   string    `json:"uuid"`
+	Vcpus  int       `json:"vcpus"`
 }
 
 // MachineCredential defines model for MachineCredential.
@@ -110,6 +187,39 @@ type MachineSummary struct {
 	Name string `json:"name"`
 }
 
+// ReportResult defines model for ReportResult.
+type ReportResult struct {
+	Listed    int `json:"listed"`
+	NewlyGone int `json:"newly_gone"`
+	Relisted  int `json:"relisted"`
+
+	// Stale True when the report was older than the last applied one and was ignored.
+	Stale bool `json:"stale"`
+}
+
+// ReportVM defines model for ReportVM.
+type ReportVM struct {
+	Autostart bool `json:"autostart"`
+
+	// Comment At most 512 bytes of UTF-8 on one line, no control characters. Absent keeps the stored comment; empty clears it. Not a secret: stored in plain text.
+	Comment  *string `json:"comment,omitempty"`
+	Disks    []Disk  `json:"disks"`
+	Firmware string  `json:"firmware"`
+	Ip       string  `json:"ip"`
+
+	// Memory Memory in GiB.
+	Memory int `json:"memory"`
+
+	// Name The libvirt name: any name libvirt allows, at most 128 bytes of UTF-8 on one line, no control character and no '/'. Not limited to the names vmtool gives, so a VM made outside vmtool does not cost its host the whole report.
+	Name string `json:"name"`
+
+	// Origin What a VM was made from; known only when vmtool created it.
+	Origin *VMOrigin `json:"origin,omitempty"`
+	State  string    `json:"state"`
+	Uuid   string    `json:"uuid"`
+	Vcpus  int       `json:"vcpus"`
+}
+
 // Ticket defines model for Ticket.
 type Ticket struct {
 	ExpiresAt time.Time `json:"expires_at"`
@@ -150,6 +260,18 @@ type VMCredentialRef struct {
 	Uuid    string    `json:"uuid"`
 }
 
+// VMOrigin What a VM was made from; known only when vmtool created it.
+type VMOrigin struct {
+	Clone *string `json:"clone,omitempty"`
+
+	// Created Creation time as the daemon wrote it.
+	Created     *string `json:"created,omitempty"`
+	Image       *string `json:"image,omitempty"`
+	ImageSha256 *string `json:"image_sha256,omitempty"`
+	Pool        *string `json:"pool,omitempty"`
+	Template    *string `json:"template,omitempty"`
+}
+
 // Version defines model for Version.
 type Version struct {
 	Version string `json:"version"`
@@ -173,6 +295,9 @@ type Name = string
 
 // BadRequest defines model for BadRequest.
 type BadRequest = Error
+
+// Forbidden defines model for Forbidden.
+type Forbidden = Error
 
 // InternalError defines model for InternalError.
 type InternalError = Error
@@ -201,11 +326,29 @@ type PutImageParams struct {
 	ContentLength *int64 `json:"Content-Length,omitempty"`
 }
 
+// GetInventoryParams defines parameters for GetInventory.
+type GetInventoryParams struct {
+	// Host Only this host's row and VMs.
+	Host *string `form:"host,omitempty" json:"host,omitempty"`
+
+	// Gone Also list VMs their host no longer has.
+	Gone *bool `form:"gone,omitempty" json:"gone,omitempty"`
+}
+
+// DeleteInventoryRowParams defines parameters for DeleteInventoryRow.
+type DeleteInventoryRowParams struct {
+	// Uuid The domain UUID of the row (canonical 8-4-4-4-12 hex).
+	Uuid string `form:"uuid" json:"uuid"`
+}
+
 // PutMachineCredentialJSONRequestBody defines body for PutMachineCredential for application/json ContentType.
 type PutMachineCredentialJSONRequestBody = MachineCredentialInput
 
 // PutVMCredentialJSONRequestBody defines body for PutVMCredential for application/json ContentType.
 type PutVMCredentialJSONRequestBody = VMCredentialInput
+
+// PutHostInventoryJSONRequestBody defines body for PutHostInventory for application/json ContentType.
+type PutHostInventoryJSONRequestBody = HostReport
 
 // RequestEditorFn  is the function signature for the RequestEditor callback function
 type RequestEditorFn func(ctx context.Context, req *http.Request) error
@@ -305,6 +448,11 @@ type ClientInterface interface {
 
 	PutVMCredential(ctx context.Context, host Host, name Name, body PutVMCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// PutHostInventoryWithBody request with any body
+	PutHostInventoryWithBody(ctx context.Context, host Host, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	PutHostInventory(ctx context.Context, host Host, body PutHostInventoryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListImages request
 	ListImages(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -322,6 +470,15 @@ type ClientInterface interface {
 
 	// CreateImageTicket request
 	CreateImageTicket(ctx context.Context, name Name, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetInventory request
+	GetInventory(ctx context.Context, params *GetInventoryParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteInventoryRow request
+	DeleteInventoryRow(ctx context.Context, host Host, name Name, params *DeleteInventoryRowParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DelistVM request
+	DelistVM(ctx context.Context, host Host, name Name, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// Whoami request
 	Whoami(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -438,6 +595,30 @@ func (c *Client) PutVMCredential(ctx context.Context, host Host, name Name, body
 	return c.Client.Do(req)
 }
 
+func (c *Client) PutHostInventoryWithBody(ctx context.Context, host Host, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutHostInventoryRequestWithBody(c.Server, host, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PutHostInventory(ctx context.Context, host Host, body PutHostInventoryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutHostInventoryRequest(c.Server, host, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) ListImages(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListImagesRequest(c.Server)
 	if err != nil {
@@ -500,6 +681,42 @@ func (c *Client) GetImageBlob(ctx context.Context, name Name, reqEditors ...Requ
 
 func (c *Client) CreateImageTicket(ctx context.Context, name Name, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateImageTicketRequest(c.Server, name)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetInventory(ctx context.Context, params *GetInventoryParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetInventoryRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DeleteInventoryRow(ctx context.Context, host Host, name Name, params *DeleteInventoryRowParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteInventoryRowRequest(c.Server, host, name, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DelistVM(ctx context.Context, host Host, name Name, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDelistVMRequest(c.Server, host, name)
 	if err != nil {
 		return nil, err
 	}
@@ -830,6 +1047,53 @@ func NewPutVMCredentialRequestWithBody(server string, host Host, name Name, cont
 	return req, nil
 }
 
+// NewPutHostInventoryRequest calls the generic PutHostInventory builder with application/json body
+func NewPutHostInventoryRequest(server string, host Host, body PutHostInventoryJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPutHostInventoryRequestWithBody(server, host, "application/json", bodyReader)
+}
+
+// NewPutHostInventoryRequestWithBody generates requests for PutHostInventory with any type of body
+func NewPutHostInventoryRequestWithBody(server string, host Host, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "host", runtime.ParamLocationPath, host)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/hosts/%s/inventory", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PUT", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewListImagesRequest generates requests for ListImages
 func NewListImagesRequest(server string) (*http.Request, error) {
 	var err error
@@ -1053,6 +1317,171 @@ func NewCreateImageTicketRequest(server string, name Name) (*http.Request, error
 	return req, nil
 }
 
+// NewGetInventoryRequest generates requests for GetInventory
+func NewGetInventoryRequest(server string, params *GetInventoryParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/inventory")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Host != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "host", runtime.ParamLocationQuery, *params.Host); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Gone != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "gone", runtime.ParamLocationQuery, *params.Gone); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewDeleteInventoryRowRequest generates requests for DeleteInventoryRow
+func NewDeleteInventoryRowRequest(server string, host Host, name Name, params *DeleteInventoryRowParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "host", runtime.ParamLocationPath, host)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "name", runtime.ParamLocationPath, name)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/inventory/%s/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if queryFrag, err := runtime.StyleParamWithLocation("form", true, "uuid", runtime.ParamLocationQuery, params.Uuid); err != nil {
+			return nil, err
+		} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+			return nil, err
+		} else {
+			for k, v := range parsed {
+				for _, v2 := range v {
+					queryValues.Add(k, v2)
+				}
+			}
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewDelistVMRequest generates requests for DelistVM
+func NewDelistVMRequest(server string, host Host, name Name) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "host", runtime.ParamLocationPath, host)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "name", runtime.ParamLocationPath, name)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/inventory/%s/%s/delist", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewWhoamiRequest generates requests for Whoami
 func NewWhoamiRequest(server string) (*http.Request, error) {
 	var err error
@@ -1175,6 +1604,11 @@ type ClientWithResponsesInterface interface {
 
 	PutVMCredentialWithResponse(ctx context.Context, host Host, name Name, body PutVMCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*PutVMCredentialResponse, error)
 
+	// PutHostInventoryWithBodyWithResponse request with any body
+	PutHostInventoryWithBodyWithResponse(ctx context.Context, host Host, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutHostInventoryResponse, error)
+
+	PutHostInventoryWithResponse(ctx context.Context, host Host, body PutHostInventoryJSONRequestBody, reqEditors ...RequestEditorFn) (*PutHostInventoryResponse, error)
+
 	// ListImagesWithResponse request
 	ListImagesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListImagesResponse, error)
 
@@ -1192,6 +1626,15 @@ type ClientWithResponsesInterface interface {
 
 	// CreateImageTicketWithResponse request
 	CreateImageTicketWithResponse(ctx context.Context, name Name, reqEditors ...RequestEditorFn) (*CreateImageTicketResponse, error)
+
+	// GetInventoryWithResponse request
+	GetInventoryWithResponse(ctx context.Context, params *GetInventoryParams, reqEditors ...RequestEditorFn) (*GetInventoryResponse, error)
+
+	// DeleteInventoryRowWithResponse request
+	DeleteInventoryRowWithResponse(ctx context.Context, host Host, name Name, params *DeleteInventoryRowParams, reqEditors ...RequestEditorFn) (*DeleteInventoryRowResponse, error)
+
+	// DelistVMWithResponse request
+	DelistVMWithResponse(ctx context.Context, host Host, name Name, reqEditors ...RequestEditorFn) (*DelistVMResponse, error)
 
 	// WhoamiWithResponse request
 	WhoamiWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*WhoamiResponse, error)
@@ -1378,6 +1821,33 @@ func (r PutVMCredentialResponse) StatusCode() int {
 	return 0
 }
 
+type PutHostInventoryResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *ReportResult
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON413      *TooLarge
+	JSON500      *InternalError
+}
+
+// Status returns HTTPResponse.Status
+func (r PutHostInventoryResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PutHostInventoryResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type ListImagesResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -1533,6 +2003,82 @@ func (r CreateImageTicketResponse) StatusCode() int {
 	return 0
 }
 
+type GetInventoryResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *Inventory
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON500      *InternalError
+}
+
+// Status returns HTTPResponse.Status
+func (r GetInventoryResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetInventoryResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type DeleteInventoryRowResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON404      *NotFound
+	JSON500      *InternalError
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteInventoryRowResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteInventoryRowResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type DelistVMResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *Delisted
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON404      *NotFound
+	JSON500      *InternalError
+}
+
+// Status returns HTTPResponse.Status
+func (r DelistVMResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DelistVMResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type WhoamiResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -1657,6 +2203,23 @@ func (c *ClientWithResponses) PutVMCredentialWithResponse(ctx context.Context, h
 	return ParsePutVMCredentialResponse(rsp)
 }
 
+// PutHostInventoryWithBodyWithResponse request with arbitrary body returning *PutHostInventoryResponse
+func (c *ClientWithResponses) PutHostInventoryWithBodyWithResponse(ctx context.Context, host Host, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutHostInventoryResponse, error) {
+	rsp, err := c.PutHostInventoryWithBody(ctx, host, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutHostInventoryResponse(rsp)
+}
+
+func (c *ClientWithResponses) PutHostInventoryWithResponse(ctx context.Context, host Host, body PutHostInventoryJSONRequestBody, reqEditors ...RequestEditorFn) (*PutHostInventoryResponse, error) {
+	rsp, err := c.PutHostInventory(ctx, host, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutHostInventoryResponse(rsp)
+}
+
 // ListImagesWithResponse request returning *ListImagesResponse
 func (c *ClientWithResponses) ListImagesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListImagesResponse, error) {
 	rsp, err := c.ListImages(ctx, reqEditors...)
@@ -1709,6 +2272,33 @@ func (c *ClientWithResponses) CreateImageTicketWithResponse(ctx context.Context,
 		return nil, err
 	}
 	return ParseCreateImageTicketResponse(rsp)
+}
+
+// GetInventoryWithResponse request returning *GetInventoryResponse
+func (c *ClientWithResponses) GetInventoryWithResponse(ctx context.Context, params *GetInventoryParams, reqEditors ...RequestEditorFn) (*GetInventoryResponse, error) {
+	rsp, err := c.GetInventory(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetInventoryResponse(rsp)
+}
+
+// DeleteInventoryRowWithResponse request returning *DeleteInventoryRowResponse
+func (c *ClientWithResponses) DeleteInventoryRowWithResponse(ctx context.Context, host Host, name Name, params *DeleteInventoryRowParams, reqEditors ...RequestEditorFn) (*DeleteInventoryRowResponse, error) {
+	rsp, err := c.DeleteInventoryRow(ctx, host, name, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteInventoryRowResponse(rsp)
+}
+
+// DelistVMWithResponse request returning *DelistVMResponse
+func (c *ClientWithResponses) DelistVMWithResponse(ctx context.Context, host Host, name Name, reqEditors ...RequestEditorFn) (*DelistVMResponse, error) {
+	rsp, err := c.DelistVM(ctx, host, name, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDelistVMResponse(rsp)
 }
 
 // WhoamiWithResponse request returning *WhoamiResponse
@@ -2079,6 +2669,67 @@ func ParsePutVMCredentialResponse(rsp *http.Response) (*PutVMCredentialResponse,
 	return response, nil
 }
 
+// ParsePutHostInventoryResponse parses an HTTP response from a PutHostInventoryWithResponse call
+func ParsePutHostInventoryResponse(rsp *http.Response) (*PutHostInventoryResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PutHostInventoryResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ReportResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest TooLarge
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListImagesResponse parses an HTTP response from a ListImagesWithResponse call
 func ParseListImagesResponse(rsp *http.Response) (*ListImagesResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -2396,6 +3047,154 @@ func ParseCreateImageTicketResponse(rsp *http.Response) (*CreateImageTicketRespo
 	return response, nil
 }
 
+// ParseGetInventoryResponse parses an HTTP response from a GetInventoryWithResponse call
+func ParseGetInventoryResponse(rsp *http.Response) (*GetInventoryResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetInventoryResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Inventory
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteInventoryRowResponse parses an HTTP response from a DeleteInventoryRowWithResponse call
+func ParseDeleteInventoryRowResponse(rsp *http.Response) (*DeleteInventoryRowResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteInventoryRowResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDelistVMResponse parses an HTTP response from a DelistVMWithResponse call
+func ParseDelistVMResponse(rsp *http.Response) (*DelistVMResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DelistVMResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Delisted
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseWhoamiResponse parses an HTTP response from a WhoamiWithResponse call
 func ParseWhoamiResponse(rsp *http.Response) (*WhoamiResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -2478,6 +3277,9 @@ type ServerInterface interface {
 	// Store a VM's credentials, replacing any record for (host, name)
 	// (PUT /v1/credentials/vms/{host}/{name})
 	PutVMCredential(w http.ResponseWriter, r *http.Request, host Host, name Name)
+	// A host daemon reports its full VM list
+	// (PUT /v1/hosts/{host}/inventory)
+	PutHostInventory(w http.ResponseWriter, r *http.Request, host Host)
 	// List images, ordered by name
 	// (GET /v1/images)
 	ListImages(w http.ResponseWriter, r *http.Request)
@@ -2496,6 +3298,15 @@ type ServerInterface interface {
 	// Mint a download ticket for one image
 	// (POST /v1/images/{name}/tickets)
 	CreateImageTicket(w http.ResponseWriter, r *http.Request, name Name)
+	// The store's inventory of hosts, VMs and machines
+	// (GET /v1/inventory)
+	GetInventory(w http.ResponseWriter, r *http.Request, params GetInventoryParams)
+	// Remove a VM's inventory row at once
+	// (DELETE /v1/inventory/{host}/{name})
+	DeleteInventoryRow(w http.ResponseWriter, r *http.Request, host Host, name Name, params DeleteInventoryRowParams)
+	// Mark a VM's live row gone
+	// (POST /v1/inventory/{host}/{name}/delist)
+	DelistVM(w http.ResponseWriter, r *http.Request, host Host, name Name)
 	// The name of the calling token
 	// (GET /v1/whoami)
 	Whoami(w http.ResponseWriter, r *http.Request)
@@ -2764,6 +3575,37 @@ func (siw *ServerInterfaceWrapper) PutVMCredential(w http.ResponseWriter, r *htt
 	handler.ServeHTTP(w, r)
 }
 
+// PutHostInventory operation middleware
+func (siw *ServerInterfaceWrapper) PutHostInventory(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "host" -------------
+	var host Host
+
+	err = runtime.BindStyledParameterWithOptions("simple", "host", r.PathValue("host"), &host, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "host", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutHostInventory(w, r, host)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListImages operation middleware
 func (siw *ServerInterfaceWrapper) ListImages(w http.ResponseWriter, r *http.Request) {
 
@@ -2988,6 +3830,145 @@ func (siw *ServerInterfaceWrapper) CreateImageTicket(w http.ResponseWriter, r *h
 	handler.ServeHTTP(w, r)
 }
 
+// GetInventory operation middleware
+func (siw *ServerInterfaceWrapper) GetInventory(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetInventoryParams
+
+	// ------------- Optional query parameter "host" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "host", r.URL.Query(), &params.Host)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "host", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "gone" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "gone", r.URL.Query(), &params.Gone)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "gone", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetInventory(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteInventoryRow operation middleware
+func (siw *ServerInterfaceWrapper) DeleteInventoryRow(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "host" -------------
+	var host Host
+
+	err = runtime.BindStyledParameterWithOptions("simple", "host", r.PathValue("host"), &host, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "host", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "name" -------------
+	var name Name
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params DeleteInventoryRowParams
+
+	// ------------- Required query parameter "uuid" -------------
+
+	if paramValue := r.URL.Query().Get("uuid"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "uuid"})
+		return
+	}
+
+	err = runtime.BindQueryParameter("form", true, true, "uuid", r.URL.Query(), &params.Uuid)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "uuid", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteInventoryRow(w, r, host, name, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DelistVM operation middleware
+func (siw *ServerInterfaceWrapper) DelistVM(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "host" -------------
+	var host Host
+
+	err = runtime.BindStyledParameterWithOptions("simple", "host", r.PathValue("host"), &host, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "host", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "name" -------------
+	var name Name
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DelistVM(w, r, host, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // Whoami operation middleware
 func (siw *ServerInterfaceWrapper) Whoami(w http.ResponseWriter, r *http.Request) {
 
@@ -3149,12 +4130,16 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("DELETE "+options.BaseURL+"/v1/credentials/vms/{host}/{name}", wrapper.DeleteVMCredential)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/credentials/vms/{host}/{name}", wrapper.GetVMCredential)
 	m.HandleFunc("PUT "+options.BaseURL+"/v1/credentials/vms/{host}/{name}", wrapper.PutVMCredential)
+	m.HandleFunc("PUT "+options.BaseURL+"/v1/hosts/{host}/inventory", wrapper.PutHostInventory)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/images", wrapper.ListImages)
 	m.HandleFunc("DELETE "+options.BaseURL+"/v1/images/{name}", wrapper.DeleteImage)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/images/{name}", wrapper.GetImage)
 	m.HandleFunc("PUT "+options.BaseURL+"/v1/images/{name}", wrapper.PutImage)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/images/{name}/blob", wrapper.GetImageBlob)
 	m.HandleFunc("POST "+options.BaseURL+"/v1/images/{name}/tickets", wrapper.CreateImageTicket)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/inventory", wrapper.GetInventory)
+	m.HandleFunc("DELETE "+options.BaseURL+"/v1/inventory/{host}/{name}", wrapper.DeleteInventoryRow)
+	m.HandleFunc("POST "+options.BaseURL+"/v1/inventory/{host}/{name}/delist", wrapper.DelistVM)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/whoami", wrapper.Whoami)
 	m.HandleFunc("GET "+options.BaseURL+"/version", wrapper.GetVersion)
 
@@ -3162,6 +4147,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 }
 
 type BadRequestJSONResponse Error
+
+type ForbiddenJSONResponse Error
 
 type InternalErrorJSONResponse Error
 
@@ -3527,6 +4514,69 @@ func (response PutVMCredential500JSONResponse) VisitPutVMCredentialResponse(w ht
 	return json.NewEncoder(w).Encode(response)
 }
 
+type PutHostInventoryRequestObject struct {
+	Host Host `json:"host"`
+	Body *PutHostInventoryJSONRequestBody
+}
+
+type PutHostInventoryResponseObject interface {
+	VisitPutHostInventoryResponse(w http.ResponseWriter) error
+}
+
+type PutHostInventory200JSONResponse ReportResult
+
+func (response PutHostInventory200JSONResponse) VisitPutHostInventoryResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutHostInventory400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PutHostInventory400JSONResponse) VisitPutHostInventoryResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutHostInventory401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PutHostInventory401JSONResponse) VisitPutHostInventoryResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutHostInventory403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response PutHostInventory403JSONResponse) VisitPutHostInventoryResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutHostInventory413JSONResponse struct{ TooLargeJSONResponse }
+
+func (response PutHostInventory413JSONResponse) VisitPutHostInventoryResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(413)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutHostInventory500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response PutHostInventory500JSONResponse) VisitPutHostInventoryResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
 type ListImagesRequestObject struct {
 }
 
@@ -3870,6 +4920,158 @@ func (response CreateImageTicket500JSONResponse) VisitCreateImageTicketResponse(
 	return json.NewEncoder(w).Encode(response)
 }
 
+type GetInventoryRequestObject struct {
+	Params GetInventoryParams
+}
+
+type GetInventoryResponseObject interface {
+	VisitGetInventoryResponse(w http.ResponseWriter) error
+}
+
+type GetInventory200JSONResponse Inventory
+
+func (response GetInventory200JSONResponse) VisitGetInventoryResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetInventory400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response GetInventory400JSONResponse) VisitGetInventoryResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetInventory401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response GetInventory401JSONResponse) VisitGetInventoryResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetInventory500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response GetInventory500JSONResponse) VisitGetInventoryResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteInventoryRowRequestObject struct {
+	Host   Host `json:"host"`
+	Name   Name `json:"name"`
+	Params DeleteInventoryRowParams
+}
+
+type DeleteInventoryRowResponseObject interface {
+	VisitDeleteInventoryRowResponse(w http.ResponseWriter) error
+}
+
+type DeleteInventoryRow204Response struct {
+}
+
+func (response DeleteInventoryRow204Response) VisitDeleteInventoryRowResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteInventoryRow400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response DeleteInventoryRow400JSONResponse) VisitDeleteInventoryRowResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteInventoryRow401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response DeleteInventoryRow401JSONResponse) VisitDeleteInventoryRowResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteInventoryRow404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response DeleteInventoryRow404JSONResponse) VisitDeleteInventoryRowResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteInventoryRow500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response DeleteInventoryRow500JSONResponse) VisitDeleteInventoryRowResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DelistVMRequestObject struct {
+	Host Host `json:"host"`
+	Name Name `json:"name"`
+}
+
+type DelistVMResponseObject interface {
+	VisitDelistVMResponse(w http.ResponseWriter) error
+}
+
+type DelistVM200JSONResponse Delisted
+
+func (response DelistVM200JSONResponse) VisitDelistVMResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DelistVM400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response DelistVM400JSONResponse) VisitDelistVMResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DelistVM401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response DelistVM401JSONResponse) VisitDelistVMResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DelistVM404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response DelistVM404JSONResponse) VisitDelistVMResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DelistVM500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response DelistVM500JSONResponse) VisitDelistVMResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
 type WhoamiRequestObject struct {
 }
 
@@ -3934,6 +5136,9 @@ type StrictServerInterface interface {
 	// Store a VM's credentials, replacing any record for (host, name)
 	// (PUT /v1/credentials/vms/{host}/{name})
 	PutVMCredential(ctx context.Context, request PutVMCredentialRequestObject) (PutVMCredentialResponseObject, error)
+	// A host daemon reports its full VM list
+	// (PUT /v1/hosts/{host}/inventory)
+	PutHostInventory(ctx context.Context, request PutHostInventoryRequestObject) (PutHostInventoryResponseObject, error)
 	// List images, ordered by name
 	// (GET /v1/images)
 	ListImages(ctx context.Context, request ListImagesRequestObject) (ListImagesResponseObject, error)
@@ -3952,6 +5157,15 @@ type StrictServerInterface interface {
 	// Mint a download ticket for one image
 	// (POST /v1/images/{name}/tickets)
 	CreateImageTicket(ctx context.Context, request CreateImageTicketRequestObject) (CreateImageTicketResponseObject, error)
+	// The store's inventory of hosts, VMs and machines
+	// (GET /v1/inventory)
+	GetInventory(ctx context.Context, request GetInventoryRequestObject) (GetInventoryResponseObject, error)
+	// Remove a VM's inventory row at once
+	// (DELETE /v1/inventory/{host}/{name})
+	DeleteInventoryRow(ctx context.Context, request DeleteInventoryRowRequestObject) (DeleteInventoryRowResponseObject, error)
+	// Mark a VM's live row gone
+	// (POST /v1/inventory/{host}/{name}/delist)
+	DelistVM(ctx context.Context, request DelistVMRequestObject) (DelistVMResponseObject, error)
 	// The name of the calling token
 	// (GET /v1/whoami)
 	Whoami(ctx context.Context, request WhoamiRequestObject) (WhoamiResponseObject, error)
@@ -4187,6 +5401,39 @@ func (sh *strictHandler) PutVMCredential(w http.ResponseWriter, r *http.Request,
 	}
 }
 
+// PutHostInventory operation middleware
+func (sh *strictHandler) PutHostInventory(w http.ResponseWriter, r *http.Request, host Host) {
+	var request PutHostInventoryRequestObject
+
+	request.Host = host
+
+	var body PutHostInventoryJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PutHostInventory(ctx, request.(PutHostInventoryRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PutHostInventory")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PutHostInventoryResponseObject); ok {
+		if err := validResponse.VisitPutHostInventoryResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // ListImages operation middleware
 func (sh *strictHandler) ListImages(w http.ResponseWriter, r *http.Request) {
 	var request ListImagesRequestObject
@@ -4344,6 +5591,87 @@ func (sh *strictHandler) CreateImageTicket(w http.ResponseWriter, r *http.Reques
 	}
 }
 
+// GetInventory operation middleware
+func (sh *strictHandler) GetInventory(w http.ResponseWriter, r *http.Request, params GetInventoryParams) {
+	var request GetInventoryRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetInventory(ctx, request.(GetInventoryRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetInventory")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetInventoryResponseObject); ok {
+		if err := validResponse.VisitGetInventoryResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteInventoryRow operation middleware
+func (sh *strictHandler) DeleteInventoryRow(w http.ResponseWriter, r *http.Request, host Host, name Name, params DeleteInventoryRowParams) {
+	var request DeleteInventoryRowRequestObject
+
+	request.Host = host
+	request.Name = name
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteInventoryRow(ctx, request.(DeleteInventoryRowRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteInventoryRow")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteInventoryRowResponseObject); ok {
+		if err := validResponse.VisitDeleteInventoryRowResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DelistVM operation middleware
+func (sh *strictHandler) DelistVM(w http.ResponseWriter, r *http.Request, host Host, name Name) {
+	var request DelistVMRequestObject
+
+	request.Host = host
+	request.Name = name
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DelistVM(ctx, request.(DelistVMRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DelistVM")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DelistVMResponseObject); ok {
+		if err := validResponse.VisitDelistVMResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // Whoami operation middleware
 func (sh *strictHandler) Whoami(w http.ResponseWriter, r *http.Request) {
 	var request WhoamiRequestObject
@@ -4395,60 +5723,88 @@ func (sh *strictHandler) GetVersion(w http.ResponseWriter, r *http.Request) {
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"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",
+	"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",
+	"0SH57P8dADLG0S1IXAAA",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

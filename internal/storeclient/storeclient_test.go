@@ -360,3 +360,85 @@ func TestContextDeadline(t *testing.T) {
 		t.Fatalf("error carries the token: %v", err)
 	}
 }
+
+func TestInventoryClient(t *testing.T) {
+	var put storeapi.HostReport
+	f := newFake(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method + " " + r.URL.Path {
+		case "PUT /v1/hosts/hv1/inventory":
+			_ = json.NewDecoder(r.Body).Decode(&put)
+			js(w, 200, map[string]any{"listed": 1, "newly_gone": 2, "relisted": 3, "stale": false})
+		case "PUT /v1/hosts/hv2/inventory":
+			js(w, 403, map[string]any{"error": "forbidden: " + tok})
+		case "GET /v1/inventory":
+			js(w, 200, map[string]any{"hosts": []any{}, "vms": []any{}, "machines": []map[string]string{{"name": "m1", "kind": "metal"}}})
+		case "POST /v1/inventory/hv1/vm1/delist":
+			js(w, 200, map[string]any{"uuid": uuid, "credentials_kept_until": time.Now(), "had_credentials": true})
+		case "POST /v1/inventory/hv1/nope/delist", "DELETE /v1/inventory/hv1/nope":
+			js(w, 404, map[string]any{"error": "not found"})
+		case "DELETE /v1/inventory/hv1/vm1":
+			w.WriteHeader(204)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	c := f.client(t, tok)
+	ctx := context.Background()
+
+	in := storeapi.HostReport{GeneratedAt: time.Now(), DaemonVersion: "2.6.0", Vms: []storeapi.ReportVM{{Name: "vm1", Uuid: uuid}}}
+	r, err := c.PutHostInventory(ctx, "hv1", in)
+	if err != nil || r.Listed != 1 || r.NewlyGone != 2 || r.Relisted != 3 {
+		t.Fatalf("put = %+v %v", r, err)
+	}
+	if len(put.Vms) != 1 || put.Vms[0].Uuid != uuid || put.DaemonVersion != "2.6.0" {
+		t.Fatalf("server got %+v", put)
+	}
+	if _, err := c.PutHostInventory(ctx, "hv2", in); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("403 = %v, want ErrForbidden", err)
+	} else if strings.Contains(err.Error(), tok) {
+		t.Fatalf("error carries the token or a body: %v", err)
+	}
+
+	inv, err := c.Inventory(ctx, "", false)
+	if err != nil || len(inv.Machines) != 1 {
+		t.Fatalf("inventory = %+v %v", inv, err)
+	}
+	if _, err := c.Inventory(ctx, "hv1", true); err != nil {
+		t.Fatal(err)
+	}
+	d, err := c.Delist(ctx, "hv1", "vm1")
+	if err != nil || d.Uuid != uuid || !d.HadCredentials {
+		t.Fatalf("delist = %+v %v", d, err)
+	}
+	if _, err := c.Delist(ctx, "hv1", "nope"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("delist 404 = %v", err)
+	}
+	if err := c.DeleteInventoryRow(ctx, "hv1", "vm1", uuid); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.DeleteInventoryRow(ctx, "hv1", "nope", uuid); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("delete 404 = %v", err)
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	want := []string{
+		"PUT /v1/hosts/hv1/inventory", "PUT /v1/hosts/hv2/inventory",
+		"GET /v1/inventory", "GET /v1/inventory?gone=true&host=hv1",
+		"POST /v1/inventory/hv1/vm1/delist", "POST /v1/inventory/hv1/nope/delist",
+		"DELETE /v1/inventory/hv1/vm1?uuid=" + uuid, "DELETE /v1/inventory/hv1/nope?uuid=" + uuid,
+	}
+	if strings.Join(f.reqs, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("requests:\n%s\nwant:\n%s", strings.Join(f.reqs, "\n"), strings.Join(want, "\n"))
+	}
+	for i, a := range f.auths {
+		if a != "Bearer "+tok {
+			t.Errorf("request %d Authorization = %q", i, a)
+		}
+	}
+	for _, q := range f.reqs {
+		if strings.Contains(q, tok) {
+			t.Errorf("a URL carries the token: %s", q)
+		}
+	}
+}

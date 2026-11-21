@@ -592,8 +592,8 @@ func TestTicketRefusedOnEveryOtherRoute(t *testing.T) {
 		}
 		n++
 	}
-	if n != 13 {
-		t.Errorf("checked %d routes, want 13", n)
+	if n != 17 {
+		t.Errorf("checked %d routes, want 17", n)
 	}
 	// none of that spent the ticket, and A is untouched
 	resp, got := e.blobWith(t, "A", "Ticket "+tk.Ticket)

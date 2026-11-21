@@ -71,6 +71,7 @@ func serve(c *store.Config, stderr io.Writer, newBlob func(*store.Config) (blob.
 	slog.Info("vmtool-store listening", "listen", c.Listen, "tls", c.UsesTLS(), "behind_proxy", c.BehindProxy)
 	bctx, cancel := context.WithCancel(ctx)
 	stopped := store.StartBackups(bctx, store.BackupDeps{DB: d, Blob: b, DataDir: c.DataDir, Log: log})
+	swept := store.StartSweeps(bctx, store.SweepDeps{DB: d, Log: log})
 	errc := make(chan error, 1)
 	go func() { errc <- store.NewServer(c, nil, store.Deps{Blob: b, DB: d}).ListenAndServe() }()
 	code := 0
@@ -82,6 +83,7 @@ func serve(c *store.Config, stderr io.Writer, newBlob func(*store.Config) (blob.
 	}
 	cancel()
 	<-stopped
+	<-swept
 	return code
 }
 

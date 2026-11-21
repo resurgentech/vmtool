@@ -1708,3 +1708,27 @@ are appended, never edited in; a hook refuses rewrites.
 - Red: 5 tests failing (load, refusals, whoami kind, allow-list); green;
   `just check` green.
 - Commits: the N2 commit on `clone-identity`.
+
+## 2026-11-21 — N3 Store inventory routes, the sweep, and the store client
+
+- `spec/openapi/store.yaml` (1.1.0): `putHostInventory` (PUT
+  `/v1/hosts/{host}/inventory`), `getInventory` (GET `/v1/inventory`,
+  `?host=`, `?gone=true`), `delistVM` (POST
+  `/v1/inventory/{host}/{name}/delist`), `deleteInventoryRow` (DELETE
+  `/v1/inventory/{host}/{name}?uuid=`); schemas for the report, the
+  inventory and the delist answer; `internal/storeapi` regenerated.
+- `internal/store/inventory.go` (new): handlers; the report route takes only
+  the host's own token (another host or a user token 403), JSON only, 1 MiB,
+  4096 VMs, comment 512 bytes one line; VM names any libvirt name (no `/`,
+  no control character); the sweep at start and every 24 h on the store's
+  clock, a failure logged as a class only. `server.go` passes `Deps.Now` to
+  the database; `cmd/vmtool-store` runs the sweeper beside backups.
+- `internal/storeclient`: `PutHostInventory`, `Inventory`, `Delist`,
+  `DeleteInventoryRow`, `ErrForbidden` on 403.
+- Tests: `internal/store/inventory_test.go` (10, end to end included: two
+  VMs, one, gone with kept-until +7 days, swept with its credential, a
+  year with no report keeps the live row), `TestInventoryClient`.
+- Red: build failure on the missing handlers, sweep and client methods;
+  then (foreman) an outside-vmtool VM name refused the whole report; green;
+  `just check` green.
+- Commits: the N3 commit on `clone-identity`.

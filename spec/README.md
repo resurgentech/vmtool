@@ -257,6 +257,7 @@ may not appear in both token files. The log's caller for it is `host/<host>`.
 | Images | `listImages`, `getImage`, `putImage`, `deleteImage`, `getImageBlob`, `createImageTicket` |
 | VM credentials, keyed by (host, name) and the domain UUID | `getVMCredential`, `putVMCredential`, `deleteVMCredential` |
 | Metal records, keyed by name | `listMachineCredentials`, `getMachineCredential`, `putMachineCredential`, `deleteMachineCredential` |
+| Inventory, keyed by (host, libvirt UUID) | `putHostInventory` (host token for that host only; a user token or another host's token is 403), `getInventory` (`?host=`, `?gone=true`), `delistVM`, `deleteInventoryRow` (user tokens only) |
 
 **Images.** `putImage` streams the body to the bucket and hashes it as it is
 written; the image is indexed only when the SHA-256 equals `X-Image-SHA256` and
@@ -271,6 +272,17 @@ first successful download, kept by the store only as a hash and only in memory
 (a store restart voids every ticket). A ticket opens that image's blob and
 nothing else: another image, a changed digest, an expired or spent ticket, or
 any other route all answer 401.
+
+**Inventory.** A record of what each host daemon last said, not a live view:
+no up/down state, and nothing is marked gone by age or silence. A host's
+`putHostInventory` body is its whole VM list (JSON, at most 1 MiB and 4096 VMs,
+a comment at most 512 bytes on one line); a listed VM is inserted or updated,
+an omitted live row of that host goes gone, a report older than the last one
+applied is answered 200 and ignored. A gone row keeps its login for 7 days
+(`credentials_kept_until`); the sweep, at store start and every 24 hours,
+removes the row and the login of the same (host, name) only when its UUID
+matches. `delistVM` marks the live row gone; `deleteInventoryRow` removes a row
+at once and leaves the credential record alone.
 
 **Credentials.** The `GET` of a VM record carries the domain UUID the caller
 holds. A record for another UUID is 404 with `"stale": true` and no credential

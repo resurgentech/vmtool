@@ -34,6 +34,9 @@ var (
 	// ErrStale wraps ErrNotFound: a VM record exists, for another UUID (the VM
 	// was recreated). Its credentials must not be used.
 	ErrStale = fmt.Errorf("%w: the record is for another VM with this name (stale)", ErrNotFound)
+	// ErrForbidden is a 403: the token is valid but may not do this (a host
+	// token for another host, or a user token on the report route).
+	ErrForbidden = errors.New("store refused this token for that operation")
 	// ErrConflict is a 409: another push or delete of this image is running.
 	ErrConflict = errors.New("store: conflicting operation in progress")
 )
@@ -50,6 +53,12 @@ type (
 	MachineInputKind  = storeapi.MachineCredentialInputKind
 	MachineRef        = storeapi.MachineRef
 	MachineSummary    = storeapi.MachineSummary
+	HostReport        = storeapi.HostReport
+	ReportVM          = storeapi.ReportVM
+	ReportResult      = storeapi.ReportResult
+	Inventory         = storeapi.Inventory
+	InventoryVM       = storeapi.InventoryVM
+	Delisted          = storeapi.Delisted
 )
 
 // Option configures a Client.
@@ -136,6 +145,8 @@ func statusErr(op string, code int) error {
 		return fmt.Errorf("store %s: %w", op, ErrUnauthorized)
 	case http.StatusNotFound:
 		return fmt.Errorf("store %s: %w", op, ErrNotFound)
+	case http.StatusForbidden:
+		return fmt.Errorf("store %s: %w", op, ErrForbidden)
 	case http.StatusConflict:
 		return fmt.Errorf("store %s: %w", op, ErrConflict)
 	}
@@ -343,4 +354,63 @@ func (c *Client) CreateImageTicket(ctx context.Context, name string) (*Ticket, e
 		return nil, statusErr("create image ticket", r.StatusCode())
 	}
 	return r.JSON201, nil
+}
+
+// PutHostInventory sends host's full VM list (PUT /v1/hosts/{host}/inventory).
+// Only a host token for that host may; any other token is ErrForbidden.
+func (c *Client) PutHostInventory(ctx context.Context, host string, in HostReport) (*ReportResult, error) {
+	r, err := c.api.PutHostInventoryWithResponse(ctx, host, in)
+	if err != nil {
+		return nil, transportErr("put host inventory", err)
+	}
+	if r.StatusCode() != http.StatusOK || r.JSON200 == nil {
+		return nil, statusErr("put host inventory", r.StatusCode())
+	}
+	return r.JSON200, nil
+}
+
+// Inventory reads the store's hosts, VMs and machines (GET /v1/inventory). An
+// empty host means every host; gone adds the VMs their host no longer has.
+func (c *Client) Inventory(ctx context.Context, host string, gone bool) (*Inventory, error) {
+	p := &storeapi.GetInventoryParams{}
+	if host != "" {
+		p.Host = &host
+	}
+	if gone {
+		p.Gone = &gone
+	}
+	r, err := c.api.GetInventoryWithResponse(ctx, p)
+	if err != nil {
+		return nil, transportErr("inventory", err)
+	}
+	if r.StatusCode() != http.StatusOK || r.JSON200 == nil {
+		return nil, statusErr("inventory", r.StatusCode())
+	}
+	return r.JSON200, nil
+}
+
+// Delist marks the live row of (host, name) gone. ErrNotFound when there is
+// no live row.
+func (c *Client) Delist(ctx context.Context, host, name string) (*Delisted, error) {
+	r, err := c.api.DelistVMWithResponse(ctx, host, name)
+	if err != nil {
+		return nil, transportErr("delist", err)
+	}
+	if r.StatusCode() != http.StatusOK || r.JSON200 == nil {
+		return nil, statusErr("delist", r.StatusCode())
+	}
+	return r.JSON200, nil
+}
+
+// DeleteInventoryRow removes the row (host, name, uuid) at once. ErrNotFound
+// when there is none.
+func (c *Client) DeleteInventoryRow(ctx context.Context, host, name, uuid string) error {
+	r, err := c.api.DeleteInventoryRowWithResponse(ctx, host, name, &storeapi.DeleteInventoryRowParams{Uuid: uuid})
+	if err != nil {
+		return transportErr("delete inventory row", err)
+	}
+	if r.StatusCode() != http.StatusNoContent {
+		return statusErr("delete inventory row", r.StatusCode())
+	}
+	return nil
 }

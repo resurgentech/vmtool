@@ -30,7 +30,8 @@ type Server struct {
 
 // Deps are the store's backends. Image routes answer 500 (fixed text) when
 // Blob or DB is nil; Now defaults to time.Now and exists so tests can move
-// the clock past a ticket's expiry.
+// the clock past a ticket's expiry or the inventory's grace period (a set Now
+// also becomes the database's clock).
 type Deps struct {
 	Blob blob.BlobStore
 	DB   *db.DB
@@ -42,6 +43,10 @@ type Deps struct {
 func NewServer(c *Config, log *slog.Logger, d Deps) *Server {
 	if log == nil {
 		log = slog.Default()
+	}
+	if d.DB != nil && d.Now != nil {
+		// The inventory rules (gone_since, the sweep's cutoff) read the store's clock.
+		d.DB.SetClock(d.Now)
 	}
 	return &Server{cfg: c, log: log, routes: newRouteTable(), img: newImages(log, d)}
 }
