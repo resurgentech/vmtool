@@ -34,7 +34,15 @@
 #                  never meets a sudo prompt; config.yml holds only its hash.
 #                  When this machine's config.yml has server.url (`vmtool
 #                  config server-url` prints it), `--store-url <url>` is added:
-#                  the daemon's store_url, the one address fetchImage dials
+#                  the daemon's store_url, the one address fetchImage dials.
+#                  With a store_url, the host's field of
+#                  BAO_STORE_HOST_TOKENS_PATH (default
+#                  kv/infra/labtwo/vmtool_store/host_tokens) is read with
+#                  `bao kv get -field=<host>` into a variable, sent over the
+#                  stdin of one ssh call into stage/store-host-token, and
+#                  `--store-token-file store-host-token` is added. No field:
+#                  one warning, no flag, and an old HV_DIR/store-host-token is
+#                  removed at install
 #   7. install     the rendered unit, the rendered root helper vmtool-thin
 #                  (deploy/vmtool-thin with HV_POOL_DIR written into it) and
 #                  its sudoers rule (deploy/vmtool-thin.sudoers) go to stage/
@@ -54,7 +62,8 @@
 #                  daemon's files are touched); then installs binary,
 #                  config.yml, crt and key (owner vmtool) into HV_DIR and the
 #                  unit into UNIT_DIR; then daemon-reload, enable, restart
-#                  vmtool-daemon. The staged config.yml and key are removed
+#                  vmtool-daemon; the host token goes in vmtool:vmtool 0600 as
+#                  HV_DIR/store-host-token. The staged config.yml, key and token are removed
 #                  either way.
 #   8. check       GET /version over HTTPS (public: no token sent)
 #
@@ -172,6 +181,19 @@ if [[ -n $store_url ]]; then
   store_arg=" --store-url $store_url"
 fi
 
+# The host's store token, only when there is a store: read from bao by field
+# name (the host) into a shell variable with builtins, never in any argv. A
+# missing field, an empty one or a bao failure is not fatal: one warning, and
+# the daemon is installed without a token file (and any old one removed).
+host_tok=""
+if [[ -n $store_url ]]; then
+  host_tok=$(bao kv get -field="$host" "${BAO_STORE_HOST_TOKENS_PATH:-kv/infra/labtwo/vmtool_store/host_tokens}" 2>/dev/null) || host_tok=""
+  host_tok="${host_tok//[$' \t\r\n']/}"
+  [[ -n $host_tok ]] || echo "WARNING: $host has no store host token; its daemon will not report VMs; see make_secrets.sh hosttokens" >&2
+fi
+token_arg=""
+[[ -z $host_tok ]] || token_arg=" --store-token-file store-host-token"
+
 # run <command>: on the host over ssh, or here in bash when it is this machine.
 # runt is the install call: `ssh -t` so a sudo prompt works.
 if [[ $is_local == yes ]]; then
@@ -243,7 +265,12 @@ fi
 # 6. config.yml in stage/, from scratch; the token rides stdin of this call
 #    alone (no -t, no sudo). The cert paths are relative to the working
 #    directory, so they hold in stage/ and in HV_DIR alike.
-printf '%s\n' "$tok" | run "cd \"$base/stage\" && umask 077 && rm -f config.yml && ./vmtool config write --token-stdin --role hypervisor --name $host --listen 0.0.0.0:$port --tls-cert tls/$fqdn.crt --tls-key tls/$fqdn.key$store_arg"
+printf '%s\n' "$tok" | run "cd \"$base/stage\" && umask 077 && rm -f config.yml && ./vmtool config write --token-stdin --role hypervisor --name $host --listen 0.0.0.0:$port --tls-cert tls/$fqdn.crt --tls-key tls/$fqdn.key$store_arg$token_arg"
+# The host token, when there is one: stdin of this one call, into stage/ with
+# umask 077 (the install below sets owner and mode).
+if [[ -n $host_tok ]]; then
+  printf '%s\n' "$host_tok" | run "umask 077 && cat > \"$base/stage/store-host-token\""
+fi
 
 # 7. Unit (rendered here) to stage/, then one sudo for the whole install.
 content="$(<"$template")"
@@ -281,11 +308,12 @@ script+="; $own -m 0755 \"\$1/vmtool\" $hv/vmtool"
 script+="; $own -m 0600 \"\$1/config.yml\" $hv/config.yml"
 script+="; $own -m 0644 \"\$1/tls/$fqdn.crt\" $hv/tls/$fqdn.crt"
 script+="; $own -m 0600 \"\$1/tls/$fqdn.key\" $hv/tls/$fqdn.key"
+script+="; if [ -f \"\$1/store-host-token\" ]; then $own -m 0600 \"\$1/store-host-token\" $hv/store-host-token; else rm -f $hv/store-host-token; fi"
 script+="; install -m 0644 \"\$1/vmtool-daemon.service\" $ud/vmtool-daemon.service"
 script+="; systemctl daemon-reload; systemctl enable --now vmtool-daemon; systemctl restart vmtool-daemon"
 # -t so a sudo password prompt works; the token never rides this call.
-runt "s=\"$base/stage\"; sudo sh -c '$script' sh \"\$s\"; rc=\$?; rm -f \"\$s/config.yml\" \"\$s/tls/$fqdn.key\"; exit \$rc" \
-  || die "installing on $host failed (a refused port, or the install itself); the staged config.yml and key were removed. Re-run 'just deploy $host'."
+runt "s=\"$base/stage\"; sudo sh -c '$script' sh \"\$s\"; rc=\$?; rm -f \"\$s/config.yml\" \"\$s/tls/$fqdn.key\" \"\$s/store-host-token\"; exit \$rc" \
+  || die "installing on $host failed (a refused port, or the install itself); the staged config.yml, key and token were removed. Re-run 'just deploy $host'."
 
 # 8. GET /version (public; verified against the system trust store).
 # The cert names <host>.<domain>, so that is the URL. curl's --resolve takes

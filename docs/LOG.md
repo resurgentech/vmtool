@@ -1783,3 +1783,21 @@ are appended, never edited in; a hook refuses rewrites.
   hung store, start-time refusals, a report reaching an in-process store.
 - Red: build failures on the missing symbols; green; `just check` green.
 - Commits: the N5 commit on `clone-identity`.
+
+## 2026-11-21 — N6 `just deploy` installs the host token
+
+- `scripts/deploy.sh`: with a `store_url`, the host's field of
+  `BAO_STORE_HOST_TOKENS_PATH` (default
+  `kv/infra/labtwo/vmtool_store/host_tokens`) is read with `bao kv get
+  -field=<host>` into a variable, sent over the stdin of one ssh call into
+  `stage/store-host-token` (umask 077), installed `vmtool:vmtool 0600` as
+  `HV_DIR/store-host-token`, and `--store-token-file store-host-token` goes
+  to `config write`. No field or a bao failure: one warning, deploy
+  continues, an old token file is removed. The staged copy is removed
+  either way. `justfile`: `deploy` passes `BAO_STORE_HOST_TOKENS_PATH`.
+- Tests in `scripts/deploy_test.go` with the stub `bao`: install, path
+  override, missing and empty field, no `store_url`, a failed install
+  removes the staged copy, the recipe passes the path; the placeholder token
+  is absent from every argv and from stdout/stderr.
+- Red: six assertion failures; green; `just check` green.
+- Commits: the N6 commit on `clone-identity`.

@@ -8,6 +8,7 @@ bin := "vmtool"
 bao_token_path := "kv/infra/labtwo/vmtool/token"
 domain := "labtwo"
 bao_ca_path := "kv/infra/labtwo/selfsigned_cert"
+bao_store_host_tokens_path := "kv/infra/labtwo/vmtool_store/host_tokens"
 cert_days := "825"
 # Where the daemon lives on a hypervisor (owned by the vmtool user), and the
 # directory behind its libvirt dir pool "vmtool".
@@ -46,7 +47,7 @@ prereqs *ARGS:
 
 # Build vmtool on <host> over ssh (after `just prereqs <host>`), install it into hv_dir with one sudo and run it as the vmtool user, as vmtool-daemon.service on the host's port (default 9473; refuses a port something else listens on; removes an older vmtool.service run from hv_dir); on this machine it runs locally, with no ssh, and an unlisted entry (VMTOOL_SELF_ADDRESS, VMTOOL_SELF_PORT, default 9474) is written by `vmtool config set-host` once /version answers
 deploy host:
-    VMTOOL_ROOT="{{ root }}" VMTOOL_DOMAIN="{{ domain }}" BAO_CA_PATH="{{ bao_ca_path }}" CERT_DAYS="{{ cert_days }}" HV_DIR="{{ hv_dir }}" HV_POOL_DIR="{{ hv_pool_dir }}" GO_MIN="{{ go_min }}" "{{ root }}/scripts/deploy.sh" "{{ host }}"
+    VMTOOL_ROOT="{{ root }}" VMTOOL_DOMAIN="{{ domain }}" BAO_CA_PATH="{{ bao_ca_path }}" CERT_DAYS="{{ cert_days }}" BAO_STORE_HOST_TOKENS_PATH="{{ bao_store_host_tokens_path }}" HV_DIR="{{ hv_dir }}" HV_POOL_DIR="{{ hv_pool_dir }}" GO_MIN="{{ go_min }}" "{{ root }}/scripts/deploy.sh" "{{ host }}"
 
 # Build ./vmtool
 build:

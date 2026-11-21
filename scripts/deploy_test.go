@@ -1270,3 +1270,211 @@ func TestJustDeployPassesPoolDir(t *testing.T) {
 		t.Errorf("deploy recipe: %s", out)
 	}
 }
+
+const storeHostTok = "PLACEHOLDER-not-a-secret-3"
+
+// hostTokenEnv is a remote env whose client has a store (server.url) and whose
+// bao serves the CA and, for host veritech01, the host token from the file
+// hosttok (a missing file: the field is absent and bao fails). Every bao call
+// is logged to bao.argv by the stub header.
+func hostTokenEnv(t *testing.T, withToken bool) (e *certEnv, rhome, hv string) {
+	t.Helper()
+	e, rhome, hv = newRemoteEnv(t)
+	addStub(t, e.stub, "vmtool", storeURLStub)
+	writeStub(t, e, "serverurl", "https://PLACEHOLDER-HOST:8095\n")
+	addStub(t, e.stub, "bao", `if [[ "$1 $2" == "kv get" ]]; then
+  case "$3" in
+    -field=string)
+      case "$4" in
+        */crt) cat '`+e.caCrt+`' ;;
+        */key) cat '`+e.caKey+`' ;;
+        *) exit 3 ;;
+      esac ;;
+    -field=veritech01) [[ -f $d/hosttok ]] || { echo "No value found" >&2; exit 2; }; cat "$d/hosttok" ;;
+    *) exit 2 ;;
+  esac
+fi`)
+	if withToken {
+		writeStub(t, e, "hosttok", storeHostTok+"\n")
+	}
+	return e, rhome, hv
+}
+
+// noHostTokenLeak fails if the host token is in the run's output or in any
+// recorded argv, or anywhere under the stub dir but the stdin of the ssh call
+// that carries it and the installed copy.
+func noHostTokenLeak(t *testing.T, e *certEnv, r result, dirs ...string) {
+	t.Helper()
+	if strings.Contains(r.stdout+r.stderr, storeHostTok) {
+		t.Errorf("host token in output: %s%s", r.stdout, r.stderr)
+	}
+	for _, c := range sshCalls(t, e.stub) {
+		if strings.Contains(c.argv, storeHostTok) {
+			t.Errorf("host token in ssh argv %q", c.argv)
+		}
+	}
+	filepath.Walk(e.stub, func(p string, fi os.FileInfo, err error) error {
+		if err != nil || !fi.Mode().IsRegular() {
+			return nil
+		}
+		b := filepath.Base(p)
+		if strings.HasSuffix(b, ".stdin") || filepath.Base(filepath.Dir(p)) == "installed" || b == "hosttok" {
+			return nil
+		}
+		if d, _ := os.ReadFile(p); strings.Contains(string(d), storeHostTok) {
+			t.Errorf("host token in %s", p)
+		}
+		return nil
+	})
+}
+
+// With a store: the host's field is read from bao by field name (default
+// path), rides the stdin of one ssh call into stage/store-host-token, is
+// installed vmtool 0600 into HV_DIR, config write names it, the staged copy is
+// gone, and the token is in no argv and no output.
+func TestDeployInstallsStoreHostToken(t *testing.T) {
+	e, rhome, hv := hostTokenEnv(t, true)
+	r := e.deploy(t, nil, "veritech01")
+	if r.code != 0 {
+		t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
+	}
+	if !strings.Contains(readOr(t, filepath.Join(e.stub, "bao.argv")), "kv get -field=veritech01 kv/infra/labtwo/vmtool_store/host_tokens\n") {
+		t.Errorf("bao argv: %q", readOr(t, filepath.Join(e.stub, "bao.argv")))
+	}
+	if !strings.Contains(readOr(t, filepath.Join(e.stub, "installed.list")), hv+"/store-host-token 0600\n") {
+		t.Errorf("installed: %s", readOr(t, filepath.Join(e.stub, "installed.list")))
+	}
+	if got := readOr(t, filepath.Join(e.stub, "installed", "store-host-token")); strings.TrimSpace(got) != storeHostTok {
+		t.Errorf("installed token file has the wrong content (len %d)", len(got))
+	}
+	if argv := readOr(t, filepath.Join(e.stub, "remote-vmtool.argv")); !strings.Contains(argv, "--store-url https://PLACEHOLDER-HOST:8095 --store-token-file store-host-token") {
+		t.Errorf("config write argv %q", argv)
+	}
+	carriers := 0
+	for _, c := range sshCalls(t, e.stub) {
+		if strings.Contains(c.stdin, storeHostTok) {
+			carriers++
+			if !strings.Contains(c.argv, "store-host-token") || !strings.Contains(c.argv, "umask 077") {
+				t.Errorf("token call argv %q", c.argv)
+			}
+		}
+	}
+	if carriers != 1 {
+		t.Errorf("%d ssh calls carry the token, want 1", carriers)
+	}
+	if _, err := os.Stat(filepath.Join(rhome, ".cache", "vmtool-deploy", "stage", "store-host-token")); err == nil {
+		t.Error("staged store-host-token not removed")
+	}
+	noHostTokenLeak(t, e, r)
+}
+
+// A failed install still removes the staged token.
+func TestDeployInstallFailureRemovesStagedHostToken(t *testing.T) {
+	e, rhome, _ := hostTokenEnv(t, true)
+	addStub(t, e.stub, "sudo", `exit 1`)
+	r := e.deploy(t, nil, "veritech01")
+	if r.code == 0 {
+		t.Fatal("deploy succeeded")
+	}
+	if _, err := os.Stat(filepath.Join(rhome, ".cache", "vmtool-deploy", "stage", "store-host-token")); err == nil {
+		t.Error("staged store-host-token kept after a failed install")
+	}
+	noHostTokenLeak(t, e, r)
+}
+
+// BAO_STORE_HOST_TOKENS_PATH overrides the default path.
+func TestDeployHostTokensPathOverride(t *testing.T) {
+	e, _, _ := hostTokenEnv(t, true)
+	r := e.deploy(t, []string{"BAO_STORE_HOST_TOKENS_PATH=kv/PLACEHOLDER/tokens"}, "veritech01")
+	if r.code != 0 {
+		t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
+	}
+	if !strings.Contains(readOr(t, filepath.Join(e.stub, "bao.argv")), "kv get -field=veritech01 kv/PLACEHOLDER/tokens\n") {
+		t.Errorf("bao argv: %q", readOr(t, filepath.Join(e.stub, "bao.argv")))
+	}
+}
+
+// No field for the host (bao fails): one warning, deploy continues, config
+// write has no --store-token-file, nothing is staged or installed, and an old
+// installed token is removed.
+func TestDeployNoStoreHostTokenWarns(t *testing.T) {
+	e, rhome, hv := hostTokenEnv(t, false)
+	old := filepath.Join(hv, "store-host-token")
+	if err := os.WriteFile(old, []byte(storeHostTok+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := e.deploy(t, nil, "veritech01")
+	if r.code != 0 {
+		t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
+	}
+	warn := "veritech01 has no store host token; its daemon will not report VMs; see make_secrets.sh hosttokens"
+	if n := strings.Count(r.stderr, warn); n != 1 {
+		t.Errorf("warning count %d, want 1: %s", n, r.stderr)
+	}
+	if strings.Contains(readOr(t, filepath.Join(e.stub, "remote-vmtool.argv")), "store-token-file") {
+		t.Error("config write names a token file")
+	}
+	if _, err := os.Stat(old); err == nil {
+		t.Error("old store-host-token kept")
+	}
+	if strings.Contains(readOr(t, filepath.Join(e.stub, "installed.list")), "store-host-token") {
+		t.Error("a token file was installed")
+	}
+	if _, err := os.Stat(filepath.Join(rhome, ".cache", "vmtool-deploy", "stage", "store-host-token")); err == nil {
+		t.Error("a token file was staged")
+	}
+	noHostTokenLeak(t, e, r)
+}
+
+// An empty field counts as no token.
+func TestDeployEmptyStoreHostTokenWarns(t *testing.T) {
+	e, _, _ := hostTokenEnv(t, false)
+	writeStub(t, e, "hosttok", "\n")
+	r := e.deploy(t, nil, "veritech01")
+	if r.code != 0 || !strings.Contains(r.stderr, "has no store host token") {
+		t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
+	}
+	if strings.Contains(readOr(t, filepath.Join(e.stub, "remote-vmtool.argv")), "store-token-file") {
+		t.Error("config write names a token file")
+	}
+}
+
+// No store_url: bao is not asked for a host token, no warning, no flag; a
+// stale installed token is removed too.
+func TestDeployNoStoreURLNoHostToken(t *testing.T) {
+	e, _, hv := hostTokenEnv(t, true)
+	if err := os.Remove(filepath.Join(e.stub, "serverurl")); err != nil {
+		t.Fatal(err)
+	}
+	old := filepath.Join(hv, "store-host-token")
+	if err := os.WriteFile(old, []byte(storeHostTok+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := e.deploy(t, nil, "veritech01")
+	if r.code != 0 {
+		t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
+	}
+	if strings.Contains(readOr(t, filepath.Join(e.stub, "bao.argv")), "-field=veritech01") {
+		t.Errorf("bao asked for the host token: %q", readOr(t, filepath.Join(e.stub, "bao.argv")))
+	}
+	if strings.Contains(r.stderr, "store host token") || strings.Contains(readOr(t, filepath.Join(e.stub, "remote-vmtool.argv")), "store-token-file") {
+		t.Errorf("host token mentioned: %s", r.stderr)
+	}
+	if _, err := os.Stat(old); err == nil {
+		t.Error("stale store-host-token kept")
+	}
+	noHostTokenLeak(t, e, r)
+}
+
+func TestJustDeployPassesHostTokensPath(t *testing.T) {
+	if _, err := exec.LookPath("just"); err != nil {
+		t.Skip("just not installed")
+	}
+	out, err := exec.Command("just", "--justfile", "../justfile", "--dry-run", "deploy", "h1").CombinedOutput()
+	if err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if !strings.Contains(string(out), `BAO_STORE_HOST_TOKENS_PATH="kv/infra/labtwo/vmtool_store/host_tokens"`) {
+		t.Errorf("deploy recipe: %s", out)
+	}
+}
