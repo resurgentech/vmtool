@@ -222,6 +222,12 @@ check:
     if [[ -f "{{ root }}/files/99-wildcard.yaml" ]]; then
         grep -Eq '^[[:space:]]+dhcp-identifier:[[:space:]]*mac[[:space:]]*$' "{{ root }}/files/99-wildcard.yaml" \
             || shape_failures+=("files/99-wildcard.yaml lacks dhcp-identifier: mac")
+        # K2: take the search domain a vmtool network's DHCP sends, so a
+        # one-word name (n2) resolves as n2.<network>.test. networkd's
+        # default ignores the DHCP domain. Every template installs this one
+        # file (check_netplan_shared), so this pins all seven.
+        grep -Eq '^[[:space:]]+dhcp4-overrides:[[:space:]]*\{[[:space:]]*use-domains:[[:space:]]*true[[:space:]]*\}[[:space:]]*$' "{{ root }}/files/99-wildcard.yaml" \
+            || shape_failures+=("files/99-wildcard.yaml lacks dhcp4-overrides: {use-domains: true} (one-word names would not resolve on vmtool networks)")
     else
         shape_failures+=("files/99-wildcard.yaml is missing")
     fi

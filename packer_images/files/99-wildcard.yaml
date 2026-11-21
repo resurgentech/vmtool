@@ -6,3 +6,4 @@ network:
         name: "en*"
       dhcp4: true
       dhcp-identifier: mac
+      dhcp4-overrides: {use-domains: true}

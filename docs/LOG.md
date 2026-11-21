@@ -2420,3 +2420,16 @@ are appended, never edited in; a hook refuses rewrites.
   the retry disabled (`attempts`, `sleeps = 0, want 2`). Green; `just
   check` green.
 - Commits: the T12 commit on `clone-identity` (this entry rides in it).
+
+## 2026-11-21 — K2 One-word names resolve on every image
+
+- `packer_images/files/99-wildcard.yaml` gains `dhcp4-overrides:
+  {use-domains: true}` for the `en*` match; a shape check in
+  `packer_images/justfile` pins it (the one shared file all seven templates
+  install). `packer_images/docs/LOG.md` entry. README (names on vmtool
+  networks): one-word names need images built since 2026-11-21 or the
+  hand edit it gives; `vm.<network>.test` always works.
+- Red: `check: shape: files/99-wildcard.yaml lacks dhcp4-overrides:
+  {use-domains: true} ...`. Green: `check: ok`; `just check` green. No
+  `packer build` run.
+- Commits: the K2 commit on `clone-identity` (this entry rides in it).

@@ -343,3 +343,15 @@ rewrites.
   delete it. No upgrade playbook is wired.
 - Shape checks `check_no_run_script` and `check_update_clone` in the image
   gate; red before the change, green after.
+
+## 2026-11-21 — K2 One-word names resolve on every image
+
+- `files/99-wildcard.yaml` (installed by all seven templates) gains
+  `dhcp4-overrides: {use-domains: true}` on the `en*` match, so networkd
+  takes the search domain a vmtool network's DHCP sends and `n2` resolves
+  as `n2.<network>.test`. The default NAT network sends no domain; its card
+  is unaffected.
+- Shape check in `check`: the shared file must carry that line (one file,
+  so it pins all seven templates). Red before the change, green after.
+- Existing images and VMs keep the old behaviour until a rebuild (not run
+  here) or a hand edit of the guest's netplan (README gives the line).

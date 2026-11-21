@@ -1410,7 +1410,14 @@ Attaching a VM reserves an address for the card's MAC in the home's network
 (`--ip` picks it, else the lowest free address of .100 to .200) and gives it the
 VM's name. A VM called `web` resolves as `web` and as `web.net1.test` (the
 domain is `--domain`, else `<name>.test`; so `vm.net1.test` for a VM called
-`vm`) from the first boot. Reservations never expire:
+`vm`) from the first boot. The one-word name (`web`) needs the guest to take
+the network's search domain from DHCP; images built since 2026-11-21 do
+(`dhcp4-overrides: {use-domains: true}` in their netplan). Images built
+before, and VMs cloned from them, keep the old behaviour until the images are
+rebuilt or the guest's netplan is changed by hand; the full name
+`web.net1.test` always works. By hand, in the guest:
+`sudo sed -i 's/^\( *\)dhcp-identifier: mac$/&\n\1dhcp4-overrides: {use-domains: true}/' /etc/netplan/99-wildcard.yaml && sudo netplan apply`.
+Reservations never expire:
 a VM's fixed address survives a reboot, a shutdown and a month off, and is
 freed only by `vmtool net detach` or `vmtool delete`. A name that is already on
 the network, or an address already held, is refused.
