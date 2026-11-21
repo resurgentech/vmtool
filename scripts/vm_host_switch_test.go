@@ -2,8 +2,11 @@ package scripts_test
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -212,6 +215,94 @@ func TestSetupHostNetworkHomeKeepsDaemonTasks(t *testing.T) {
 		}
 		if !found {
 			t.Errorf("no task %q", name)
+		}
+	}
+}
+
+// H1: the playbook waits for libvirt with a call a host without QEMU answers.
+// `virsh version` needs an emulator ("Cannot find suitable emulator"), so on a
+// network home it never succeeds; `virsh list --all` opens a connection to
+// the daemon and needs none.
+func TestSetupHostLibvirtWaitNeedsNoEmulator(t *testing.T) {
+	p := readSetupPlay(t)
+	var wait map[string]any
+	for _, task := range p.Tasks {
+		if task["name"] == "Wait for the system libvirt socket" {
+			wait = task
+		}
+	}
+	if wait == nil {
+		t.Fatal("no 'Wait for the system libvirt socket' task")
+	}
+	if got := fmt.Sprint(wait["ansible.builtin.command"]); got != "virsh -c qemu:///system list --all" {
+		t.Errorf("the libvirt wait runs %q, want %q", got, "virsh -c qemu:///system list --all")
+	}
+	if wait["changed_when"] != false || wait["check_mode"] != false {
+		t.Errorf("the libvirt wait: changed_when %v, check_mode %v, want false and false", wait["changed_when"], wait["check_mode"])
+	}
+	if wait["retries"] != 10 || wait["delay"] != 2 {
+		t.Errorf("the libvirt wait: retries %v, delay %v, want 10 and 2", wait["retries"], wait["delay"])
+	}
+	if strings.Contains(fmt.Sprint(wait["when"]), "vmtool_vm_host") {
+		t.Errorf("the libvirt wait waits for vmtool_vm_host: a network home needs it")
+	}
+}
+
+// No playbook and no script asks libvirt for its version.
+func TestNoVirshVersionInPlaybooksOrScripts(t *testing.T) {
+	re := regexp.MustCompile(`virsh\b[^\n]*\bversion\b`)
+	var files []string
+	err := filepath.WalkDir("../ansible/playbooks", func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			files = append(files, p)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sh, err := filepath.Glob("*.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	files = append(files, sh...)
+	if len(files) < 3 {
+		t.Fatalf("only %d files scanned", len(files))
+	}
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, line := range strings.Split(string(b), "\n") {
+			if re.MatchString(line) {
+				t.Errorf("%s:%d asks virsh for its version (fails on a host without QEMU): %s", f, i+1, strings.TrimSpace(line))
+			}
+		}
+	}
+}
+
+// The README says what a home does without QEMU.
+func TestReadmeNetworkHomeNeedsNoQEMU(t *testing.T) {
+	b, err := os.ReadFile("../README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	i := strings.Index(s, "#### A network home")
+	if i < 0 {
+		t.Fatal("README has no network home section")
+	}
+	sec := s[i:]
+	if j := strings.Index(sec[5:], "\n#"); j >= 0 {
+		sec = sec[:j+5]
+	}
+	for _, w := range []string{"A home needs no QEMU", "libvirt manages its networks without it"} {
+		if !strings.Contains(sec, w) {
+			t.Errorf("README's network home section lacks %q", w)
 		}
 	}
 }

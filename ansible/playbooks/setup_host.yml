@@ -324,8 +324,10 @@
         - libvirtd.service
       when: vmtool_units.stdout is search('^' ~ (item | regex_escape), multiline=True)
 
+    # `list --all` must reach the daemon, and needs no emulator: `version`
+    # fails on a network home (no QEMU) with "Cannot find suitable emulator".
     - name: Wait for the system libvirt socket
-      ansible.builtin.command: virsh -c qemu:///system version
+      ansible.builtin.command: virsh -c qemu:///system list --all
       register: vmtool_virsh
       changed_when: false
       check_mode: false

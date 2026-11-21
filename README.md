@@ -261,7 +261,8 @@ With `vmtool_vm_host` false the playbook still installs libvirt, dnsmasq, the
 libvirt development files, a C compiler). It leaves out QEMU, the UEFI
 firmware, the storage pools, the NVMe stripe and the `/dev/kvm` check. Naming
 `vmtool_nvme_drives` or `vmtool_extra_pools` with it is an error. The default is
-true, so an existing host is prepared exactly as before.
+true, so an existing host is prepared exactly as before. A home needs no QEMU:
+libvirt manages its networks without it.
 
 Then mark the host in the workstation's `config.yml`:
 
