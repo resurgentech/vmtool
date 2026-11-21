@@ -201,7 +201,9 @@ func TestKeeperLinksOnlyWhatTheRegistryMatches(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			e := newKeeperEnv(t, nil)
-			e.host.set("net1", 10000, true)
+			// The home form: a member-form network the registry does not list
+			// is removed at start (G2), a home form one never is.
+			e.host.set("net1", 10000, false)
 			e.store.set(nil, &storeclient.HostNetworks{Host: "hv1", Networks: c.reg})
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()

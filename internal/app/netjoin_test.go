@@ -30,6 +30,7 @@ type netHost struct {
 	deleted  []string
 	oldHost  bool  // makes a home-form network when asked for a member
 	linkErr  error // SetNetworkLinks fails
+	delErr   error // DeleteNetwork fails
 	createVN []string
 }
 
@@ -86,6 +87,9 @@ func (h *netHost) RemoveNetworkLink(name string) error {
 
 func (h *netHost) DeleteNetwork(name string) error {
 	h.deleted = append(h.deleted, name)
+	if h.delErr != nil {
+		return h.delErr
+	}
 	n, ok := h.nets[name]
 	if !ok {
 		return fmt.Errorf("network %q: %w", name, vmtool.ErrNotFound)

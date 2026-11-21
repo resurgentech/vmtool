@@ -605,3 +605,240 @@ func (s *Service) Underlay(_ context.Context, m Manager, to string) (*vmtool.Und
 	}
 	return u, nil
 }
+
+// DeleteNetworkResult is what a delete did.
+type DeleteNetworkResult struct {
+	Network string
+	Host    string
+	// Registered is false when the network was not in the registry (or there is
+	// no store): only the host's libvirt network was removed, as in V1.
+	Registered bool
+	// Members are the member hosts that unlinked and removed their member network.
+	Members []string
+	// Left has one line for each member that did not answer: its row is removed
+	// and its network cleans itself up when its daemon starts.
+	Left []string
+}
+
+// hostSilent reports whether err is a host that did not answer (the transport
+// failed or timed out), as opposed to one that answered with a refusal.
+func hostSilent(err error) bool {
+	var ae *Error
+	return AsError(err, &ae) && ae.Kind == KindBadGateway
+}
+
+// deleteStop is a refusal that stops the delete part way: it keeps the kind of
+// err, says which hosts were already done, and that the command can be run
+// again (every step can be repeated).
+func deleteStop(host, name string, done []string, err error) error {
+	rerun := fmt.Sprintf("fix that and run vmtool net delete %s %s again", host, name)
+	if len(done) > 0 {
+		rerun = fmt.Sprintf("done before it stopped: %s; %s", strings.Join(done, ", "), rerun)
+	}
+	var ae *Error
+	if AsError(err, &ae) {
+		c := *ae
+		c.Err = fmt.Errorf("%v (%s)", ae.Err, rerun)
+		return &c
+	}
+	return internal("net delete", fmt.Errorf("%v (%s)", err, rerun))
+}
+
+// DeleteNetworkOnHost deletes the vmtool network name from host, whose Manager
+// is m. With no store, or a network the registry does not have, it is
+// DeleteNetwork (V1). With a store that does not answer it is refused: a
+// registered network must not be removed from its home while its entry stays.
+//
+// A registered network is deleted only on its home, and only while no VM
+// anywhere has a card on it (the home's own libvirt, and every live inventory
+// row of the store that reports the network). Then, each step repeatable:
+//
+//  1. every member other than the home: if its daemon answers it unlinks and
+//     undefines its member network (refused there, and the delete stops, when a
+//     card is attached), then its row is removed; if it does not answer only
+//     its row is removed, and its keeper removes the network when it starts;
+//  2. the home unlinks and undefines its network;
+//  3. the network's reservation records, the home's row and the entry go.
+func (s *Service) DeleteNetworkOnHost(ctx context.Context, host string, m Manager, name string) (*DeleteNetworkResult, error) {
+	const op = "net delete"
+	if name == "" {
+		return nil, invalid(op, errors.New("a network name is required"))
+	}
+	res := &DeleteNetworkResult{Network: name, Host: host}
+	if s.Store == nil {
+		if err := s.DeleteNetwork(ctx, m, name); err != nil {
+			return nil, err
+		}
+		return res, nil
+	}
+	c := s.Store.registryClient(ctx)
+	if c == nil {
+		return nil, unavailable(op, fmt.Errorf("the store is needed to delete a network that may be registered; try again (the store at %s does not answer this command)", s.Store.Host()))
+	}
+	rn, err := s.registryNetwork(ctx, op, c, name)
+	if err != nil {
+		return nil, err
+	}
+	if rn == nil {
+		if err := s.DeleteNetwork(ctx, m, name); err != nil {
+			return nil, err
+		}
+		return res, nil
+	}
+	res.Registered = true
+	if host != rn.Home {
+		if memberRow(rn.Members, host) != nil {
+			return nil, conflict(op, fmt.Errorf("%s is a member of network %q; run vmtool net leave %s %s, or delete on the home %s", host, name, host, name, rn.Home))
+		}
+		return nil, conflict(op, fmt.Errorf("network %q is registered with home %s, not %s; delete it on %s", name, rn.Home, host, rn.Home))
+	}
+
+	local, err := m.Network(name)
+	switch {
+	case err != nil && !vmtool.IsNotFound(err):
+		return nil, netErr(op, err)
+	case err != nil:
+		local = nil
+	case !local.Vmtool:
+		return nil, conflict(op, fmt.Errorf("%w: network %q on %s has bridge %q, not %s plus six lowercase hex digits; vmtool leaves it alone", vmtool.ErrNetworkNotVmtool, name, host, local.Bridge, vmtool.BridgePrefix))
+	}
+
+	// No card anywhere: the home's libvirt, and every live row of the store.
+	cards := map[string]bool{}
+	if local != nil {
+		for _, vm := range local.VMs {
+			cards[host+"/"+vm] = true
+		}
+	}
+	cctx, cancel := s.credCtx(ctx)
+	inv, err := c.Inventory(cctx, "", false)
+	cancel()
+	if err != nil {
+		return nil, unavailable(op, fmt.Errorf("the VMs on network %q could not be read from the store at %s: %v", name, s.Store.Host(), err))
+	}
+	for _, vm := range inv.Vms {
+		if vm.Networks == nil {
+			continue
+		}
+		for _, n := range *vm.Networks {
+			if n.Network == name {
+				cards[vm.Host+"/"+vm.Name] = true
+				break
+			}
+		}
+	}
+	if len(cards) > 0 {
+		refs := make([]string, 0, len(cards))
+		for r := range cards {
+			refs = append(refs, r)
+		}
+		sort.Strings(refs)
+		cmds := make([]string, len(refs))
+		for i, r := range refs {
+			cmds[i] = fmt.Sprintf("vmtool net detach %s %s", r, name)
+		}
+		return nil, conflict(op, fmt.Errorf("%w: network %q has VMs on it: %s; detach them first (%s)", vmtool.ErrNetworkInUse, name, strings.Join(refs, ", "), strings.Join(cmds, "; ")))
+	}
+
+	// The members, one after the other.
+	rows := append([]storeclient.NetworkMember(nil), rn.Members...)
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Host < rows[j].Host })
+	for _, row := range rows {
+		if row.Host == rn.Home {
+			continue
+		}
+		line, err := s.deleteMemberNetwork(ctx, c, rn, row, name)
+		if err != nil {
+			return nil, deleteStop(host, name, res.Members, err)
+		}
+		if line != "" {
+			res.Left = append(res.Left, line)
+		} else {
+			res.Members = append(res.Members, row.Host)
+		}
+	}
+
+	// The home's own network.
+	if local != nil {
+		if nm, ok := AsNetMember(m); ok {
+			if err := nm.RemoveNetworkLink(name); err != nil {
+				return nil, deleteStop(host, name, res.Members, netErr(op, fmt.Errorf("unlinking %s from %q: %w", host, name, err)))
+			}
+		}
+		if err := m.DeleteNetwork(name); err != nil && !vmtool.IsNotFound(err) {
+			return nil, deleteStop(host, name, res.Members, netErr(op, err))
+		}
+	}
+	// Its records, its row, then the entry.
+	cctx, cancel = s.credCtx(ctx)
+	defer cancel()
+	rsv, err := c.NetworkReservations(cctx, name)
+	if err != nil && !errors.Is(err, storeclient.ErrNotFound) {
+		return nil, deleteStop(host, name, res.Members, unavailable(op, fmt.Errorf("the registry at %s could not list the reservations of %q: %v", s.Store.Host(), name, err)))
+	}
+	for _, r := range rsv {
+		if err := c.DeleteNetworkReservation(cctx, name, r.Mac); err != nil && !errors.Is(err, storeclient.ErrNotFound) {
+			return nil, deleteStop(host, name, res.Members, unavailable(op, fmt.Errorf("the registry at %s could not remove the reservation %s of %q: %v", s.Store.Host(), r.Mac, name, err)))
+		}
+	}
+	if err := c.DeleteNetworkMember(cctx, name, host); err != nil && !errors.Is(err, storeclient.ErrNotFound) {
+		return nil, deleteStop(host, name, res.Members, unavailable(op, fmt.Errorf("the registry at %s could not remove the row of %s on %q: %v", s.Store.Host(), host, name, err)))
+	}
+	switch err := c.DeleteNetwork(cctx, name); {
+	case err == nil, errors.Is(err, storeclient.ErrNotFound):
+	case errors.Is(err, storeclient.ErrRegistryConflict):
+		return nil, deleteStop(host, name, res.Members, conflict(op, fmt.Errorf("the registry at %s still lists members of %q (a host joined meanwhile?); run vmtool net delete again", s.Store.Host(), name)))
+	default:
+		return nil, deleteStop(host, name, res.Members, unavailable(op, fmt.Errorf("the registry at %s could not remove the entry of %q: %v", s.Store.Host(), name, err)))
+	}
+	return res, nil
+}
+
+// deleteMemberNetwork takes one member out of a network that is being deleted:
+// if its daemon answers, it unlinks and undefines its member network, and its
+// row is removed either way. It answers a line, not an error, for a member that
+// was left to clean itself up (it did not answer) or whose network is not
+// vmtool's member form (left alone); "" when it did the work.
+func (s *Service) deleteMemberNetwork(ctx context.Context, c *storeclient.Client, rn *storeclient.Network, row storeclient.NetworkMember, name string) (string, error) {
+	const op = "net delete"
+	line := ""
+	asleep := func(err error) {
+		line = fmt.Sprintf("%s did not answer (%v): its row is removed and it removes its network %q itself when it wakes", row.Host, err, name)
+	}
+	mh, release, err := s.openHost(row.Host)
+	if err != nil {
+		asleep(err)
+	} else {
+		defer release()
+		local, err := mh.Network(name)
+		switch {
+		case err != nil && hostSilent(err):
+			asleep(err)
+		case err != nil && !vmtool.IsNotFound(err):
+			return "", netErr(op, fmt.Errorf("host %s: %w", row.Host, err))
+		case err == nil && !local.IsMemberForm():
+			line = fmt.Sprintf("%s has a network %q that is not the member form (%s): left alone; its row is removed", row.Host, name, local.Bridge)
+		case err == nil && len(local.VMs) > 0:
+			return "", conflict(op, fmt.Errorf("%w: host %s has VMs on network %q: %s; detach them first (vmtool net detach %s/%s %s)", vmtool.ErrNetworkInUse, row.Host, name, strings.Join(local.VMs, ", "), row.Host, local.VMs[0], name))
+		case err == nil:
+			nm, ok := AsNetMember(mh)
+			if !ok {
+				return "", netErr(op, errOldHost(row.Host))
+			}
+			if err := nm.RemoveNetworkLink(name); err != nil {
+				return "", netErr(op, fmt.Errorf("unlinking %s from %q: %w", row.Host, name, err))
+			}
+			if err := mh.DeleteNetwork(name); err != nil {
+				// Put the link back so the host is as it was.
+				_ = nm.SetNetworkLinks(name, row.LanIp, row.LanDev, peerIPs(rn.Members, row.Host))
+				return "", netErr(op, fmt.Errorf("host %s: %w", row.Host, err))
+			}
+		}
+	}
+	cctx, cancel := s.credCtx(ctx)
+	defer cancel()
+	if err := c.DeleteNetworkMember(cctx, name, row.Host); err != nil && !errors.Is(err, storeclient.ErrNotFound) {
+		return "", unavailable(op, fmt.Errorf("the registry at %s could not remove the row of %s on %q: %v", s.Store.Host(), row.Host, name, err))
+	}
+	return line, nil
+}

@@ -32,9 +32,9 @@ Reservations never expire, so a VM keeps its address. If the home is down,
 VM-to-VM traffic by address keeps working; names, new addresses and NAT do not.
 A network that was started by hand (virsh net-destroy, net-start) leaves the
 VMs' cards detached: restart libvirtd, then the vmtool daemon (its event watch
-does not survive a libvirtd restart). A network that spans hosts is not removed
-from the registry by net delete yet. The README's "VM networks" section has
-the rest.`,
+does not survive a libvirtd restart). net delete on a network's home removes the
+network on every member and its registry entry. The README's "VM networks"
+section has the rest.`,
 	}
 	cmd.AddCommand(netCreateCmd(e), netDeleteCmd(e), netShowCmd(e), netAttachCmd(e), netDetachCmd(e), netJoinCmd(e), netLeaveCmd(e))
 	return cmd
@@ -151,17 +151,48 @@ func netDeleteCmd(e *env) *cobra.Command {
 		Short: "Delete a network vmtool made on a host",
 		Long: `Stop and remove the vmtool network <name> on <host>. A network vmtool did not
 make (its bridge is not vmt- plus six hex digits), and one with VMs attached,
-are refused.`,
+are refused.
+
+A network in the store's registry is removed everywhere, and its registry
+entry with it. Run it on the network's home (on a member it is refused: use
+net leave, or run it on the home). It is refused while any VM has a card on
+the network, on the home or as a live inventory row of the store; it lists the
+VMs and the net detach commands. Then each member host unlinks and removes its
+member network and its row is removed from the registry; a member that does not
+answer (asleep) only has its row removed, is named in the output, and removes
+its own network when its daemon starts and finds the registry does not list it.
+Then the home's network, its reservation records, its row and the entry go. A
+member that refuses (a card on it) stops the delete and the message says what
+was done; run it again after fixing that: every step can be repeated.
+
+With a store configured that does not answer, the delete is refused (the store
+is needed to delete a network that may be registered; try again). With no
+store configured, only the host's network is removed.`,
 		Args: cobra.ExactArgs(2),
 	}
 	cmd.RunE = withNetHost(e, func(m app.Manager, cmd *cobra.Command, args []string) error {
-		if err := e.service("").DeleteNetwork(cmd.Context(), m, args[1]); err != nil {
+		res, err := e.service("").DeleteNetworkOnHost(cmd.Context(), args[0], m, args[1])
+		if err != nil {
 			return err
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "Network %q deleted from %s\n", args[1], args[0])
+		writeDelete(cmd.OutOrStdout(), res)
 		return nil
 	})
 	return cmd
+}
+
+func writeDelete(w io.Writer, r *app.DeleteNetworkResult) {
+	fmt.Fprintf(w, "Network %q deleted from %s\n", r.Network, r.Host)
+	if !r.Registered {
+		return
+	}
+	for _, h := range r.Members {
+		fmt.Fprintf(w, "Member:    %s unlinked and removed its network\n", h)
+	}
+	for _, l := range r.Left {
+		fmt.Fprintln(w, "Left:     ", l)
+	}
+	fmt.Fprintln(w, "Registry:  the network's entry, members and reservations are removed from the registry")
 }
 
 func netShowCmd(e *env) *cobra.Command {

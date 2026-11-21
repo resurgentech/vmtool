@@ -68,6 +68,9 @@ type NetLinkKeeper struct {
 
 	// Touched only by the keeper goroutine.
 	said map[string]bool // what has been logged, so each thing is said once
+	// cleaned: the start-time pass that removes stale member networks has had
+	// the store's answer (so it never runs again in this process).
+	cleaned bool
 
 	// passDone, for tests, is called at the end of every pass.
 	passDone func(retry bool)
@@ -225,6 +228,7 @@ func (k *NetLinkKeeper) pass(ctx context.Context) (retry bool) {
 		}
 	}
 	if len(nets) == 0 {
+		k.cleaned = k.cleaned || all // nothing to clean at start; a later pass never cleans
 		return false
 	}
 	if !canLink {
@@ -250,9 +254,16 @@ func (k *NetLinkKeeper) pass(ctx context.Context) (retry bool) {
 	for _, n := range hn.Networks {
 		byVNI[uint32(n.Vni)] = n
 	}
+	// The store answered: the pass at start may clean up (once).
+	clean := all && !k.cleaned
+	k.cleaned = k.cleaned || all
 	for _, l := range nets {
 		key := "skip:" + l.name
 		rn, ok := byVNI[l.info.VNI]
+		if clean && l.info.IsMemberForm() && (!ok || rn.Name != l.name || (rn.Member == nil && rn.Home != k.c.Host)) {
+			k.removeStale(m, nm, l.name)
+			continue
+		}
 		switch {
 		case !ok:
 			k.say(key, slog.LevelInfo, fmt.Sprintf("network links: network %q (bridge %s) is not linked: the registry has no network with VNI %d for this host", l.name, l.info.Bridge, l.info.VNI))
@@ -280,6 +291,32 @@ func (k *NetLinkKeeper) pass(ctx context.Context) (retry bool) {
 		delete(k.said, key)
 	}
 	return retry
+}
+
+// removeStale removes a member-form network the registry does not list this
+// host for (the host was away while the network was deleted, or left): it
+// unlinks, destroys and undefines it and says so in one line. It reads the
+// network again first and keeps one that has a card on it, in any domain,
+// running or only defined. A refusal or failure is one warning; the next start
+// tries again.
+func (k *NetLinkKeeper) removeStale(m Manager, nm NetMember, name string) {
+	info, err := m.Network(name)
+	if err != nil || info == nil || !info.IsMemberForm() {
+		return
+	}
+	if len(info.VMs) > 0 {
+		k.say("stale:"+name, slog.LevelWarn, fmt.Sprintf("network links: network %q (bridge %s) is not in the registry for this host any more, but VMs have a card on it (%s): it is left in place; detach them and restart the daemon to remove it", name, info.Bridge, netNames(info.VMs)))
+		return
+	}
+	if err := nm.RemoveNetworkLink(name); err != nil {
+		k.say("stale:"+name, slog.LevelWarn, fmt.Sprintf("network links: network %q is not in the registry for this host any more, but its link could not be removed: %v", name, err))
+		return
+	}
+	if err := m.DeleteNetwork(name); err != nil {
+		k.say("stale:"+name, slog.LevelWarn, fmt.Sprintf("network links: network %q is not in the registry for this host any more, but it could not be removed: %v", name, err))
+		return
+	}
+	k.c.Log.Info(fmt.Sprintf("network links: removed network %q (bridge %s): the registry does not list this host for it any more (it was deleted or left while this host was away)", name, info.Bridge))
 }
 
 func nets2names[T any](in []T, f func(T) string) []string {

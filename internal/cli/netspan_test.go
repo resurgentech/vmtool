@@ -58,6 +58,39 @@ func TestNetJoinHelp(t *testing.T) {
 	}
 }
 
+// G2: `net delete` says what it did on each member and which ones were left to
+// clean themselves up; its help says it removes the registry entry.
+func TestWriteDeleteResult(t *testing.T) {
+	var b bytes.Buffer
+	writeDelete(&b, &app.DeleteNetworkResult{Network: "net1", Host: "home1", Registered: true, Members: []string{"hv1"},
+		Left: []string{"hv2 did not answer (host \"hv2\" does not answer): its row is removed and it removes its network \"net1\" itself when it wakes"}})
+	for _, want := range []string{`Network "net1" deleted from home1`, "registry", "hv1", "hv2 did not answer", "wakes"} {
+		if !strings.Contains(b.String(), want) {
+			t.Errorf("delete output lacks %q:\n%s", want, b.String())
+		}
+	}
+	b.Reset()
+	writeDelete(&b, &app.DeleteNetworkResult{Network: "net1", Host: "home1"})
+	if b.String() != "Network \"net1\" deleted from home1\n" {
+		t.Errorf("unregistered delete output:\n%s", b.String())
+	}
+}
+
+func TestNetDeleteHelp(t *testing.T) {
+	t.Setenv(config.TokenEnv, gateToken)
+	dir := writeWorkdir(t, "name: jetfire\n"+goodConfig(), "")
+	r := runGate(t, dir, map[string]bool{"vmtool net delete": true, "vmtool net": true}, "net", "delete", "--help")
+	for _, want := range []string{"registry", "home", "net leave", "net detach", "asleep", "store"} {
+		if !strings.Contains(r.out, want) {
+			t.Errorf("delete help lacks %q:\n%s", want, r.out)
+		}
+	}
+	r = runGate(t, dir, map[string]bool{"vmtool net": true}, "net", "--help")
+	if strings.Contains(r.out, "not removed from the registry by net delete yet") {
+		t.Errorf("net help still says delete leaves the registry entry:\n%s", r.out)
+	}
+}
+
 func TestWriteJoinAndLeaveResults(t *testing.T) {
 	var b bytes.Buffer
 	writeJoin(&b, &app.JoinResult{Network: "net1", Host: "hv1", Home: "home1", VNI: 10000, LanIP: "192.0.2.11", LanDev: "eth-test",

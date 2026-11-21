@@ -988,10 +988,14 @@ their LAN addresses, so joining needs the store.
   names, DHCP for new addresses and NAT through the overlay fail, and
   reservations never expire, so addresses survive. A member that is asleep
   takes the peer list from the registry when its daemon starts.
+- **Deleting a registered network.** `vmtool net delete HOME NAME` (a CLI
+  workflow over the existing routes, no new route) removes the member rows,
+  the reservation records, the home's row and then the entry, so the store's
+  409 on `DELETE /v1/networks/{name}` while members remain is what a REST
+  client of the registry sees if it skips the rows. A member that was asleep
+  has its row removed and its libvirt network removed by its own daemon at
+  start, when the registry does not list the host for it.
 - **Known limits (current).**
-  - `vmtool net delete` does not remove the registry entry of a network that is
-    registered; and once a network has member rows (the home gets one at the
-    first join) `DELETE /v1/networks/{name}` is 409 until they are removed.
   - The "network started" watch is one libvirt connection, opened once: after a
     libvirtd restart, events are not seen until the vmtool daemon restarts.
     After a manual `net-destroy` and `net-start` the VMs' cards stay detached

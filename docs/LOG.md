@@ -2236,3 +2236,43 @@ are appended, never edited in; a hook refuses rewrites.
 - Red: 32 README, 9 spec README, 5 help keywords missing; green;
   `just check` green.
 - Commits: the V7 commit on `clone-identity`.
+
+## 2026-11-21 — G1 Tests cannot open a libvirt connection
+
+- `pkg/vmtool/connect.go` `connect(uri)` is the one caller of the libvirt
+  binding's connect functions; under `go test` (`testing.Testing()`) it
+  returns `ErrLibvirtInTest` ("vmtool: tests must not connect to libvirt
+  (uri); use a fake Manager or hosts.NewWith") before calling the binding.
+  Nothing turns it off. `NewManager` and `WatchNetworkStarted` use it; the
+  watch refuses before registering the event loop too.
+- Shape test: every `.go` file of the module (not `.claude/`) is parsed; a
+  connect function used outside `connect` fails it.
+- Tests: `NewManager`, `WatchNetworkStarted`, `connect` and `hosts.New(cfg)`
+  resolving the local name all return the refusal. AGENTS.md hard rule 6
+  says `pkg/vmtool` refuses a libvirt connection under `go test`.
+- Red: shape test (assertion: the two sites); refusal tests compile-only
+  (an assertion red would have opened real libvirt). Green; `just check`
+  green.
+- Commits: d720542.
+
+## 2026-11-21 — G2 `net delete` removes a registered network everywhere
+
+- `Service.DeleteNetworkOnHost` (`internal/app/netspan.go`): in store mode,
+  a registered network is deleted only on its home and only while no VM has
+  a card on it (the home's libvirt and every live inventory row); members
+  that answer unlink and undefine their member network (a card there stops
+  the delete, saying what was done), silent members only lose their row and
+  are named; then the home unlinks and undefines, its reservation records,
+  its row and the entry go. Every step reruns. A configured store that does
+  not answer refuses ("the store is needed to delete a network that may be
+  registered; try again"). No store: V1.
+- The keeper's start pass (`internal/app/netlinks.go`), once the store has
+  answered, removes a member-form `vmt-` network the registry no longer
+  lists for this host when no domain has a card on it; never a home form,
+  nothing with the store down.
+- CLI `net delete` prints members done and left; README "Deleting a
+  registered network" and spec/README replace the old limitation.
+- Red: assertion failures against a V1 stub (app, keeper, CLI); three guard
+  tests passed on the stub. Green; `just check` green.
+- Commits: the G2 commit on `clone-identity` (the G1 entry above landed
+  with it too).

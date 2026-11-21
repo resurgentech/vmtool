@@ -1365,7 +1365,7 @@ vmtool net attach hv1/web net1               # an extra card on a VM that exists
 vmtool net detach hv1/web net1               # the card and its reservation
 vmtool net show hv1 net1
 vmtool networks --host hv1                  # net1 (vmtool), default, ...
-vmtool net delete hv1 net1                  # refused while a VM has a card on it
+vmtool net delete hv1 net1                  # refused while a VM has a card on it; on a registered network's home it removes every member's and the registry entry
 ```
 
 `vmtool networks` writes `net1 (vmtool)` for a network vmtool made, `net1
@@ -1456,13 +1456,22 @@ records whether a host is up.
   gets the new peer list; one that does not is skipped with a line and
   takes the peer list from the registry when it wakes (its daemon reads it at
   start).
-- **Current limitation.** `vmtool net delete` of a network that is in the
-  registry does not remove the registry entry yet, and once a network has
-  member rows (the home gets one at the first join), the store refuses
-  `DELETE /v1/networks/{name}` while any remain. Take the members out with `net
-  leave` first; the home's own row cannot be left, so for now it is removed by
-  hand with the store's `DELETE /v1/networks/{name}/members/{host}` (a user
-  token), then the entry with `DELETE /v1/networks/{name}`.
+- **Deleting a registered network.** `vmtool net delete HOME NAME` removes the
+  network everywhere and its registry entry. It must run on the home (on a
+  member it says to run `net leave`, or to use the home). It is refused while
+  any VM has a card on the network, on the home or in a live inventory row of
+  the store, and lists the VMs and the `net detach` commands. Each member host
+  that answers unlinks and removes its member network, then its row is
+  removed; a member that does not answer only has its row removed and the
+  command names it: its daemon removes the network when it starts and finds the
+  registry does not list the host for it (a member-form network on a `vmt-`
+  bridge with no card on it; a home-form network is never removed that way,
+  and with the store unreachable nothing is). Then the home's network, its
+  reservation records, its row and the entry go. A member that refuses (a card
+  on it) stops the delete; the message says what was done, and the command can
+  be run again, as it can after any failure. With a store configured that does
+  not answer, `net delete` is refused (try again); with no store it removes
+  only the host's network.
 
 #### After a network restart
 
