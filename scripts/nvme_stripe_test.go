@@ -191,9 +191,9 @@ func TestNvmeStripeOnlyCreatesNeverDestroys(t *testing.T) {
 		t.Errorf("every lvcreate must be `lvcreate --type thin-pool` (1) or the scratch form (1): %d lvcreate, %d thin-pool, %d scratch", nCreate, nThin, nScratch)
 	}
 	nChange := strings.Count(norc, "lvchange")
-	nOK := len(regexp.MustCompile(`lvchange, (--zero, "n"|--metadataprofile, vmtool-thin|--discards, passdown)`).FindAllString(norc, -1))
-	if nChange != nOK || nChange != 3 {
-		t.Errorf("lvchange only with --zero n, --metadataprofile vmtool-thin or --discards passdown: %d lvchange, %d allowed (want 3)", nChange, nOK)
+	nOK := len(regexp.MustCompile(`lvchange, (--zero, "n"|--metadataprofile, vmtool-thin|--discards, passdown|--errorwhenfull, "n")`).FindAllString(norc, -1))
+	if nChange != nOK || nChange != 4 {
+		t.Errorf("lvchange only with --zero n, --metadataprofile vmtool-thin, --discards passdown or --errorwhenfull n: %d lvchange, %d allowed (want 4)", nChange, nOK)
 	}
 	creates := map[string]bool{}
 	for _, tk := range nvmeTasks(t) {
@@ -820,7 +820,7 @@ func TestNvmeThinCreate(t *testing.T) {
 	for _, w := range []string{
 		"'lvcreate', '--type', 'thin-pool'", "'-n', vmtool_nvme_thin_pool",
 		"'--chunksize', vmtool_nvme_thin_chunk", "'--poolmetadatasize', vmtool_nvme_thin_metadata",
-		"'--zero', 'n'", "'--errorwhenfull', 'n'", "'--monitor', 'y'",
+		"'--zero', 'n'", "'--monitor', 'y'",
 		"'--metadataprofile', 'vmtool-thin'", "'--addtag', 'vmtool_thinpool'", "vmtool_nvme_vg",
 		"'--discards', 'passdown'", "'%' in", "'-l'", "'-L'", "vmtool_nvme_thin_size",
 	} {
@@ -932,6 +932,44 @@ func TestNvmeThinExpressionsEvaluate(t *testing.T) {
 		vars := map[string]any{"_lv": lv, "vmtool_nvme_thin_discards": discardsExpr, "vmtool_nvme_thin_probe": map[string]any{"rc": rc, "stdout": c.stdout}}
 		wantEval(t, label, "vmtool_nvme_thin_discards", vars, c.want)
 	}
+	// H2: lv_when_full, and the guard of "queue writes when full" over it: it
+	// runs on a pool made in this run and on an adopted pool not at queue.
+	whenFullExpr, _ := sf["vmtool_nvme_thin_when_full"].(string)
+	if whenFullExpr == "" {
+		t.Fatal("set_fact lacks vmtool_nvme_thin_when_full")
+	}
+	var queueGuard string
+	for _, w := range nvmeTaskNamed(t, queueWhenFull).whens {
+		if strings.Contains(w, "vmtool_nvme_thin_when_full") {
+			queueGuard = w
+		}
+	}
+	if queueGuard == "" {
+		t.Fatal("no when over vmtool_nvme_thin_when_full on " + queueWhenFull)
+	}
+	withWhenFull := func(full string) string {
+		return `{"report":[{"lv":[{"lv_name":"thin-test","lv_attr":"twi-aotz--","lv_tags":"vmtool_thinpool","zero":"","lv_profile":"vmtool-thin","discards":"passdown","lv_when_full":"` + full + `"}]}]}`
+	}
+	for label, c := range map[string]struct {
+		rc     int
+		stdout string
+		full   string
+		runs   bool
+	}{
+		"pool absent (made in this run)": {5, "", "", true},
+		"adopted, queue (a rerun)":       {0, withWhenFull("queue"), "queue", false},
+		"adopted, error":                 {0, withWhenFull("error"), "error", true},
+	} {
+		vars := map[string]any{"_lv": lv, "vmtool_nvme_thin_probe": map[string]any{"rc": c.rc, "stdout": c.stdout},
+			"vmtool_nvme_thin_when_full": whenFullExpr, "_runs": "{{ " + queueGuard + " }}"}
+		for _, k := range []string{"vmtool_nvme_thin_present", "vmtool_nvme_thin_adoptable"} {
+			e, _ := sf[k].(string)
+			vars[k] = e
+		}
+		wantEval(t, label, "vmtool_nvme_thin_when_full", vars, c.full)
+		wantEval(t, label, "_runs", vars, c.runs)
+	}
+
 	for _, c := range []struct {
 		label                  string
 		rc                     int
@@ -1209,6 +1247,61 @@ func TestNvmeScratchSequenceAndFailure(t *testing.T) {
 	// lvremove runs only after a discard that succeeded.
 	if !hasWhen(rm.whens, "vmtool_nvme_scratch_discard.rc | default(1) == 0") {
 		t.Errorf("lvremove must be gated on a successful discard: %v", rm.whens)
+	}
+}
+
+// H2: LVM 2.03.16 refuses `lvcreate --type thin-pool ... --errorwhenfull`
+// ("Option --errorwhenfull is unsupported with thin pools."). No lvcreate
+// carries it; the pool is set to queue writes when full by lvchange, right
+// after it is made in this run, and on an adopted pool only when lvs says it
+// is not at queue already.
+const queueWhenFull = "Thin pool: queue writes when full"
+
+func TestNvmeThinCreateHasNoErrorWhenFull(t *testing.T) {
+	n := 0
+	for _, tk := range nvmeTasks(t) {
+		a := argvText(tk)
+		if !strings.Contains(a, "lvcreate") {
+			continue
+		}
+		n++
+		if strings.Contains(a, "errorwhenfull") {
+			t.Errorf("task %q: lvcreate carries --errorwhenfull, which LVM refuses for a thin pool: %s", tk.name, norm(a))
+		}
+	}
+	if n < 2 {
+		t.Errorf("found %d lvcreate tasks, want the pool and the scratch volume", n)
+	}
+}
+
+func TestNvmeThinQueueWhenFull(t *testing.T) {
+	if !strings.Contains(norm(thinTask(t, "probe").text()), "lv_when_full") {
+		t.Errorf("the probe must read lv_when_full")
+	}
+	rp := thinTask(t, "read the probe")
+	sf, _ := rp.body["ansible.builtin.set_fact"].(map[string]any)
+	if e, _ := sf["vmtool_nvme_thin_when_full"].(string); !strings.Contains(e, "lv_when_full") {
+		t.Errorf("the probe's set_fact lacks vmtool_nvme_thin_when_full from lv_when_full: %q", e)
+	}
+	set := nvmeTaskNamed(t, queueWhenFull)
+	if norm(argvText(set)) != "lvchange --errorwhenfull n {{ vmtool_nvme_vg }}/{{ vmtool_nvme_thin_pool }}" {
+		t.Errorf("argv = %q", argvText(set))
+	}
+	for _, w := range []string{nvmeGuard, thinGuard,
+		"(not (vmtool_nvme_thin_present | bool)) or ((vmtool_nvme_thin_adoptable | bool) and vmtool_nvme_thin_when_full != 'queue')"} {
+		if !hasWhen(set.whens, w) {
+			t.Errorf("%q must be guarded by %q: %v", queueWhenFull, w, set.whens)
+		}
+	}
+	// Changed exactly when it ran: no changed_when, and a failure is raised.
+	for _, k := range []string{"changed_when", "failed_when", "check_mode"} {
+		if _, ok := set.body[k]; ok {
+			t.Errorf("%q sets %s: it must report changed when it runs and fail when LVM refuses", queueWhenFull, k)
+		}
+	}
+	cr := nvmeTaskNamed(t, poolCreate)
+	if set.index != cr.index+1 {
+		t.Errorf("%q (task %d) must come right after the create (task %d)", queueWhenFull, set.index, cr.index)
 	}
 }
 

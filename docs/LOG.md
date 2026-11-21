@@ -2329,3 +2329,32 @@ are appended, never edited in; a hook refuses rewrites.
 - Red: assertion or unknown-flag/command failures in config, CLI, server
   and deploy tests before each layer's code. Green; `just check` green.
 - Commits: the G5 commit on `clone-identity`.
+
+## 2026-11-21 — H1 The playbook's libvirt wait works on a network home
+
+- `setup_host.yml` "Wait for the system libvirt socket" runs `virsh -c
+  qemu:///system list --all` instead of `virsh … version`, which fails on
+  a host without QEMU ("Cannot find suitable emulator"); same retries and
+  delay, `changed_when`/`check_mode` false. README home section: a home
+  needs no QEMU.
+- Shape tests pin the command and refuse `virsh … version` on any line of
+  `ansible/playbooks/` or `scripts/*.sh`; README sentence pinned.
+- Red: assertion failures (old command, `setup_host.yml:328`, missing
+  sentence). Green; `just check` and the opt-in syntax check green.
+- Commits: `8c3c949` on `clone-identity`.
+
+## 2026-11-21 — H2 The thin pool is created without `--errorwhenfull`, then set
+
+- `nvme_stripe.yml`: `lvcreate --type thin-pool` no longer passes
+  `--errorwhenfull` (LVM 2.03.16 refuses it there); the probe reads
+  `lv_when_full`; new "Thin pool: queue writes when full" runs `lvchange
+  --errorwhenfull n` right after a create in this run, or on an adopted
+  pool not at `queue`, so a rerun runs nothing. README: the pool is
+  created, then set to queue writes when full.
+- Tests: no `lvcreate` carries the option; `lvchange` allow-list has four
+  forms; the new task's argv, guards and place pinned; the opt-in
+  expression test renders the guard (absent runs, queue skips, error runs).
+- Red: assertion failures (allow-list 3 of 4, the create carrying the
+  option, probe/fact/task missing). Green; `just check` and the opt-in
+  syntax check green.
+- Commits: the H2 commit on `clone-identity` (this entry rides in it).

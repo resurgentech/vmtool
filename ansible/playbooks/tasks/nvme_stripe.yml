@@ -527,7 +527,7 @@
       - --reportformat
       - json
       - -o
-      - "lv_name,lv_attr,lv_tags,zero,lv_profile,discards"
+      - "lv_name,lv_attr,lv_tags,zero,lv_profile,discards,lv_when_full"
       - "{{ vmtool_nvme_vg }}/{{ vmtool_nvme_thin_pool }}"
   register: vmtool_nvme_thin_probe
   changed_when: false
@@ -547,6 +547,7 @@
     vmtool_nvme_thin_zeroing: "{{ (_lv.zero | default('')) | trim != '' }}"
     vmtool_nvme_thin_profile_now: "{{ (_lv.lv_profile | default('')) | trim }}"
     vmtool_nvme_thin_discards: "{{ (_lv.discards | default('')) | trim }}"
+    vmtool_nvme_thin_when_full: "{{ (_lv.lv_when_full | default('')) | trim }}"
   vars:
     _lv: >-
       {{ ((vmtool_nvme_thin_probe.stdout | from_json).report[0].lv | default([]) | first | default({}))
@@ -659,18 +660,31 @@
 # -l for a percentage (70%FREE), -L for a size (2T). Zeroing off, because it
 # halves sequential writes; the profile and monitoring grow the pool.
 # Discards pass down to the drives, written out instead of left to the default.
+# No --errorwhenfull here: LVM 2.03.16 refuses it on a thin-pool create; the
+# next task sets it.
 - name: "Thin pool: create the pool"
   ansible.builtin.command:
     argv: >-
       {{ ['lvcreate', '--type', 'thin-pool', '-n', vmtool_nvme_thin_pool]
          + ['-l' if '%' in (vmtool_nvme_thin_size | string) else '-L', vmtool_nvme_thin_size | string]
          + ['--chunksize', vmtool_nvme_thin_chunk, '--poolmetadatasize', vmtool_nvme_thin_metadata,
-            '--zero', 'n', '--discards', 'passdown', '--errorwhenfull', 'n', '--monitor', 'y',
+            '--zero', 'n', '--discards', 'passdown', '--monitor', 'y',
             '--metadataprofile', 'vmtool-thin', '--addtag', 'vmtool_thinpool', vmtool_nvme_vg] }}
   when:
     - vmtool_nvme_drives | length > 0
     - vmtool_nvme_thin | bool
     - not (vmtool_nvme_thin_present | bool)
+
+# Queue writes when full (LVM's default, made explicit): on the pool made just
+# now, and on an adopted pool only when lvs says it is not at queue, so a
+# rerun runs nothing.
+- name: "Thin pool: queue writes when full"
+  ansible.builtin.command:
+    argv: [lvchange, --errorwhenfull, "n", "{{ vmtool_nvme_vg }}/{{ vmtool_nvme_thin_pool }}"]
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_thin | bool
+    - (not (vmtool_nvme_thin_present | bool)) or ((vmtool_nvme_thin_adoptable | bool) and vmtool_nvme_thin_when_full != 'queue')
 
 - name: "Thin pool: turn zeroing off on an adopted pool"
   ansible.builtin.command:
