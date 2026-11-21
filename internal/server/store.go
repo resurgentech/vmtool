@@ -24,6 +24,17 @@ var storeOperations = map[string]bool{
 	"rebootMachine": true, "execMachine": true, "runMachinePlaybook": true,
 }
 
+// lazyStoreOperations are VM operations that need the store only when the
+// host answers "no such VM": the workflow then delists the VM in the store's
+// inventory (app.missingVM). They get a session without a probe, so a call that
+// succeeds sends the store nothing; the delist itself does not decide the mode,
+// so a store that is down adds no warning. (The console route is served by tunnelMux outside this middleware
+// and is not here.)
+var lazyStoreOperations = map[string]bool{
+	"startVM": true, "stopVM": true, "resumeVM": true, "poweroffVM": true, "rebootVM": true,
+	"setAutostart": true, "setVMComment": true, "migrateDisk": true, "addDisk": true,
+}
+
 type storeKeyType struct{}
 
 var storeKey storeKeyType
@@ -40,7 +51,9 @@ func storeSessionOf(ctx context.Context) *app.StoreSession {
 // has not yet written its headers), puts the fallback line in the response's
 // warnings, and hands the session to the handler through the context.
 func (h *handlers) decideStore(f api.StrictHandlerFunc, operationID string) api.StrictHandlerFunc {
-	if h.storeURL == "" || !storeOperations[strings.ToLower(operationID[:1])+operationID[1:]] {
+	id := strings.ToLower(operationID[:1]) + operationID[1:]
+	lazy := lazyStoreOperations[id]
+	if h.storeURL == "" || !(storeOperations[id] || lazy) {
 		return f
 	}
 	return func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error) {
@@ -60,7 +73,9 @@ func (h *handlers) decideStore(f api.StrictHandlerFunc, operationID string) api.
 		hw := &headerNotes{w: w}
 		defer hw.close()
 		sess := app.OpenStoreSession(h.storeURL, h.storeToken, h.storeOpts, hw.add)
-		sess.Mode(ctx)
+		if !lazy {
+			sess.Mode(ctx)
+		}
 		return f(context.WithValue(ctx, storeKey, sess), w, r, request)
 	}
 }

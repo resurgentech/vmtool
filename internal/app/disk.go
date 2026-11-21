@@ -8,16 +8,16 @@ import (
 	"github.com/jaredeh/vmtool/pkg/vmtool"
 )
 
-func (s *Service) MigrateDisk(_ context.Context, m Manager, name, pool string) (*vmtool.VMInfo, error) {
+func (s *Service) MigrateDisk(ctx context.Context, m Manager, ref VMRef, pool string) (*vmtool.VMInfo, error) {
 	if pool == "" {
 		return nil, invalid("migrate_disk", fmt.Errorf("pool is required"))
 	}
-	if err := m.MigrateDisk(name, pool); err != nil {
-		return nil, wrap("migrate_disk", err)
+	if err := m.MigrateDisk(ref.Name, pool); err != nil {
+		return nil, s.missingVM(ctx, m, ref, wrap("migrate_disk", err))
 	}
-	info, err := m.Info(name)
+	info, err := m.Info(ref.Name)
 	if err != nil {
-		return nil, wrap("migrate_disk", err)
+		return nil, s.missingVM(ctx, m, ref, wrap("migrate_disk", err))
 	}
 	return info, nil
 }
@@ -30,11 +30,11 @@ func (s *Service) ResizeDisk(ctx context.Context, m Manager, ref VMRef, sizeGB u
 		return nil, err
 	}
 	if err := m.ResizeDisk(ref.Name, sizeGB); err != nil {
-		return nil, wrap("resize_disk", err)
+		return nil, s.missingVM(ctx, m, ref, wrap("resize_disk", err))
 	}
 	info, err := m.Info(ref.Name)
 	if err != nil {
-		return nil, wrap("resize_disk", err)
+		return nil, s.missingVM(ctx, m, ref, wrap("resize_disk", err))
 	}
 	res := &ResizeResult{VM: *info}
 	if info.State != vmtool.StateRunning || info.IP == "" {
@@ -67,17 +67,17 @@ func (s *Service) ResizeDisk(ctx context.Context, m Manager, ref VMRef, sizeGB u
 	return res, nil
 }
 
-func (s *Service) AddDisk(_ context.Context, m Manager, name string, sizeGB uint, pool string) (*AddDiskResult, error) {
+func (s *Service) AddDisk(ctx context.Context, m Manager, ref VMRef, sizeGB uint, pool string) (*AddDiskResult, error) {
 	if sizeGB == 0 {
 		return nil, invalid("add_disk", fmt.Errorf("size must be > 0"))
 	}
-	disk, err := m.AddDisk(name, sizeGB, pool)
+	disk, err := m.AddDisk(ref.Name, sizeGB, pool)
 	if err != nil {
-		return nil, wrap("add_disk", err)
+		return nil, s.missingVM(ctx, m, ref, wrap("add_disk", err))
 	}
-	info, err := m.Info(name)
+	info, err := m.Info(ref.Name)
 	if err != nil {
-		return nil, wrap("add_disk", err)
+		return nil, s.missingVM(ctx, m, ref, wrap("add_disk", err))
 	}
 	return &AddDiskResult{VM: *info, Path: disk.Path, Target: disk.Target}, nil
 }

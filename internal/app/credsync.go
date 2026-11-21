@@ -118,7 +118,7 @@ func (s *Service) PrepareVMCreds(ctx context.Context, m Manager, ref VMRef) erro
 	}
 	info, err := m.Info(ref.Name)
 	if err != nil {
-		return wrap("credentials", err)
+		return s.missingVM(ctx, m, ref, wrap("credentials", err))
 	}
 	s.prepareCreds(ctx, ref, info.UUID, s.noter(nil))
 	return nil
@@ -284,7 +284,7 @@ func (s *Service) FetchVMCreds(ctx context.Context, m Manager, ref VMRef) error 
 	}
 	info, err := m.Info(ref.Name)
 	if err != nil {
-		return wrap(op, err)
+		return s.missingVM(ctx, m, ref, wrap(op, err))
 	}
 	if info.UUID == "" {
 		return conflict(op, errors.New(s.redeployLine(ref)))

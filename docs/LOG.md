@@ -1801,3 +1801,26 @@ are appended, never edited in; a hook refuses rewrites.
   is absent from every argv and from stdout/stderr.
 - Red: six assertion failures; green; `just check` green.
 - Commits: the N6 commit on `clone-identity`.
+
+## 2026-11-21 — N8 Delist on "the host does not have it"; delete removes the row
+
+- `internal/app/inventorysource.go` (new): `InventoryWriter` (Delist,
+  DeleteRow) over the store client; `Service.missingVM`, the helper every
+  VM-ref workflow (lifecycle, comment, autostart, disk, exec, playbook,
+  console, creds prepare and fetch, delete) runs its error through: on a
+  not-found it asks the host's `Info`, and only a not-found there delists;
+  with a live row the error (still not-found, REST 404) says the host has no
+  such VM, that it was removed from the inventory, and the date its login is
+  kept until. The delist does not decide the store mode, so a down store
+  prints nothing; no store configured, or a mode decided local, makes no
+  call.
+- `DeleteVM` reads the UUID first (store mode) and removes the inventory row
+  after a successful delete (also with `--noclone`); a 404 is ignored; an
+  unreachable store adds one note.
+- Lifecycle, comment, autostart, migrate-disk and add-disk take a `VMRef`;
+  CLI, REST and TUI pass the ref. REST: those nine operations get a store
+  session with no probe (`lazyStoreOperations`), workstation only.
+- Tests: `internal/app/delist_test.go`, `internal/server/delist_test.go`.
+- Red: assertion failures (no delist text, no delist call; the fallback line
+  printed for a down store); green; `just check` green.
+- Commits: the N8 commit on `clone-identity`.

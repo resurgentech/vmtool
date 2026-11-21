@@ -23,7 +23,7 @@ func (s *Service) ExecVM(ctx context.Context, m Manager, ref VMRef, argv []strin
 	}
 	info, err := m.Info(ref.Name)
 	if err != nil {
-		return nil, wrap("exec", err)
+		return nil, s.missingVM(ctx, m, ref, wrap("exec", err))
 	}
 	if info.IP == "" {
 		return nil, conflict("exec", fmt.Errorf("VM %q has no IP address", ref.String()))
@@ -59,7 +59,7 @@ func (s *Service) RunPlaybook(ctx context.Context, m Manager, ref VMRef, playboo
 	}
 	info, err := m.Info(ref.Name)
 	if err != nil {
-		return nil, wrap("playbook", err)
+		return nil, s.missingVM(ctx, m, ref, wrap("playbook", err))
 	}
 	if info.IP == "" {
 		return nil, conflict("playbook", fmt.Errorf("VM %q has no IP address", ref.String()))
@@ -126,7 +126,7 @@ func (s *Service) ConsoleVM(ctx context.Context, m Manager, ref VMRef) (*exec.Cm
 	}
 	info, err := m.Info(ref.Name)
 	if err != nil {
-		return nil, wrap("console", err)
+		return nil, s.missingVM(ctx, m, ref, wrap("console", err))
 	}
 	if info.IP == "" {
 		return nil, conflict("console", fmt.Errorf("VM %q has no IP address", ref.String()))

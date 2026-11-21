@@ -647,7 +647,7 @@ func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			switch vm.State {
 			case vmtool.StateShutoff:
 				return m.runLifecycle("start", m.vmRef(vm), func(svc *app.Service, mgr app.Manager) error {
-					_, err := svc.StartVM(context.Background(), mgr, vm.Name)
+					_, err := svc.StartVM(context.Background(), mgr, m.vmRef(vm))
 					return err
 				})
 			case vmtool.StateRunning:
@@ -656,7 +656,7 @@ func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.confirmAction = func() (tea.Model, tea.Cmd) {
 					m.mode = modeList
 					return m.runLifecycle("stop", m.vmRef(vm), func(svc *app.Service, mgr app.Manager) error {
-						_, err := svc.StopVM(context.Background(), mgr, vmName)
+						_, err := svc.StopVM(context.Background(), mgr, m.vmRef(vm))
 						return err
 					})
 				}
@@ -671,7 +671,7 @@ func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				label = "disable"
 			}
 			return m.runLifecycle("autostart", m.vmRef(vm), func(svc *app.Service, mgr app.Manager) error {
-				_, err := svc.SetAutostart(context.Background(), mgr, vm.Name, newState)
+				_, err := svc.SetAutostart(context.Background(), mgr, m.vmRef(vm), newState)
 				if err == nil {
 					_ = label
 				}

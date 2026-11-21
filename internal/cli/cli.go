@@ -648,7 +648,7 @@ func startCmd(e *env) *cobra.Command {
 		Short: "Start a stopped VM",
 		Args:  cobra.ExactArgs(1),
 		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
-			if _, err := e.service("").StartVM(cmd.Context(), m, ref.Name); err != nil {
+			if _, err := e.service("").StartVM(cmd.Context(), m, ref); err != nil {
 				return err
 			}
 			fmt.Printf("VM %q started\n", args[0])
@@ -663,7 +663,7 @@ func resumeCmd(e *env) *cobra.Command {
 		Short: "Resume a paused VM",
 		Args:  cobra.ExactArgs(1),
 		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
-			if _, err := e.service("").ResumeVM(cmd.Context(), m, ref.Name); err != nil {
+			if _, err := e.service("").ResumeVM(cmd.Context(), m, ref); err != nil {
 				return err
 			}
 			fmt.Printf("VM %q resumed\n", args[0])
@@ -678,7 +678,7 @@ func stopCmd(e *env) *cobra.Command {
 		Short: "Gracefully shut down a VM",
 		Args:  cobra.ExactArgs(1),
 		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
-			if _, err := e.service("").StopVM(cmd.Context(), m, ref.Name); err != nil {
+			if _, err := e.service("").StopVM(cmd.Context(), m, ref); err != nil {
 				return err
 			}
 			fmt.Printf("VM %q shutdown requested\n", args[0])
@@ -693,7 +693,7 @@ func poweroffCmd(e *env) *cobra.Command {
 		Short: "Force power-off a VM",
 		Args:  cobra.ExactArgs(1),
 		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
-			if _, err := e.service("").PoweroffVM(cmd.Context(), m, ref.Name); err != nil {
+			if _, err := e.service("").PoweroffVM(cmd.Context(), m, ref); err != nil {
 				return err
 			}
 			fmt.Printf("VM %q powered off\n", args[0])
@@ -921,7 +921,7 @@ Unlike stop (ACPI shutdown, then shutoff) or poweroff (force destroy),
 the VM comes back up on its own if the guest handles the reboot.`,
 		Args: cobra.ExactArgs(1),
 		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
-			if _, err := e.service("").RebootVM(cmd.Context(), m, ref.Name); err != nil {
+			if _, err := e.service("").RebootVM(cmd.Context(), m, ref); err != nil {
 				return err
 			}
 			fmt.Printf("VM %q rebooted\n", args[0])
@@ -946,7 +946,7 @@ func autostartCmd(e *env) *cobra.Command {
 			default:
 				return fmt.Errorf("invalid value %q: use on or off", args[1])
 			}
-			if _, err := e.service("").SetAutostart(cmd.Context(), m, ref.Name, enable); err != nil {
+			if _, err := e.service("").SetAutostart(cmd.Context(), m, ref, enable); err != nil {
 				return err
 			}
 			label := "disabled"
@@ -984,7 +984,7 @@ and on a shut-off VM; the host must be reachable. 'vmtool info' shows it.
 			case len(args) == 2:
 				text = args[1]
 			}
-			if _, err := e.service("").SetComment(cmd.Context(), m, ref.Name, text); err != nil {
+			if _, err := e.service("").SetComment(cmd.Context(), m, ref, text); err != nil {
 				return err
 			}
 			if text == "" {
@@ -1313,7 +1313,7 @@ so it cannot be a target either.`,
 			vmName := args[0]
 			pool := args[1]
 			fmt.Printf("Migrating disk for VM %q to pool %q...\n", vmName, pool)
-			if _, err := e.service("").MigrateDisk(cmd.Context(), m, ref.Name, pool); err != nil {
+			if _, err := e.service("").MigrateDisk(cmd.Context(), m, ref, pool); err != nil {
 				return err
 			}
 			fmt.Printf("VM %q disk migrated to pool %q\n", vmName, pool)
@@ -1402,7 +1402,7 @@ partitioned or formatted.
 				return fmt.Errorf("invalid size %q: must be a positive integer (GB)", args[1])
 			}
 
-			res, err := e.service("").AddDisk(cmd.Context(), m, ref.Name, uint(sizeGB), pool)
+			res, err := e.service("").AddDisk(cmd.Context(), m, ref, uint(sizeGB), pool)
 			if err != nil {
 				return err
 			}

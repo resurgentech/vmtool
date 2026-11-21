@@ -105,7 +105,7 @@ func TestActionRefreshUsesFanOut(t *testing.T) {
 	)
 	ref := app.VMRef{Host: "veritech01", Name: "b"}
 	_, cmd := m.runLifecycle("start", ref, func(svc *app.Service, mgr app.Manager) error {
-		_, err := svc.StartVM(context.Background(), mgr, ref.Name)
+		_, err := svc.StartVM(context.Background(), mgr, ref)
 		return err
 	})
 	msg := cmd().(cmdDoneMsg)

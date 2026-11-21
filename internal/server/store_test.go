@@ -24,6 +24,9 @@ type srvStore struct {
 	ts     *httptest.Server
 	whoami atomic.Int32
 	down   atomic.Bool
+	// reqs counts every request that reached the store (whoami included);
+	// delists counts POST .../delist.
+	reqs, delists atomic.Int32
 }
 
 func newSrvStore(t *testing.T) *srvStore {
@@ -31,6 +34,7 @@ func newSrvStore(t *testing.T) *srvStore {
 	s := &srvStore{}
 	s.ts = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		s.reqs.Add(1)
 		if s.down.Load() {
 			w.WriteHeader(503)
 			return
@@ -42,6 +46,12 @@ func newSrvStore(t *testing.T) *srvStore {
 				return
 			}
 			_ = json.NewEncoder(w).Encode(map[string]string{"name": "jared"})
+			return
+		}
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/delist") {
+			s.delists.Add(1)
+			_ = json.NewEncoder(w).Encode(map[string]any{"uuid": "00000000-0000-4000-8000-000000000003",
+				"had_credentials": true, "credentials_kept_until": "2026-11-28T03:04:05Z"})
 			return
 		}
 		w.WriteHeader(404)

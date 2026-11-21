@@ -50,6 +50,8 @@ type StoreSession struct {
 	once sync.Once
 	mu   sync.Mutex // guards the decision below
 	mode Mode
+	// decided is set once Mode has run (under mu).
+	decided bool
 	// caller is the name whoami answered; notice is the one line printed or
 	// returned when the mode fell back to local.
 	caller, notice string
@@ -118,6 +120,7 @@ func (s *StoreSession) Mode(ctx context.Context) Mode {
 			}
 		}
 		s.notice = note
+		s.decided = true
 	})
 	if note != "" && s.notify != nil {
 		s.notify(note)

@@ -75,7 +75,7 @@ func (m model) confirmReboot() (tea.Model, tea.Cmd) {
 	m.confirmAction = func() (tea.Model, tea.Cmd) {
 		m.mode = modeList
 		return m.runLifecycle("reboot", m.vmRef(vm), func(svc *app.Service, mgr app.Manager) error {
-			_, err := svc.RebootVM(context.Background(), mgr, name)
+			_, err := svc.RebootVM(context.Background(), mgr, m.vmRef(vm))
 			return err
 		})
 	}

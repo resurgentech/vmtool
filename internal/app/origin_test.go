@@ -155,7 +155,7 @@ func (f *commentVMs) Define(vmtool.VMConfig) error {
 func TestSetComment(t *testing.T) {
 	for _, st := range []vmtool.VMState{vmtool.StateRunning, vmtool.StateShutoff} {
 		m := &commentVMs{state: st}
-		info, err := (&Service{}).SetComment(context.Background(), m, "vm1", "placeholder comment")
+		info, err := (&Service{}).SetComment(context.Background(), m, VMRef{Host: "hv1", Name: "vm1"}, "placeholder comment")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -166,7 +166,7 @@ func TestSetComment(t *testing.T) {
 			t.Errorf("%s: info %+v", st, info)
 		}
 		m.calls = nil
-		if info, err = (&Service{}).SetComment(context.Background(), m, "vm1", ""); err != nil || info.Comment != "" {
+		if info, err = (&Service{}).SetComment(context.Background(), m, VMRef{Host: "hv1", Name: "vm1"}, ""); err != nil || info.Comment != "" {
 			t.Fatalf("clear: %+v %v", info, err)
 		}
 		if m.calls[0] != `SetComment vm1 ""` {
@@ -177,7 +177,7 @@ func TestSetComment(t *testing.T) {
 
 func TestSetCommentRefusesBadComment(t *testing.T) {
 	m := &commentVMs{}
-	_, err := (&Service{}).SetComment(context.Background(), m, "vm1", strings.Repeat("é", 257))
+	_, err := (&Service{}).SetComment(context.Background(), m, VMRef{Host: "hv1", Name: "vm1"}, strings.Repeat("é", 257))
 	ae := asAppErr(t, err)
 	if ae.Kind != KindInvalid || !strings.Contains(err.Error(), "comment") || len(m.calls) != 0 {
 		t.Errorf("err %v calls %q", err, m.calls)
@@ -186,7 +186,7 @@ func TestSetCommentRefusesBadComment(t *testing.T) {
 
 func TestSetCommentUnknownVM(t *testing.T) {
 	m := &commentVMs{err: fmt.Errorf("looking up domain: %w", vmtool.ErrNotFound)}
-	_, err := (&Service{}).SetComment(context.Background(), m, "ghost", "x")
+	_, err := (&Service{}).SetComment(context.Background(), m, VMRef{Host: "hv1", Name: "ghost"}, "x")
 	if asAppErr(t, err).Kind != KindNotFound {
 		t.Errorf("err %v", err)
 	}

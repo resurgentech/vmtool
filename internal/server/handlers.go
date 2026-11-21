@@ -314,7 +314,7 @@ func (h *handlers) DeleteVM(ctx context.Context, req api.DeleteVMRequestObject) 
 
 func (h *handlers) StartVM(ctx context.Context, req api.StartVMRequestObject) (api.StartVMResponseObject, error) {
 	v, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
-		return h.svc.StartVM(ctx, m, req.Name)
+		return h.svcFor(ctx).StartVM(ctx, m, app.VMRef{Host: req.Host, Name: req.Name})
 	})
 	if err != nil {
 		if kindOf(err) == app.KindNotFound {
@@ -327,7 +327,7 @@ func (h *handlers) StartVM(ctx context.Context, req api.StartVMRequestObject) (a
 
 func (h *handlers) StopVM(ctx context.Context, req api.StopVMRequestObject) (api.StopVMResponseObject, error) {
 	v, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
-		return h.svc.StopVM(ctx, m, req.Name)
+		return h.svcFor(ctx).StopVM(ctx, m, app.VMRef{Host: req.Host, Name: req.Name})
 	})
 	if err != nil {
 		if kindOf(err) == app.KindNotFound {
@@ -340,7 +340,7 @@ func (h *handlers) StopVM(ctx context.Context, req api.StopVMRequestObject) (api
 
 func (h *handlers) ResumeVM(ctx context.Context, req api.ResumeVMRequestObject) (api.ResumeVMResponseObject, error) {
 	v, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
-		return h.svc.ResumeVM(ctx, m, req.Name)
+		return h.svcFor(ctx).ResumeVM(ctx, m, app.VMRef{Host: req.Host, Name: req.Name})
 	})
 	if err != nil {
 		if kindOf(err) == app.KindNotFound {
@@ -353,7 +353,7 @@ func (h *handlers) ResumeVM(ctx context.Context, req api.ResumeVMRequestObject) 
 
 func (h *handlers) PoweroffVM(ctx context.Context, req api.PoweroffVMRequestObject) (api.PoweroffVMResponseObject, error) {
 	v, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
-		return h.svc.PoweroffVM(ctx, m, req.Name)
+		return h.svcFor(ctx).PoweroffVM(ctx, m, app.VMRef{Host: req.Host, Name: req.Name})
 	})
 	if err != nil {
 		if kindOf(err) == app.KindNotFound {
@@ -366,7 +366,7 @@ func (h *handlers) PoweroffVM(ctx context.Context, req api.PoweroffVMRequestObje
 
 func (h *handlers) RebootVM(ctx context.Context, req api.RebootVMRequestObject) (api.RebootVMResponseObject, error) {
 	v, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
-		return h.svc.RebootVM(ctx, m, req.Name)
+		return h.svcFor(ctx).RebootVM(ctx, m, app.VMRef{Host: req.Host, Name: req.Name})
 	})
 	if err != nil {
 		if kindOf(err) == app.KindNotFound {
@@ -382,7 +382,7 @@ func (h *handlers) SetAutostart(ctx context.Context, req api.SetAutostartRequest
 		return api.SetAutostart400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: "request body required"}}, nil
 	}
 	v, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
-		return h.svc.SetAutostart(ctx, m, req.Name, req.Body.Enabled)
+		return h.svcFor(ctx).SetAutostart(ctx, m, app.VMRef{Host: req.Host, Name: req.Name}, req.Body.Enabled)
 	})
 	if err != nil {
 		if kindOf(err) == app.KindNotFound {
@@ -400,7 +400,7 @@ func (h *handlers) SetVMComment(ctx context.Context, req api.SetVMCommentRequest
 		return api.SetVMComment400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: "request body required"}}, nil
 	}
 	v, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
-		return h.svc.SetComment(ctx, m, req.Name, req.Body.Comment)
+		return h.svcFor(ctx).SetComment(ctx, m, app.VMRef{Host: req.Host, Name: req.Name}, req.Body.Comment)
 	})
 	if err != nil {
 		switch kindOf(err) {
@@ -484,7 +484,7 @@ func (h *handlers) MigrateDisk(ctx context.Context, req api.MigrateDiskRequestOb
 		return api.MigrateDisk400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: "pool is required"}}, nil
 	}
 	v, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
-		return h.svc.MigrateDisk(ctx, m, req.Name, req.Body.Pool)
+		return h.svcFor(ctx).MigrateDisk(ctx, m, app.VMRef{Host: req.Host, Name: req.Name}, req.Body.Pool)
 	})
 	if err != nil {
 		if kindOf(err) == app.KindNotFound {
@@ -530,7 +530,7 @@ func (h *handlers) AddDisk(ctx context.Context, req api.AddDiskRequestObject) (a
 		return api.AddDisk400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: "size must be > 0"}}, nil
 	}
 	v, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
-		return h.svc.AddDisk(ctx, m, req.Name, uint(req.Body.Size), derefStr(req.Body.Pool))
+		return h.svcFor(ctx).AddDisk(ctx, m, app.VMRef{Host: req.Host, Name: req.Name}, uint(req.Body.Size), derefStr(req.Body.Pool))
 	})
 	if err != nil {
 		if kindOf(err) == app.KindNotFound {
