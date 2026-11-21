@@ -2220,3 +2220,19 @@ are appended, never edited in; a hook refuses rewrites.
   refusal by disabling the check (app, cli, server); some marks have no
   recorded red. Green; `just check` green; opt-in syntax check green.
 - Commits: the V6 commit on `clone-identity`.
+
+## 2026-11-21 — V7 Docs for tranche 17
+
+- README "VM networks": one host (bridge numbers 1–9999 without a store,
+  from 10000 with one, reuse of numbers and subnets, MTU 1450, `networks`
+  marks `name (vmtool)` and `name (vmtool, member)`), names and fixed
+  addresses, spanning networks (store, home, VXLAN unauthenticated and
+  unencrypted on the LAN, start-time links), home or member down, the
+  repair after a network restart, the current registry-delete limitation.
+- spec/README: REST clients order the attach primitives themselves
+  (`createReservation`, then `attachInterface` with its MAC); numbers;
+  spanning-network notes; the stale "no CLI for members" line fixed.
+- `net` help extended. `scripts/networks_docs_test.go` keyword tests.
+- Red: 32 README, 9 spec README, 5 help keywords missing; green;
+  `just check` green.
+- Commits: the V7 commit on `clone-identity`.

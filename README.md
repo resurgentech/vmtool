@@ -1344,6 +1344,138 @@ In this order, one host at a time. Each step is safe to stop after.
    `--extra-disk-size` are not for those creates and may be refused by the
    daemon: name another pool for them.
 
+### VM networks
+
+A *vmtool network* is a named libvirt network that vmtool made: NAT to the
+outside, DHCP and DNS, on a /24 of 10.77.0.0/16. VMs on it reach each other by
+address and by name. Every network has a *home*: the host whose libvirt does
+the NAT, the DHCP and the DNS. vmtool writes nothing of its own into the
+network's definition; its bridge name, `vmt-` plus six hex digits, is what
+marks it as vmtool's. Every other libvirt network (`default` included) is left
+alone. Examples use hosts `hv1`, `hv2` and `home1`, and networks `net1` and
+`net2`.
+
+#### A network on one host
+
+```bash
+vmtool net create hv1 net1                  # /24 and bridge picked for you
+vmtool net create hv1 net2 --subnet 10.77.1.0/24 --domain lab.test
+vmtool create hv1/web img1 --network net1   # a card on net1 at create (repeatable; NAME=IP fixes the address)
+vmtool net attach hv1/web net1               # an extra card on a VM that exists, live if it runs
+vmtool net detach hv1/web net1               # the card and its reservation
+vmtool net show hv1 net1
+vmtool networks --host hv1                  # net1 (vmtool), default, ...
+vmtool net delete hv1 net1                  # refused while a VM has a card on it
+```
+
+`vmtool networks` writes `net1 (vmtool)` for a network vmtool made, `net1
+(vmtool, member)` for the member form on a host that is not its home (below),
+and the bare name for any other libvirt network. A VM keeps its own NAT card
+first; a network's card is an extra one, and `vmtool info` still shows the
+first card's address as the VM's IP.
+
+- **Bridge numbers.** The bridge is `vmt-` plus a number as six lowercase hex
+  digits (`vmt-000001`, `vmt-002711`). The number is the network's VNI.
+  Without a store the host numbers its networks from 1 to 9999. With a store
+  the registry gives them out, from 10000 and up (10001 is `vmt-002711`), so
+  the two ranges never meet.
+- **Subnets.** Without `--subnet` the first /24 of 10.77.0.0/16 that no libvirt
+  network and no route on the host uses (with a store, the first that no
+  registered network uses). One that overlaps a libvirt network or a route is
+  refused and the message names it.
+- **Reuse.** When a network is deleted, its number and its subnet are handed
+  out again to the next one made.
+- **MTU.** The network's MTU is 1450, so a frame still fits the LAN once the
+  overlay's header is added.
+
+#### Names and fixed addresses
+
+Attaching a VM reserves an address for the card's MAC in the home's network
+(`--ip` picks it, else the lowest free address of .100 to .200) and gives it the
+VM's name. A VM called `web` resolves as `web` and as `web.net1.test` (the
+domain is `--domain`, else `<name>.test`; so `vm.net1.test` for a VM called
+`vm`) from the first boot. Reservations never expire:
+a VM's fixed address survives a reboot, a shutdown and a month off, and is
+freed only by `vmtool net detach` or `vmtool delete`. A name that is already on
+the network, or an address already held, is refused.
+
+#### A network that spans hosts
+
+A host that joins a network becomes a *member*: it defines the same network as
+only a bridge (no address, no NAT, no DHCP) and links to the home and to every
+other member with a VXLAN device carried in UDP port 4789 over the LAN. The
+VMs attach on the member as on the home; their address and name come from the
+home's DHCP over the link. This needs a store: the registry keeps each
+network's members and their LAN addresses.
+
+```bash
+vmtool net create home1 net1               # on the home; the store gives VNI 10001 and 10.77.1.0/24
+vmtool net join hv1 net1                   # the first join also records the home as a member
+vmtool net join hv2 net1
+vmtool net attach hv2/web net1             # reserved on home1, attached on hv2
+vmtool networks --host hv2                 # net1 (vmtool, member)
+vmtool net leave hv2 net1                  # refused while a VM of hv2 has a card on it, and for the home
+```
+
+- **Store mode.** `net create` asks the store for the VNI and the /24 first,
+  then has the host make the network with that bridge. If the host refuses,
+  the registry entry is removed again. A host that runs a vmtool too old to take
+  a network number is detected by its bridge; the network is undone and the
+  message says to redeploy it (`just deploy <host>`).
+- **A network made without a store** is registered by its first `net join`,
+  under its bridge number as its VNI, if the registry does not have that number
+  yet. Name the home with `--home` (`vmtool net join hv2 lab --home hv1`). If
+  the number is taken the join is refused: recreate the network with a store.
+- **The home** is often a small host that runs no VMs; see
+  [A network home](#a-network-home-a-host-that-runs-no-vms). That setup uses
+  `hosts.<h>.vms: false` and opens UDP 4789 from the LAN when ufw is active.
+  Other firewalls must pass UDP 4789 between the hosts yourself.
+- **Security.** VXLAN on the LAN is neither authenticated nor encrypted:
+  anyone on the LAN can read the overlay's traffic and inject frames into a
+  network whose VNI they guess. Use it on a LAN you trust.
+- **At daemon start.** Each daemon reads its networks from the registry and
+  links them, but only a network of that VNI that has the same name and lists
+  this host (numbers of deleted networks are reused). With the store down it
+  links nothing, logs once and retries, backing off from 30 seconds to 5
+  minutes; serving is never delayed.
+
+#### When the home or a member is down
+
+Hosts are often off. Nothing waits for a member to wake, and the store never
+records whether a host is up.
+
+- **The home is down.** VM-to-VM traffic by address keeps working, host to
+  host over the links. Names, new addresses (DHCP) and NAT through the overlay
+  fail until it returns. A reservation never expires, so every VM keeps its
+  address. `net attach`, `net detach`, `create --network` and `delete` for a VM
+  on a member need the home (and the store, to find it); they stop with a
+  message rather than guess. `vmtool delete` still deletes the VM, and the
+  error names the reservation left on the home.
+- **A member is asleep.** `net join` and `net leave` only need the host being
+  changed (and, on the first join, the home). Every other member that answers
+  gets the new peer list; one that does not is skipped with a line and
+  takes the peer list from the registry when it wakes (its daemon reads it at
+  start).
+- **Current limitation.** `vmtool net delete` of a network that is in the
+  registry does not remove the registry entry yet, and once a network has
+  member rows (the home gets one at the first join), the store refuses
+  `DELETE /v1/networks/{name}` while any remain. Take the members out with `net
+  leave` first; the home's own row cannot be left, so for now it is removed by
+  hand with the store's `DELETE /v1/networks/{name}/members/{host}` (a user
+  token), then the entry with `DELETE /v1/networks/{name}`.
+
+#### After a network restart
+
+The daemon links a network again when libvirt starts it (its "network started"
+event) and says so in its log. But the VMs' cards stay detached from the
+bridge after a `virsh net-destroy` and `net-start` of a vmtool network, and
+vmtool never restarts libvirt for you. Repair by hand on that host: restart
+libvirtd (`sudo systemctl restart libvirtd`; the VMs keep running), and the
+cards come back on the bridge. The event watch is one libvirt connection: after
+a libvirtd restart, events are not seen until the vmtool daemon restarts
+(`sudo systemctl restart vmtool-daemon`). The daemon's start-time pass and
+`net join` still link, so restart the daemon after a libvirtd restart.
+
 ## Guest SSH and `ssh-config`
 
 vmtool's own commands name a VM `host/vm`. Other tools (ssh, scp, rsync, sftp)

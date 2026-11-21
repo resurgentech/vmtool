@@ -467,8 +467,12 @@ bump costs nothing if it was).
   bridge it gets back with `vmt-%06x` of the VNI, deletes the network the
   daemon just made and the registry entry, and fails with "host H runs a
   vmtool that cannot take a network number; redeploy it (just deploy H)". The
-  daemon's own route stays a primitive: it never calls the store. There is no
-  CLI for members yet.
+  daemon's own route stays a primitive: it never calls the store. Members are
+  joined and left by `vmtool net join` and `net leave` (see "Networks that span
+  hosts" under API 2.7.0).
+- **Numbers.** Without a store the host numbers bridges from 1 to 9999; the
+  registry gives out 10000 and up, so the ranges never meet (`vmt-002711` is
+  10001). A number and a subnet freed by a delete are handed out again.
 
 ## URL versioning
 
@@ -890,8 +894,12 @@ card and nothing else.
   checks every network and address before anything is created, then attaches
   each between define and start (a failure takes back the cards already made
   and leaves the VM defined, not started); `vmtool delete` removes the VM's
-  reservations after the VM. A client that calls the four primitives itself
-  orders the steps itself.
+  reservations after the VM. REST clients order the attach primitives
+  themselves: `createReservation`, then `attachInterface` with its MAC (the
+  one `createReservation` answered, or the one the client gave), and on the way
+  out `detachInterface`, then `deleteReservation`. A failed second step is
+  the client's to undo by calling the first one's opposite. No route does the
+  ordering for it.
 - **`VMInfo.networks`** lists each card on a vmtool network as `{network, mac,
   ip}`; `VMInfo.ip` stays the first card's address (the VM's own NAT card),
   whatever a later card's lease says. `NetworkInfo.reservations` lists a
@@ -968,6 +976,28 @@ their LAN addresses, so joining needs the store.
   reservation is on the home).
 - **Firewall.** `just prereqs` opens UDP 4789 from the LAN of the host's
   default route when ufw is active.
+- **MTU 1450.** Home and member forms both carry `<mtu size='1450'/>`, so a
+  frame still fits the LAN with the VXLAN header added.
+- **`networks` output.** The CLI's `vmtool networks` writes `name (vmtool)` for
+  a vmtool network in the home form (and for a one-host network), `name
+  (vmtool, member)` for the member form (a vmtool bridge with no gateway), and
+  the bare name for any other libvirt network.
+- **When hosts are down.** Nothing in the daemon or the registry waits for a
+  member: the store never records whether a host is up. With the home down,
+  VM-to-VM traffic by address keeps working (the links are between hosts);
+  names, DHCP for new addresses and NAT through the overlay fail, and
+  reservations never expire, so addresses survive. A member that is asleep
+  takes the peer list from the registry when its daemon starts.
+- **Known limits (current).**
+  - `vmtool net delete` does not remove the registry entry of a network that is
+    registered; and once a network has member rows (the home gets one at the
+    first join) `DELETE /v1/networks/{name}` is 409 until they are removed.
+  - The "network started" watch is one libvirt connection, opened once: after a
+    libvirtd restart, events are not seen until the vmtool daemon restarts.
+    After a manual `net-destroy` and `net-start` the VMs' cards stay detached
+    from the bridge; restart libvirtd (vmtool never does).
+  - The overlay is neither authenticated nor encrypted: anyone on the LAN can
+    read it and, knowing a VNI, inject frames into that network.
 
 ## GET / pattern
 

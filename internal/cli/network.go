@@ -24,7 +24,17 @@ writes nothing of its own into the network's definition; the bridge name is
 what marks it as vmtool's. vmtool leaves every other libvirt network alone.
 
 A network can span hosts: other hosts join it (net join) and their VMs then
-talk to the network's home and to each other over VXLAN. See net join.`,
+talk to the network's home and to each other over VXLAN. See net join.
+
+'vmtool networks' writes "name (vmtool)" for a vmtool network and
+"name (vmtool, member)" for the member form on a host that is not its home.
+Reservations never expire, so a VM keeps its address. If the home is down,
+VM-to-VM traffic by address keeps working; names, new addresses and NAT do not.
+A network that was started by hand (virsh net-destroy, net-start) leaves the
+VMs' cards detached: restart libvirtd, then the vmtool daemon (its event watch
+does not survive a libvirtd restart). A network that spans hosts is not removed
+from the registry by net delete yet. The README's "VM networks" section has
+the rest.`,
 	}
 	cmd.AddCommand(netCreateCmd(e), netDeleteCmd(e), netShowCmd(e), netAttachCmd(e), netDetachCmd(e), netJoinCmd(e), netLeaveCmd(e))
 	return cmd
