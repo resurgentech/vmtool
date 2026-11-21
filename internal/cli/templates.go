@@ -54,8 +54,10 @@ func templatesListCmd(e *env) *cobra.Command {
 		Aliases: []string{"ls"},
 		Long: `List the templates of this host and every configured host, each queried
 concurrently with a 5 s timeout. An unreachable host is one row,
-"<host>  ERROR: <why>". With --host, only that host, and its failure is the
-command's error. A host with no thin pools has no rows. --stale lists only
+"<host>  ERROR: <why>". A network home (hosts: vms: false) is not asked: it is
+one row, "<host>  network home: runs no VMs". With --host, only that host (a
+network home too, which is then asked), and its failure is the command's
+error. A host with no thin pools has no rows. --stale lists only
 stale templates. SHA256 shows the first 12 hex digits, which are also the
 suffix of the template's LV name (vmtpl-<12 hex>). The last column, EXPORT, is
 "-" when the template has no export on the NVMe array, else the export's size,
@@ -70,7 +72,11 @@ whether its sha256 is known, and when it expires (an export is kept 24 hours).`,
 				}
 				names = []string{host}
 			}
-			rows := e.service("").ListAllTemplates(cmd.Context(), names, r.Resolve, app.ListTimeout)
+			svc := e.service("")
+			if host != "" {
+				svc.NetworkHome = nil // a host named explicitly is asked, a home included
+			}
+			rows := svc.ListAllTemplates(cmd.Context(), names, r.Resolve, app.ListTimeout)
 			if host != "" && rows[0].Err != nil {
 				return rows[0].Err
 			}
@@ -105,6 +111,10 @@ func writeTemplateTable(out io.Writer, rows []app.HostTemplates, stale bool) err
 	for _, h := range rows {
 		if h.Err != nil {
 			fmt.Fprintf(w, "%s\tERROR: %s\n", h.Host, oneLine(h.Err.Error()))
+			continue
+		}
+		if h.NetworkHome {
+			fmt.Fprintf(w, "%s\tnetwork home: runs no VMs\n", h.Host)
 			continue
 		}
 		for _, t := range h.Templates {

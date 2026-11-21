@@ -311,7 +311,7 @@ func (m model) fetchRows() []vmRow {
 			continue
 		}
 		// A network home has no VMs: one row says so (it is not an action target).
-		if len(h.VMs) == 0 && m.networkHome != nil && m.networkHome(h.Host) {
+		if h.NetworkHome || len(h.VMs) == 0 && m.networkHome != nil && m.networkHome(h.Host) {
 			rows = append(rows, vmRow{Host: h.Host, Err: errNetworkHome})
 			continue
 		}
@@ -1873,7 +1873,7 @@ func newModel(r *hosts.Resolver, tunnel vmtool.Tunnel, ipWait, sshWait time.Dura
 	m.networkHome = r.NetworkHome
 	m.resolve = r.Resolve
 	m.listAll = func(ctx context.Context) []app.HostVMs {
-		return app.ListAll(ctx, m.hostNames, m.resolve, app.ListTimeout)
+		return app.ListAll(ctx, m.hostNames, m.resolve, m.networkHome, app.ListTimeout)
 	}
 	m.tunnel = tunnel
 	m.ipTimeout, m.sshTimeout = ipWait, sshWait

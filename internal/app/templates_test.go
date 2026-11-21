@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -210,5 +211,37 @@ func TestListAllTemplates(t *testing.T) {
 	}
 	if got[3].Err == nil || got[3].Host != "gone" {
 		t.Errorf("gone: %+v", got[3])
+	}
+}
+
+// ListAllTemplates does not open or ask a network home: its row says so.
+func TestListAllTemplatesSkipsNetworkHome(t *testing.T) {
+	svc := &Service{NetworkHome: func(h string) bool { return h == "home1" }}
+	var mu sync.Mutex
+	var opened []string
+	open := func(host string) (Manager, func(), error) {
+		mu.Lock()
+		opened = append(opened, host)
+		mu.Unlock()
+		if host == "home1" {
+			return nil, nil, errors.New("home1 is unreachable")
+		}
+		return &tmplHost{list: []TemplateInfo{tpl("img1", "vmtpl-aaaaaaaaaaaa", vmtool.TemplateOriginImage, false)}}, func() {}, nil
+	}
+	start := time.Now()
+	got := svc.ListAllTemplates(context.Background(), []string{"hv1", "home1"}, open, 5*time.Second)
+	if time.Since(start) > time.Second {
+		t.Errorf("took %v", time.Since(start))
+	}
+	if len(got) != 2 || got[0].Err != nil || len(got[0].Templates) != 1 {
+		t.Fatalf("hv1: %+v", got)
+	}
+	if got[1].Host != "home1" || !got[1].NetworkHome || got[1].Err != nil || len(got[1].Templates) != 0 {
+		t.Errorf("home1 row: %+v", got[1])
+	}
+	for _, h := range opened {
+		if h == "home1" {
+			t.Error("the network home was opened")
+		}
 	}
 }

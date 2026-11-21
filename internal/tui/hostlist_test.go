@@ -73,7 +73,7 @@ func TestRefreshDoesNotWaitOnDeadHost(t *testing.T) {
 		return local, func() {}, nil
 	}
 	m.listAll = func(ctx context.Context) []app.HostVMs {
-		return app.ListAll(ctx, m.hostNames, m.resolve, 200*time.Millisecond)
+		return app.ListAll(ctx, m.hostNames, m.resolve, nil, 200*time.Millisecond)
 	}
 	start := time.Now()
 	msg := m.refreshCmd()().(refreshMsg)

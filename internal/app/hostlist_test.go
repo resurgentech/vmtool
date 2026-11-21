@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -43,7 +44,7 @@ func TestListAllFanOut(t *testing.T) {
 		return fakes[host], func() {}, nil
 	}
 	start := time.Now()
-	got := ListAll(context.Background(), []string{"jetfire", "hv1", "hv2", "hv3", "hv4"}, open, 300*time.Millisecond)
+	got := ListAll(context.Background(), []string{"jetfire", "hv1", "hv2", "hv3", "hv4"}, open, nil, 300*time.Millisecond)
 	elapsed := time.Since(start)
 	if elapsed > 600*time.Millisecond {
 		t.Errorf("took %v: want about the timeout, not the sum", elapsed)
@@ -140,5 +141,43 @@ func TestCertDaysLeft(t *testing.T) {
 		if d != tc.days || ok != tc.ok {
 			t.Errorf("%v: %d %v, want %d %v", tc.after, d, ok, tc.days, tc.ok)
 		}
+	}
+}
+
+// A network home is not opened or asked in an all-hosts listing: its row says
+// so, with no error and no wait, and the other hosts are listed as before.
+func TestListAllSkipsNetworkHome(t *testing.T) {
+	var mu sync.Mutex
+	var opened []string
+	open := func(host string) (Manager, func(), error) {
+		mu.Lock()
+		opened = append(opened, host)
+		mu.Unlock()
+		if host == "home1" {
+			return nil, nil, errors.New("home1 is unreachable")
+		}
+		return &listFake{vms: []vmtool.VMInfo{{Name: "a"}}}, func() {}, nil
+	}
+	home := func(h string) bool { return h == "home1" }
+	start := time.Now()
+	got := ListAll(context.Background(), []string{"hv1", "home1"}, open, home, 5*time.Second)
+	if time.Since(start) > time.Second {
+		t.Errorf("took %v", time.Since(start))
+	}
+	if len(got) != 2 || got[0].Err != nil || len(got[0].VMs) != 1 {
+		t.Fatalf("hv1: %+v", got)
+	}
+	if got[1].Host != "home1" || !got[1].NetworkHome || got[1].Err != nil || len(got[1].VMs) != 0 {
+		t.Errorf("home1 row: %+v", got[1])
+	}
+	for _, h := range opened {
+		if h == "home1" {
+			t.Error("the network home was opened")
+		}
+	}
+	// nil home: every host is asked.
+	got = ListAll(context.Background(), []string{"home1"}, open, nil, time.Second)
+	if got[0].NetworkHome || got[0].Err == nil {
+		t.Errorf("nil home func: %+v", got[0])
 	}
 }

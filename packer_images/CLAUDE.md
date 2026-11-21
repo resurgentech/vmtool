@@ -58,7 +58,7 @@ Every image ends clean for cloud-init, so each clone takes its identity at first
 
 ## Network (netplan)
 
-- **`files/99-wildcard.yaml`** is the one netplan file for all seven templates: `all-en` matches `en*`, `dhcp4: true`, `dhcp-identifier: mac`. Each template takes it with a `provisioner "file"` (source `${path.root}/../../files/99-wildcard.yaml`) and `sudo install -m 0600` to `/etc/netplan/99-wildcard.yaml` in its network shell provisioner. No template carries its own copy, and no `user-data.tpl` writes a netplan inline.
+- **`files/99-wildcard.yaml`** is the one netplan file for all seven templates: `all-en` matches `en*`, `dhcp4: true`, `dhcp-identifier: mac`, `dhcp4-overrides: {use-domains: true}` (the guest takes the DHCP search domain, so one-word names resolve). Each template takes it with a `provisioner "file"` (source `${path.root}/../../files/99-wildcard.yaml`) and `sudo install -m 0600` to `/etc/netplan/99-wildcard.yaml` in its network shell provisioner. No template carries its own copy, and no `user-data.tpl` writes a netplan inline.
 - **Why the wildcard.** packer attaches the NIC to `pcie.0` (`ens3`), libvirt puts it behind a pcie-root-port (`enp1s0`), so a config naming one interface is dead on the other host.
 - **Why `dhcp-identifier: mac`.** networkd's default DHCP client id derives from the machine-id; clones of one image would otherwise ask for the same lease. The MAC differs per clone.
 - **`ubuntu2404_aws`** is not given the netplan during the build: cloud-init's own DHCP config keeps the build VM reachable, and the template's first provisioner removes `50-cloud-init.yaml` and installs the wildcard for the clone's first boot.

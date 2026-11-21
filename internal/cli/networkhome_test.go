@@ -2,8 +2,10 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/jaredeh/vmtool/internal/app"
@@ -120,5 +122,71 @@ func TestHostsShowsNetworkHome(t *testing.T) {
 	}
 	if strings.Contains(r.out, "hv1 (network home)") {
 		t.Errorf("hv1 marked as a network home:\n%s", r.out)
+	}
+}
+
+// An all-hosts `list` does not ask a network home (its fake would fail): one
+// row says so. Named explicitly, the home is asked and its failure is the
+// command's error.
+func TestListAllHostsDoesNotAskNetworkHome(t *testing.T) {
+	t.Setenv(config.TokenEnv, gateToken)
+	t.Chdir(t.TempDir())
+	dir := writeWorkdir(t, homeConfig(), "")
+	installHomeHosts(t, map[string]listMgr{
+		"jetfire": {},
+		"hv1":     {vms: []vmtool.VMInfo{{Name: "db", State: vmtool.StateRunning, VCPUs: 1, Memory: 2}}},
+		"home1":   {err: errors.New("home1 unreachable")},
+	})
+	r := runGate(t, dir, map[string]bool{"vmtool list": true}, "list")
+	if r.err != nil {
+		t.Fatal(r.err)
+	}
+	if strings.Contains(r.out, "ERROR") || !strings.Contains(norm(r.out), "home1 network home: runs no VMs") {
+		t.Errorf("all-hosts list:\n%s", r.out)
+	}
+	r = runGate(t, dir, map[string]bool{"vmtool list": true}, "list", "home1")
+	if r.err == nil || !strings.Contains(r.err.Error(), "home1 unreachable") {
+		t.Errorf("list home1: err = %v, want the home's failure", r.err)
+	}
+}
+
+// installHomeTemplateHosts is installTemplateHosts with home1 a network home.
+func installHomeTemplateHosts(t *testing.T, mgrs map[string]app.Manager) {
+	t.Helper()
+	old := newResolver
+	t.Cleanup(func() { newResolver = old })
+	newResolver = func(e *env) *hosts.Resolver {
+		return hosts.NewWith(e.cfg.Name, config.RoleWorkstation, []string{"hv1", "home1"}, func() (app.Manager, func(), error) {
+			return mgrs[e.cfg.Name], func() {}, nil
+		}).WithNetworkHomes("home1").WithRemote(func(host, _ string) (app.Manager, func(), error) {
+			return mgrs[host], func() {}, nil
+		})
+	}
+}
+
+// Same pair for `templates list`: all hosts leaves the home alone, --host
+// asks it.
+func TestTemplatesListDoesNotAskNetworkHome(t *testing.T) {
+	t.Setenv(config.TokenEnv, gateToken)
+	t.Chdir(t.TempDir())
+	dir := writeWorkdir(t, homeConfig(), "")
+	mu := &sync.Mutex{}
+	calls := &[]string{}
+	installHomeTemplateHosts(t, map[string]app.Manager{
+		"jetfire": listMgr{},
+		"hv1":     tplHost{mu: mu, calls: calls, tpls: []app.TemplateInfo{tmpl("vmtpl-abababababab", "img1", "image", strings.Repeat("ab", 32), false, 2)}},
+		"home1":   tplHost{mu: mu, calls: calls, err: errors.New("home1 unreachable")},
+	})
+	keep := map[string]bool{"vmtool templates list": true}
+	r := runGate(t, dir, keep, "templates", "list")
+	if r.err != nil {
+		t.Fatal(r.err)
+	}
+	if strings.Contains(r.out, "ERROR") || !strings.Contains(norm(r.out), "home1 network home: runs no VMs") {
+		t.Errorf("all-hosts templates list:\n%s", r.out)
+	}
+	r = runGate(t, dir, keep, "templates", "list", "--host", "home1")
+	if r.err == nil || !strings.Contains(r.err.Error(), "home1 unreachable") {
+		t.Errorf("templates list --host home1: err = %v, want the home's failure", r.err)
 	}
 }

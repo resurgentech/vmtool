@@ -213,6 +213,9 @@ type HostTemplates struct {
 	Host      string
 	Templates []TemplateInfo
 	Err       error
+	// NetworkHome is true for a host that was not asked because it is a
+	// network home (runs no VMs).
+	NetworkHome bool
 }
 
 // ListAllTemplates lists the templates of every host in hosts concurrently,
@@ -220,7 +223,8 @@ type HostTemplates struct {
 // per host in the order given, a host that fails to open, fails to list or
 // does not answer in time carries its error, and a host with no thin pools
 // has none. An abandoned host's goroutine finishes whenever its Manager's own
-// call ends, as in ListAll.
+// call ends, as in ListAll. A host s.NetworkHome calls a network home is not
+// opened or asked: its entry is {Host, NetworkHome: true}.
 func (s *Service) ListAllTemplates(ctx context.Context, hosts []string, open HostOpener, timeout time.Duration) []HostTemplates {
 	if timeout <= 0 {
 		timeout = ListTimeout
@@ -228,6 +232,10 @@ func (s *Service) ListAllTemplates(ctx context.Context, hosts []string, open Hos
 	out := make([]HostTemplates, len(hosts))
 	var wg sync.WaitGroup
 	for i, h := range hosts {
+		if s.NetworkHome != nil && s.NetworkHome(h) {
+			out[i] = HostTemplates{Host: h, NetworkHome: true}
+			continue
+		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

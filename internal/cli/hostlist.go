@@ -28,9 +28,9 @@ func listCmd(e *env) *cobra.Command {
 		Long: `List VMs on this host and every configured host, each queried concurrently
 with a 5 s timeout. An unreachable host is one row, "<host>  ERROR: <why>",
 and does not change the exit status: the listing ran. A network home (hosts:
-vms: false) that has no VMs is one row, "<host>  network home: runs no VMs".
-Name a host to list only
-that host; then its failure is the command's error.`,
+vms: false) is not asked: it is one row, "<host>  network home: runs no VMs".
+Name a host to list only that host (a network home too); then it is asked and
+its failure is the command's error.`,
 		Aliases: []string{"ls"},
 		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -42,7 +42,12 @@ that host; then its failure is the command's error.`,
 				}
 				names = args[0:1]
 			}
-			rows := app.ListAll(cmd.Context(), names, r.Resolve, app.ListTimeout)
+			// A host named explicitly is asked, a network home included.
+			home := r.NetworkHome
+			if len(args) == 1 {
+				home = nil
+			}
+			rows := app.ListAll(cmd.Context(), names, r.Resolve, home, app.ListTimeout)
 			if len(args) == 1 && rows[0].Err != nil {
 				return rows[0].Err
 			}
@@ -83,7 +88,7 @@ func printVMTable(out io.Writer, rows []app.HostVMs, networkHome func(string) bo
 			fmt.Fprintf(w, "%s\tERROR: %s\n", h.Host, oneLine(h.Err.Error()))
 			continue
 		}
-		if len(h.VMs) == 0 && networkHome(h.Host) {
+		if h.NetworkHome || len(h.VMs) == 0 && networkHome(h.Host) {
 			fmt.Fprintf(w, "%s\tnetwork home: runs no VMs\n", h.Host)
 			continue
 		}

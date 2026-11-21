@@ -24,6 +24,9 @@ type HostVMs struct {
 	Host string
 	VMs  []vmtool.VMInfo
 	Err  error
+	// NetworkHome is true for a host that was not asked because it is a
+	// network home (runs no VMs): VMs and Err are empty.
+	NetworkHome bool
 }
 
 func timeoutErr(d time.Duration) error { return fmt.Errorf("timed out after %s", d) }
@@ -40,13 +43,21 @@ func timeoutErr(d time.Duration) error { return fmt.Errorf("timed out after %s",
 // errors) and then releases the Manager. The goroutine count is therefore
 // bounded by one per host per call, for at most that long; its result is
 // discarded.
-func ListAll(ctx context.Context, hosts []string, open HostOpener, timeout time.Duration) []HostVMs {
+//
+// home reports whether a host is a network home (nil: none is). A home runs no
+// VMs, so it is neither opened nor asked: its entry is {Host, NetworkHome:
+// true} at once, with no error and no timeout.
+func ListAll(ctx context.Context, hosts []string, open HostOpener, home func(string) bool, timeout time.Duration) []HostVMs {
 	if timeout <= 0 {
 		timeout = ListTimeout
 	}
 	out := make([]HostVMs, len(hosts))
 	var wg sync.WaitGroup
 	for i, h := range hosts {
+		if home != nil && home(h) {
+			out[i] = HostVMs{Host: h, NetworkHome: true}
+			continue
+		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

@@ -2457,3 +2457,25 @@ are appended, never edited in; a hook refuses rewrites.
   task`, deploy wrote the fqdn with no fallback line. Green; `just check`
   and `VMTOOL_TEST_ANSIBLE_SYNTAX=1 just test ./scripts/` green.
 - Commits: the K3 commit on `clone-identity` (this entry rides in it).
+
+## 2026-11-21 — X1 All-hosts listings do not ask a network home
+
+- `app.ListAll` takes the network-home test (`home func(string) bool`, nil:
+  none); `Service.ListAllTemplates` uses `Service.NetworkHome`. A home is
+  neither opened nor asked: its entry is `{Host, NetworkHome: true}` at once,
+  no error, no timeout. `HostVMs` and `HostTemplates` gain `NetworkHome`.
+- `vmtool list` and `vmtool templates list` (all hosts) print
+  `<host>  network home: runs no VMs` for it; a host named explicitly
+  (`list home1`, `templates list --host home1`) is asked and its failure is
+  the command's error. The TUI's refresh passes the resolver's test and shows
+  the same row. `vmtool hosts` unchanged.
+- `packer_images/CLAUDE.md` Network section names `dhcp4-overrides:
+  {use-domains: true}` (K2's A4).
+- Tests: `TestListAllSkipsNetworkHome`, `TestListAllTemplatesSkipsNetworkHome`,
+  `TestListAllHostsDoesNotAskNetworkHome`,
+  `TestTemplatesListDoesNotAskNetworkHome`, `TestTUIRefreshDoesNotAskNetworkHome`
+  (through `newModel` with `hosts.NewWith`).
+- Red: CLI rows `home1  ERROR: home1 unreachable`; TUI `the network home was
+  opened`; app `the network home was opened` (and a compile red on the new
+  `ListAll` signature). Green; `just check` green.
+- Commits: the X1 commit on `clone-identity` (this entry rides in it).
