@@ -932,43 +932,50 @@ func TestNvmeThinExpressionsEvaluate(t *testing.T) {
 		vars := map[string]any{"_lv": lv, "vmtool_nvme_thin_discards": discardsExpr, "vmtool_nvme_thin_probe": map[string]any{"rc": rc, "stdout": c.stdout}}
 		wantEval(t, label, "vmtool_nvme_thin_discards", vars, c.want)
 	}
-	// H2: lv_when_full, and the guard of "queue writes when full" over it: it
-	// runs on a pool made in this run and on an adopted pool not at queue.
-	whenFullExpr, _ := sf["vmtool_nvme_thin_when_full"].(string)
-	if whenFullExpr == "" {
-		t.Fatal("set_fact lacks vmtool_nvme_thin_when_full")
-	}
-	var queueGuard string
-	for _, w := range nvmeTaskNamed(t, queueWhenFull).whens {
-		if strings.Contains(w, "vmtool_nvme_thin_when_full") {
-			queueGuard = w
+	// H3: "queue writes when full" runs only when the read after the create
+	// says the pool is not at queue, whether the pool was made in this run
+	// (first probe absent) or adopted (first probe a tagged pool). The task's
+	// own whens are evaluated, beside the first probe's facts, which must not
+	// sway it.
+	set := nvmeTaskNamed(t, queueWhenFull)
+	whenFullExpr := taskVar(t, set, "_when_full")
+	var decide []string
+	for _, w := range set.whens {
+		if w != nvmeGuard && w != thinGuard {
+			decide = append(decide, "("+w+")")
 		}
 	}
-	if queueGuard == "" {
-		t.Fatal("no when over vmtool_nvme_thin_when_full on " + queueWhenFull)
+	if len(decide) == 0 {
+		t.Fatal("no deciding when on " + queueWhenFull)
 	}
-	withWhenFull := func(full string) string {
-		return `{"report":[{"lv":[{"lv_name":"thin-test","lv_attr":"twi-aotz--","lv_tags":"vmtool_thinpool","zero":"","lv_profile":"vmtool-thin","discards":"passdown","lv_when_full":"` + full + `"}]}]}`
+	readOut := func(full string) string {
+		return `{"report":[{"lv":[{"lv_when_full":"` + full + `"}]}]}`
 	}
+	adopted := report("thin-test", "twi-aotz--", "vmtool_thinpool", "", "vmtool-thin", "passdown")
 	for label, c := range map[string]struct {
-		rc     int
-		stdout string
-		full   string
-		runs   bool
+		probeRC     int
+		probeStdout string
+		full        string
+		runs        bool
 	}{
-		"pool absent (made in this run)": {5, "", "", true},
-		"adopted, queue (a rerun)":       {0, withWhenFull("queue"), "queue", false},
-		"adopted, error":                 {0, withWhenFull("error"), "error", true},
+		"made this run, queue": {5, "", "queue", false},
+		"made this run, error": {5, "", "error", true},
+		"adopted, queue":       {0, adopted, "queue", false},
+		"adopted, error":       {0, adopted, "error", true},
 	} {
-		vars := map[string]any{"_lv": lv, "vmtool_nvme_thin_probe": map[string]any{"rc": c.rc, "stdout": c.stdout},
-			"vmtool_nvme_thin_when_full": whenFullExpr, "_runs": "{{ " + queueGuard + " }}"}
+		vars := map[string]any{"_lv": lv, "vmtool_nvme_thin_probe": map[string]any{"rc": c.probeRC, "stdout": c.probeStdout},
+			whenFullReg: map[string]any{"rc": 0, "stdout": readOut(c.full)},
+			"_when_full": whenFullExpr, "_runs": "{{ " + strings.Join(decide, " and ") + " }}"}
 		for _, k := range []string{"vmtool_nvme_thin_present", "vmtool_nvme_thin_adoptable"} {
 			e, _ := sf[k].(string)
 			vars[k] = e
 		}
-		wantEval(t, label, "vmtool_nvme_thin_when_full", vars, c.full)
+		wantEval(t, label, "_when_full", vars, c.full)
 		wantEval(t, label, "_runs", vars, c.runs)
 	}
+	// A read that failed (check mode before a pool exists) runs nothing.
+	wantEval(t, "read failed", "_runs", map[string]any{whenFullReg: map[string]any{"rc": 5, "stdout": ""},
+		"_when_full": whenFullExpr, "_runs": "{{ " + strings.Join(decide, " and ") + " }}"}, false)
 
 	for _, c := range []struct {
 		label                  string
@@ -1274,23 +1281,65 @@ func TestNvmeThinCreateHasNoErrorWhenFull(t *testing.T) {
 	}
 }
 
+// H3: LVM exits 5 ("Error when full is already unset") on `lvchange
+// --errorwhenfull n` when the pool is already at queue, which a fresh pool is
+// on LVM 2.03.16. So lv_when_full is read once, right after the create (it
+// serves a pool made in this run and an adopted one alike), and the lvchange
+// runs only when that read says the pool is not at queue.
+const (
+	whenFullRead    = "Thin pool: read when full after the create"
+	whenFullReg     = "vmtool_nvme_thin_when_full_read"
+	whenFullRanOK   = "vmtool_nvme_thin_when_full_read.rc | default(1) == 0"
+	whenFullNotQ    = "_when_full != 'queue'"
+	whenFullOldFact = "vmtool_nvme_thin_when_full"
+)
+
 func TestNvmeThinQueueWhenFull(t *testing.T) {
-	if !strings.Contains(norm(thinTask(t, "probe").text()), "lv_when_full") {
-		t.Errorf("the probe must read lv_when_full")
+	// The earlier probe no longer decides this: it does not read lv_when_full,
+	// and no fact of it is set.
+	if strings.Contains(norm(thinTask(t, "probe the pool").text()), "lv_when_full") {
+		t.Errorf("the first probe must not read lv_when_full any more (H3: the read after the create decides)")
 	}
 	rp := thinTask(t, "read the probe")
 	sf, _ := rp.body["ansible.builtin.set_fact"].(map[string]any)
-	if e, _ := sf["vmtool_nvme_thin_when_full"].(string); !strings.Contains(e, "lv_when_full") {
-		t.Errorf("the probe's set_fact lacks vmtool_nvme_thin_when_full from lv_when_full: %q", e)
+	if _, ok := sf[whenFullOldFact]; ok {
+		t.Errorf("the probe's set_fact still sets %s", whenFullOldFact)
+	}
+	cr := nvmeTaskNamed(t, poolCreate)
+	rd := nvmeTaskNamed(t, whenFullRead)
+	if rd.index != cr.index+1 {
+		t.Errorf("%q (task %d) must come right after the create (task %d)", whenFullRead, rd.index, cr.index)
+	}
+	if norm(argvText(rd)) != "lvs --reportformat json -o lv_when_full {{ vmtool_nvme_vg }}/{{ vmtool_nvme_thin_pool }}" {
+		t.Errorf("%q argv = %q", whenFullRead, argvText(rd))
+	}
+	if rd.body["register"] != whenFullReg || rd.body["changed_when"] != false || rd.body["check_mode"] != false || rd.body["failed_when"] != false {
+		t.Errorf("%q must register %s, read-only (changed_when/check_mode false) and read its failure (failed_when false): %v", whenFullRead, whenFullReg, rd.body)
+	}
+	if len(rd.whens) != 2 || !hasWhen(rd.whens, nvmeGuard) || !hasWhen(rd.whens, thinGuard) {
+		t.Errorf("%q must run on every thin run, made now or adopted (only the two guards): %v", whenFullRead, rd.whens)
 	}
 	set := nvmeTaskNamed(t, queueWhenFull)
+	if set.index != rd.index+1 {
+		t.Errorf("%q (task %d) must come right after the read (task %d)", queueWhenFull, set.index, rd.index)
+	}
 	if norm(argvText(set)) != "lvchange --errorwhenfull n {{ vmtool_nvme_vg }}/{{ vmtool_nvme_thin_pool }}" {
 		t.Errorf("argv = %q", argvText(set))
 	}
-	for _, w := range []string{nvmeGuard, thinGuard,
-		"(not (vmtool_nvme_thin_present | bool)) or ((vmtool_nvme_thin_adoptable | bool) and vmtool_nvme_thin_when_full != 'queue')"} {
+	if v := taskVar(t, set, "_when_full"); !strings.Contains(v, whenFullReg) || !strings.Contains(v, "lv_when_full") {
+		t.Errorf("%q vars._when_full must come from %s's lv_when_full: %q", queueWhenFull, whenFullReg, v)
+	}
+	if len(set.whens) != 4 {
+		t.Errorf("%q whens = %v, want the two guards, %q and %q", queueWhenFull, set.whens, whenFullRanOK, whenFullNotQ)
+	}
+	for _, w := range []string{nvmeGuard, thinGuard, whenFullRanOK, whenFullNotQ} {
 		if !hasWhen(set.whens, w) {
 			t.Errorf("%q must be guarded by %q: %v", queueWhenFull, w, set.whens)
+		}
+	}
+	for _, w := range set.whens {
+		if strings.Contains(w, "vmtool_nvme_thin_present") || strings.Contains(w, "vmtool_nvme_thin_adoptable") {
+			t.Errorf("%q must not decide on the first probe (%q): made now or adopted, the read decides", queueWhenFull, w)
 		}
 	}
 	// Changed exactly when it ran: no changed_when, and a failure is raised.
@@ -1298,10 +1347,6 @@ func TestNvmeThinQueueWhenFull(t *testing.T) {
 		if _, ok := set.body[k]; ok {
 			t.Errorf("%q sets %s: it must report changed when it runs and fail when LVM refuses", queueWhenFull, k)
 		}
-	}
-	cr := nvmeTaskNamed(t, poolCreate)
-	if set.index != cr.index+1 {
-		t.Errorf("%q (task %d) must come right after the create (task %d)", queueWhenFull, set.index, cr.index)
 	}
 }
 

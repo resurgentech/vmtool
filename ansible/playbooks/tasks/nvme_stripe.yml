@@ -527,7 +527,7 @@
       - --reportformat
       - json
       - -o
-      - "lv_name,lv_attr,lv_tags,zero,lv_profile,discards,lv_when_full"
+      - "lv_name,lv_attr,lv_tags,zero,lv_profile,discards"
       - "{{ vmtool_nvme_vg }}/{{ vmtool_nvme_thin_pool }}"
   register: vmtool_nvme_thin_probe
   changed_when: false
@@ -547,7 +547,6 @@
     vmtool_nvme_thin_zeroing: "{{ (_lv.zero | default('')) | trim != '' }}"
     vmtool_nvme_thin_profile_now: "{{ (_lv.lv_profile | default('')) | trim }}"
     vmtool_nvme_thin_discards: "{{ (_lv.discards | default('')) | trim }}"
-    vmtool_nvme_thin_when_full: "{{ (_lv.lv_when_full | default('')) | trim }}"
   vars:
     _lv: >-
       {{ ((vmtool_nvme_thin_probe.stdout | from_json).report[0].lv | default([]) | first | default({}))
@@ -661,7 +660,7 @@
 # halves sequential writes; the profile and monitoring grow the pool.
 # Discards pass down to the drives, written out instead of left to the default.
 # No --errorwhenfull here: LVM 2.03.16 refuses it on a thin-pool create; the
-# next task sets it.
+# tasks after it set it, only if the pool is not at queue already.
 - name: "Thin pool: create the pool"
   ansible.builtin.command:
     argv: >-
@@ -675,16 +674,36 @@
     - vmtool_nvme_thin | bool
     - not (vmtool_nvme_thin_present | bool)
 
-# Queue writes when full (LVM's default, made explicit): on the pool made just
-# now, and on an adopted pool only when lvs says it is not at queue, so a
-# rerun runs nothing.
-- name: "Thin pool: queue writes when full"
+# Read-only, after the create, so it serves a pool made just now and an adopted
+# one alike. It fails only where no pool exists yet (check mode on a first
+# run); the next task then runs nothing.
+- name: "Thin pool: read when full after the create"
   ansible.builtin.command:
-    argv: [lvchange, --errorwhenfull, "n", "{{ vmtool_nvme_vg }}/{{ vmtool_nvme_thin_pool }}"]
+    argv: [lvs, --reportformat, json, -o, lv_when_full, "{{ vmtool_nvme_vg }}/{{ vmtool_nvme_thin_pool }}"]
+  register: vmtool_nvme_thin_when_full_read
+  changed_when: false
+  check_mode: false
+  failed_when: false
   when:
     - vmtool_nvme_drives | length > 0
     - vmtool_nvme_thin | bool
-    - (not (vmtool_nvme_thin_present | bool)) or ((vmtool_nvme_thin_adoptable | bool) and vmtool_nvme_thin_when_full != 'queue')
+
+# Queue writes when full (LVM's default) only if the pool is not at queue
+# already: LVM refuses `--errorwhenfull n` on a pool at queue ("Error when
+# full is already unset", exit 5), which a fresh pool is unless the host's
+# lvm.conf says otherwise. A rerun runs nothing.
+- name: "Thin pool: queue writes when full"
+  ansible.builtin.command:
+    argv: [lvchange, --errorwhenfull, "n", "{{ vmtool_nvme_vg }}/{{ vmtool_nvme_thin_pool }}"]
+  vars:
+    _when_full: >-
+      {{ (((vmtool_nvme_thin_when_full_read.stdout | from_json).report[0].lv | default([]) | first | default({})).lv_when_full | default('') | trim)
+         if (vmtool_nvme_thin_when_full_read.rc | default(1) == 0 and (vmtool_nvme_thin_when_full_read.stdout | default('') | trim | length > 0)) else '' }}
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_thin | bool
+    - vmtool_nvme_thin_when_full_read.rc | default(1) == 0
+    - _when_full != 'queue'
 
 - name: "Thin pool: turn zeroing off on an adopted pool"
   ansible.builtin.command:

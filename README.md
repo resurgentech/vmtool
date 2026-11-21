@@ -112,9 +112,9 @@ is free at that moment. The play installs `thin-provisioning-tools` and an LVM
 profile (`/etc/lvm/profile/vmtool-thin.profile`), enables `lvm2-monitor`, and
 makes the pool tagged `vmtool_thinpool`, with zeroing off (zeroing halves
 sequential writes), monitoring on, and autoextend at 80 % by 10 % of the pool,
-which can take only what the volume group still has free. Once created, the
-pool is set to queue writes when full (`lvchange --errorwhenfull n`, LVM's
-default, made explicit; LVM does not take the option on a thin-pool create).
+which can take only what the volume group still has free. The pool queues
+writes when full (LVM's default; vmtool sets it with `lvchange
+--errorwhenfull n` only if the host's LVM made it `error`).
 A pool of that name that already exists with the tag is adopted (zeroing and
 profile corrected if they differ). **One that exists without the tag, or that
 is not a thin pool, makes the play fail, naming it, and changes nothing**: a

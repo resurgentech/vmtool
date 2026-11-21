@@ -2358,3 +2358,21 @@ are appended, never edited in; a hook refuses rewrites.
   option, probe/fact/task missing). Green; `just check` and the opt-in
   syntax check green.
 - Commits: the H2 commit on `clone-identity` (this entry rides in it).
+
+## 2026-11-21 — H3 Set "queue when full" only when the pool is not already at it
+
+- `nvme_stripe.yml`: new read-only "Thin pool: read when full after the
+  create" (`lvs --reportformat json -o lv_when_full <vg>/<pool>`) right
+  after the create, serving a pool made now and an adopted one; "queue
+  writes when full" runs `lvchange --errorwhenfull n` only when that read
+  succeeded and says not `queue` (LVM exits 5 on a pool already at queue,
+  which a fresh pool is on veritech03). The first probe no longer reads
+  `lv_when_full`. README: the pool queues writes when full; vmtool sets it
+  only if the host's LVM made it `error`.
+- Tests: the read's place, argv and flags and the lvchange's whens pinned;
+  the opt-in evaluation test covers made-now/adopted x queue/error and a
+  failed read.
+- Red: assertion failures (no read task, first probe still reads
+  `lv_when_full`, no `vars._when_full`). Green; `just check` and the
+  opt-in syntax check green.
+- Commits: the H3 commit on `clone-identity` (this entry rides in it).
