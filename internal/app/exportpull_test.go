@@ -27,6 +27,7 @@ type xferHost struct {
 	exported  ExportedImage
 	exportErr error
 	exports   []string
+	hashes    []bool
 	// blob
 	blob     []byte
 	declared int64  // Content-Length the host says; -1 = same as blob
@@ -35,10 +36,15 @@ type xferHost struct {
 	opens    int
 	onOpen   func() // runs inside OpenImageBlob (a race injected by a test)
 	failMid  bool
+	// trailer: the digest is not in the header; it follows the body
+	useTrailer bool
+	trailer    string // what the trailer says; "" = the blob's digest
+	noTrailer  bool   // the host declared a trailer and sent none
 }
 
-func (h *xferHost) ExportTemplate(_ context.Context, name, pool string, on func(ExportEvent)) (ExportedImage, error) {
+func (h *xferHost) ExportTemplate(_ context.Context, name, pool string, hash bool, on func(ExportEvent)) (ExportedImage, error) {
 	h.exports = append(h.exports, name+" "+pool)
+	h.hashes = append(h.hashes, hash)
 	for _, e := range h.events {
 		on(e)
 	}
@@ -76,6 +82,14 @@ func (h *xferHost) OpenImageBlob(_ context.Context, name string) (io.ReadCloser,
 	}
 	if h.digest != "" {
 		info.SHA256 = h.digest
+	}
+	if h.useTrailer {
+		v := h.trailer
+		if v == "" && !h.noTrailer {
+			v = sumHex(h.blob)
+		}
+		info.SHA256 = ""
+		info.Trailer = func() string { return v }
 	}
 	var r io.Reader = bytes.NewReader(h.blob)
 	if h.failMid {
@@ -326,5 +340,79 @@ func TestPullHostImageRefusesBadInput(t *testing.T) {
 	}
 	if h.opens != 0 {
 		t.Errorf("the host was asked %d times for input that is refused first", h.opens)
+	}
+}
+
+// The digest follows the last byte (a template export whose digest the host
+// did not know when the send began): the pull compares at the end.
+func TestPullHostImageTrailerDigest(t *testing.T) {
+	data := bytes.Repeat([]byte("PLACEHOLDER trailer image "), 4000)
+	dir := pullDir(t)
+	h := &xferHost{blob: data, useTrailer: true}
+	got, err := (&Service{}).PullHostImage(context.Background(), h, PullHostImageInput{Host: "hv1", Name: "proj", Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SHA256 != sumHex(data) || got.Size != int64(len(data)) || got.Unchanged {
+		t.Errorf("result %+v", got)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "proj")); !bytes.Equal(b, data) {
+		t.Error("file differs")
+	}
+	if names := dirEntries(t, dir); len(names) != 1 {
+		t.Errorf("directory %v", names)
+	}
+	// The same file already there: nothing to do (the stream is read to compare).
+	again, err := (&Service{}).PullHostImage(context.Background(), h, PullHostImageInput{Host: "hv1", Name: "proj", Dir: dir})
+	if err != nil || !again.Unchanged || again.SHA256 != sumHex(data) {
+		t.Errorf("same file again: %+v %v", again, err)
+	}
+	// A different file of the same size is never replaced.
+	other := bytes.Repeat([]byte("x"), len(data))
+	if err := os.WriteFile(filepath.Join(dir, "proj"), other, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err = (&Service{}).PullHostImage(context.Background(), h, PullHostImageInput{Host: "hv1", Name: "proj", Dir: dir})
+	var ae *Error
+	if !AsError(err, &ae) || ae.Kind != KindConflict {
+		t.Errorf("different file: %v", err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "proj")); !bytes.Equal(b, other) {
+		t.Error("the existing file was replaced")
+	}
+}
+
+// A trailer that does not match the bytes, no trailer, or a malformed one keeps
+// nothing, and a truncated body is refused before the trailer is looked at.
+func TestPullHostImageTrailerMismatchOrMissingKeepsNothing(t *testing.T) {
+	data := bytes.Repeat([]byte("PLACEHOLDER trailer image "), 4000)
+	for name, tc := range map[string]struct {
+		h    *xferHost
+		want string
+	}{
+		"mismatch":  {&xferHost{blob: data, useTrailer: true, trailer: strings.Repeat("0", 64)}, "nothing was kept"},
+		"missing":   {&xferHost{blob: data, useTrailer: true, noTrailer: true}, "after the last byte"},
+		"malformed": {&xferHost{blob: data, useTrailer: true, trailer: "zz"}, "after the last byte"},
+		"short":     {&xferHost{blob: data, useTrailer: true, declared: int64(len(data)) + 10}, "got"},
+		"long":      {&xferHost{blob: data, useTrailer: true, declared: int64(len(data)) - 5}, "more than"},
+	} {
+		dir := pullDir(t)
+		_, err := (&Service{}).PullHostImage(context.Background(), tc.h, PullHostImageInput{Host: "hv1", Name: "proj", Dir: dir})
+		var ae *Error
+		if !AsError(err, &ae) || ae.Kind != KindBadGateway || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: %v, want a bad gateway containing %q", name, err, tc.want)
+		}
+		if names := dirEntries(t, dir); len(names) != 0 {
+			t.Errorf("%s: left %v", name, names)
+		}
+	}
+}
+
+// A host that sends neither a header digest nor a trailer is the old error.
+func TestPullHostImageNeitherDigestNorTrailer(t *testing.T) {
+	h := &xferHost{blob: []byte("PLACEHOLDER"), digest: "x"}
+	_, err := (&Service{}).PullHostImage(context.Background(), h, PullHostImageInput{Host: "hv1", Name: "proj", Dir: pullDir(t)})
+	if err == nil || !strings.Contains(err.Error(), "did not send a SHA-256 digest") {
+		t.Errorf("%v", err)
 	}
 }

@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: vmtool API
-  version: 2.4.0
+  version: 2.5.0
   description: >
     HTTP surface of `vmtool server`. Spec-first: models, stdlib ServerInterface,
     embedded spec, and a test client are generated from this file. Metal and
@@ -826,31 +826,54 @@ paths:
       - $ref: '#/components/parameters/ImageName'
     get:
       operationId: getImageBlob
-      summary: Download a cached image the daemon created (API 2.4.0)
+      summary: Download a cached image or a template's export volume (API 2.4.0; export volumes 2.5.0)
       description: >
         Streams the bytes of one image of a hypervisor's image cache, for
-        `vmtool images pull host/<name>`. Only a file the daemon's own
-        `image-manifest.yml` lists is served: {name} must be a valid image
-        name (400), a name the manifest does not list is 404, and a name the
-        manifest does not list but a foreign volume has is 409 (the daemon
-        never serves a file it did not create). The file is the manifest
-        entry's file in the `vmtool` pool's directory (the validated name
-        joined to that directory, nothing else from the request reaches the
-        filesystem), opened without following a symlink; anything but a
-        regular file of exactly the listed size is 409. The answer carries
-        `Content-Length` and `X-Image-SHA256` (the manifest's digest, which
-        the client checks the bytes against). The body is never logged. A
-        workstation forwards to the listed {host}'s daemon and answers 403
-        for itself.
+        `vmtool images pull host/<name>`. A name the daemon's own
+        `image-manifest.yml` lists is served as it always was: {name} must be
+        a valid image name (400); the file is the manifest entry's file in
+        the `vmtool` pool's directory (the validated name joined to that
+        directory, nothing else from the request reaches the filesystem),
+        opened without following a symlink; anything but a regular file of
+        exactly the listed size is 409. The answer carries `Content-Length`
+        and `X-Image-SHA256` (the manifest's digest, which the client checks
+        the bytes against). A name the manifest does not list but a foreign
+        volume has is 409 (the daemon never serves a file it did not
+        create). Since 2.5.0 a name the manifest does not list is also looked
+        up among the template export volumes (`templates export`; {name} is
+        the template's name) and the volume's qcow2 bytes are streamed,
+        hashed while they are sent. When the volume's digest is already
+        recorded the answer is as for a manifest entry (`Content-Length`,
+        `X-Image-SHA256`). Otherwise it carries `X-Image-Size` (the byte
+        count, instead of `Content-Length`), declares the trailer
+        `X-Image-SHA256`, streams the body chunked, and sends the digest of
+        the bytes it sent as that trailer after the last byte; the client
+        compares at the end and keeps nothing on a mismatch or a missing
+        trailer. The daemon records the digest on the export volume and its
+        template only after the whole body was written; a short send records
+        nothing. 404 when neither a manifest entry nor an export volume has
+        the name (the message names `templates export`). The body is never
+        logged. A workstation forwards to the listed {host}'s daemon,
+        relaying the header or the trailer unchanged, and answers 403 for
+        itself.
       responses:
         '200':
           description: the image bytes
           headers:
             X-Image-SHA256:
-              description: SHA-256 the manifest records, 64 lowercase hex digits
+              description: >
+                SHA-256 of the bytes, 64 lowercase hex digits. A header when
+                the digest was known before the send; otherwise an HTTP
+                trailer, sent after the last byte (2.5.0).
               schema: { type: string }
+            X-Image-Size:
+              description: >
+                the byte count of the body, sent (2.5.0) when the digest is
+                not yet known and the body is chunked, so there is no
+                Content-Length
+              schema: { type: integer, format: int64 }
             Content-Length:
-              description: the image's size in bytes
+              description: the image's size in bytes, when the digest is known before the send
               schema: { type: integer, format: int64 }
           content:
             application/octet-stream:
@@ -1006,31 +1029,33 @@ paths:
       - $ref: '#/components/parameters/HostName'
     post:
       operationId: exportTemplate
-      summary: Write a template into the image cache as a qcow2 image (API 2.4.0)
+      summary: Export a template as a qcow2 volume on the array (API 2.4.0; export volumes 2.5.0)
       description: >
         Served by hypervisor daemons (a workstation forwards to the listed
         {host}; for its own unlisted name it answers 403). `{name}` is a
         template's name (`vmtool_name`) or LV name, resolved to exactly one
         template as `deleteTemplate` does (404 none, 409 several; `pool`
-        limits the match). The image is written under the template's own
-        name. The same refusals as `uploadImage` apply before anything is
-        written: a foreign volume of that name is 409, a second upload,
-        fetch or export of the name running in this daemon is 409. If the
-        manifest already lists the name the answer is 409 unless it is the
-        same template re-exported (the template's recorded `sha256` equals
-        the manifest entry's and the file is in place), which is a single
-        `done` line and no rewrite. An image template (built from a cached
-        image) is only ever exported as that same image; only a saved
-        template makes a new image. Otherwise the answer is 200
+        limits the match). Since 2.5.0 the template is converted into a
+        temporary thick export volume (`vmexp-<12 hex>`) in the array's volume
+        group, never into the image cache: no file is written in the image
+        directory, no `.part`, no manifest entry, so `images list` does not
+        show it. The daemon removes the volume 24 hours after it was made;
+        `images pull host/<name>` (getImageBlob) reads it. An export volume
+        the template already has is reused. No room on the array (outside the
+        thin pool's growth reserve) is 409 before anything is written. The
+        same name conflicts as before apply: a foreign volume of that name, or
+        a manifest entry that is not this template's, is 409; an image
+        template is only ever exported as the cached image it was built from
+        (one `done` line, nothing written); a second export of the name
+        running in this daemon is 409. Otherwise the answer is 200
         `application/x-ndjson`, one ExportTemplateEvent per line: `progress`
-        lines (stage `export` while the root helper converts the volume to
-        qcow2 into `.<name>.part`, stage `hash` while the file is hashed),
-        then exactly one `done` (with the manifest entry) or one `error`. The
-        file is hard-linked into place under the manifest's lock and recorded
-        as a daemon-created entry; the template's tags then carry the file's
-        SHA-256, so a later create of that image name on this host uses the
-        template and uploads nothing. Any failure removes the `.<name>.part`
-        and nothing else. Bodies are never logged.
+        lines (stage `export` from the converter's percent, stage `hash` while
+        the volume is read for its digest), then exactly one `done` (its
+        `image` carries the template's name as `name` and the qcow2's byte
+        count as `size`; `sha256` only when the digest is known: with
+        `hash=true` the daemon reads the volume once, unless the digest is
+        already recorded, and records it on the volume and the template) or
+        one `error`. Bodies are never logged.
       parameters:
         - name: name
           in: path
@@ -1041,6 +1066,15 @@ paths:
           required: false
           description: only the template in this thin pool
           schema: { type: string }
+        - name: hash
+          in: query
+          required: false
+          description: >
+            2.5.0: have the daemon read the export volume once (unless its
+            digest is already recorded) and put the SHA-256 in the `done`
+            line; `templates export --push` asks for it because the store
+            wants the digest before the bytes. Default false.
+          schema: { type: boolean }
       responses:
         '200':
           description: NDJSON progress, ending in one `done` or one `error` line
@@ -1959,6 +1993,15 @@ components:
           type: array
           items: { type: string }
           description: "set only by a save (createTemplate with from_vm): the VM's disk targets other than vda, which are not part of the template"
+        export: { $ref: '#/components/schemas/TemplateExport' }
+    TemplateExport:
+      type: object
+      required: [bytes]
+      description: A finished export volume of a template (API 2.5.0); omitted from TemplateInfo when the template has none.
+      properties:
+        bytes: { type: integer, format: int64, description: "the qcow2 file's length in bytes" }
+        sha256: { type: string, description: "lowercase hex digest; omitted until it is known (after a send or `hash=true`)" }
+        expires: { type: string, format: date-time, description: "when the daemon removes the volume (24 hours after it was made); omitted when the host does not know" }
     CreateTemplateRequest:
       type: object
       description: >

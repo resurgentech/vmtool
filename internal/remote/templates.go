@@ -28,6 +28,17 @@ func templateFromAPI(v api.TemplateInfo) app.TemplateInfo {
 	if v.Created != nil {
 		t.Created = *v.Created
 	}
+	if x := v.Export; x != nil {
+		ev := &app.ExportVolume{ThinExport: vmtool.ThinExport{Bytes: x.Bytes}}
+		if x.Sha256 != nil {
+			ev.SHA256 = *x.Sha256
+		}
+		if x.Expires != nil {
+			// Expires() is Created + the daemon's TTL; the client keeps the date it was told.
+			ev.Created = x.Expires.Add(-vmtool.ExportTTL)
+		}
+		t.Export = ev
+	}
 	return t
 }
 

@@ -17,22 +17,21 @@ package server
 //     saved template makes a new image; an image template is exported only as
 //     the cached image it was built from.
 //   - The template is converted into a thick export volume in the array's
-//     volume group (or the template's existing one is reused; E2). Interim,
-//     until the blob is served from the volume directly: the daemon copies
-//     the volume's qcow2 bytes (exactly vmtool_bytes of them, from the
-//     helper's send) into `.<name>.part` in the image directory, hashing as
-//     it writes, records the digest on the template's and the volume's
-//     tags, then puts the file in place and in the manifest with
-//     (*receipt).commit: under the manifest's lock, os.Link (never an
-//     overwrite), a daemon-created entry. The `.part` is created here with
-//     O_EXCL; any failure removes that `.part` and nothing else, and one that
-//     already existed (another process made it) is not ours and stays.
+//     volume group (or the template's existing one is reused; E2). Nothing is
+//     written to the image directory: no file, no `.part`, no manifest entry.
+//     done carries the template's name and the byte count; the digest only
+//     with hash=true (one read of the volume, then the tags). No room on the
+//     array is a plain 409 before the stream starts.
 //   - From the 200 on every outcome is an NDJSON line: progress*, then one
 //     done or one error. Refusals that need no conversion are plain JSON
 //     statuses first. Request and response bodies are never logged.
 //
 // getImageBlob
-//   - Only what the daemon's own manifest lists is served. The name must be a
+//   - A manifest entry is served as before; a name it does not list is served
+//     from a template export volume of that name (OpenExport, hashed while
+//     sent: digest in the header when tagged, else X-Image-Size and the
+//     X-Image-SHA256 trailer, the tag recorded only after the whole body went
+//     out). The name must be a
 //     valid image name; the file is the validated name joined to the vmtool
 //     pool's directory (nothing else from the request reaches the
 //     filesystem), opened with O_NOFOLLOW (a symlink is refused) and checked
@@ -72,7 +71,7 @@ func (h *handlers) ExportTemplate(_ context.Context, _ api.ExportTemplateRequest
 
 func (t tunnelMux) ExportTemplate(w http.ResponseWriter, r *http.Request, host api.HostName, name string, params api.ExportTemplateParams) {
 	setNote(r.Context(), "exportTemplate", r)
-	t.h.exportTemplate(w, r, host, name, derefStr(params.Pool))
+	t.h.exportTemplate(w, r, host, name, derefStr(params.Pool), params.Hash != nil && *params.Hash)
 }
 
 // GetImageBlob on the strict interface is never reached: tunnelMux serves the
@@ -140,14 +139,14 @@ func badTemplateName(name string) string {
 
 // --- exportTemplate ---
 
-func (h *handlers) exportTemplate(w http.ResponseWriter, r *http.Request, host, name, pool string) {
+func (h *handlers) exportTemplate(w http.ResponseWriter, r *http.Request, host, name, pool string, hash bool) {
 	if h.role != config.RoleHypervisor {
 		if host == h.hosts.Local() && !h.hosts.OwnListed() {
 			writeExportStatus(w, http.StatusForbidden, fmt.Sprintf(
 				"exportTemplate is served by hypervisor daemons, not by workstation %s; a listed host's daemon exports", h.hosts.Local()))
 			return
 		}
-		h.forwardExport(w, r, host, name, pool)
+		h.forwardExport(w, r, host, name, pool, hash)
 		return
 	}
 	if !vmtool.ValidImageName(name) {
@@ -215,21 +214,6 @@ func (h *handlers) exportTemplate(w http.ResponseWriter, r *http.Request, host, 
 		return
 	}
 
-	// A temporary file left by an interrupted export (none is running here:
-	// the registry holds the name) is removed; one that is not a file stays.
-	if err := removeStalePart(rc.part); err != nil {
-		if errors.Is(err, errPartNotFile) {
-			writeExportStatus(w, http.StatusConflict, fmt.Sprintf("%v; vmtool will not remove it", err))
-			return
-		}
-		writeExportStatus(w, http.StatusInternalServerError, fmt.Sprintf("remove stale temporary file %s: %v", rc.part, err))
-		return
-	}
-	if _, err := os.Lstat(rc.part); err == nil {
-		writeExportStatus(w, http.StatusConflict, fmt.Sprintf("temporary file %s was created by another process; another export of %q may be running", rc.part, image))
-		return
-	}
-
 	fail := func(format string, a ...any) {
 		msg := fmt.Sprintf(format, a...)
 		slog.Warn("exportTemplate", "image", image, "outcome", "error", "err", msg)
@@ -241,12 +225,17 @@ func (h *handlers) exportTemplate(w http.ResponseWriter, r *http.Request, host, 
 
 	// The conversion into the export volume (the helper makes the thick LV and
 	// converts into it; the volume is reused if the template has one). Its
-	// progress is the converter's percent of the template's size.
-	progress(api.Export, 0, tpl.SizeBytes)
+	// progress is the converter's percent of the template's size. The stream
+	// starts with the first progress line, so a refusal before any (no room on
+	// the array) is a plain 409.
 	ev, xerr := exp.ExportTemplateVolume(tpl, func(pct float64) {
 		progress(api.Export, int64(pct/100*float64(tpl.SizeBytes)), tpl.SizeBytes)
 	})
 	if xerr != nil {
+		if !st.started && errors.Is(xerr, vmtool.ErrThinNoRoom) {
+			writeExportStatus(w, http.StatusConflict, fmt.Sprintf("%s: %v", host, xerr))
+			return
+		}
 		fail("export of template %q failed: %v", tpl.Name, xerr)
 		return
 	}
@@ -255,61 +244,49 @@ func (h *handlers) exportTemplate(w http.ResponseWriter, r *http.Request, host, 
 		return
 	}
 
-	// Interim (E2): the image is still copied from the export volume into the
-	// image cache as before, hashing while it is written; the export volume
-	// itself is kept for its 24 hours. E3 serves the volume directly.
-	// The file is made here, exclusively: one that already exists is another
-	// process's and stays.
-	pf, err := os.OpenFile(rc.part, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o644)
-	if err != nil {
-		fail("create the temporary file %s: %v", rc.part, err)
-		return
-	}
-	partLive := true
-	defer func() {
-		if partLive {
-			if err := os.Remove(rc.part); err != nil && !os.IsNotExist(err) {
-				slog.Error("exportTemplate: remove temporary file", "path", rc.part, "err", err)
+	// done names the image as the template (what `images pull host/<name>`
+	// asks for) and its size; the digest only when it was asked for.
+	out := api.ImageManifestEntry{Name: image, Size: &ev.Bytes}
+	if hash {
+		sha := ev.SHA256
+		if sha == "" {
+			// One read of the volume, then the tags (the template's and the
+			// volume's), so a later send puts the digest in its header.
+			var err error
+			sha, err = hashExport(exp, tpl, ev, func(n int64) { progress(api.Hash, n, ev.Bytes) })
+			if err != nil {
+				fail("%v", err)
+				return
 			}
 		}
-	}()
+		out.Sha256 = &sha
+	}
+	slog.Info("exportTemplate", "image", image, "outcome", "done", "bytes", ev.Bytes, "export", ev.Name, "hashed", hash)
+	st.send(api.ExportTemplateEvent{Event: api.ExportTemplateEventEventDone, Image: &out})
+}
+
+// hashExport reads the export volume once, hashing it, and records the digest
+// on the template and the volume. The digest counts only if exactly the
+// volume's byte count was read.
+func hashExport(exp app.TemplateVolumeExporter, tpl app.TemplateInfo, ev app.ExportVolume, onProgress func(n int64)) (string, error) {
 	src, _, err := exp.OpenExport(ev.Name)
 	if err != nil {
-		pf.Close()
-		fail("open export volume %s: %v", ev.Name, err)
-		return
+		return "", fmt.Errorf("open export volume %s: %v", ev.Name, err)
 	}
 	sum := sha256.New()
 	step := max(1, min(ev.Bytes/100, progressMaxStep))
-	n, err := io.Copy(io.MultiWriter(pf, sum), &progressReader{r: src, step: step, next: step, emit: func(n int64) { progress(api.Hash, n, ev.Bytes) }})
-	cerr := src.Close()
-	if err == nil {
+	n, err := io.Copy(sum, &progressReader{r: src, step: step, next: step, emit: onProgress})
+	if cerr := src.Close(); err == nil {
 		err = cerr
 	}
-	if werr := pf.Close(); err == nil {
-		err = werr
-	}
 	if err != nil || n != ev.Bytes {
-		fail("copy the export volume %s to %s: read %d of %d bytes: %v", ev.Name, rc.part, n, ev.Bytes, err)
-		return
+		return "", fmt.Errorf("read the export volume %s: read %d of %d bytes: %v", ev.Name, n, ev.Bytes, err)
 	}
 	got := hex.EncodeToString(sum.Sum(nil))
-
-	// The digest goes on the template before the file goes in place: a later
-	// create of this image name finds the template by (name, digest). A
-	// failure after this leaves a tag whose file never arrived, which names
-	// content only and shadows nothing.
 	if err := exp.RecordTemplateSHA(tpl, got); err != nil {
-		fail("record the SHA-256 on template %q: %v", tpl.Name, err)
-		return
+		return "", fmt.Errorf("record the SHA-256 on template %q: %v", tpl.Name, err)
 	}
-	out, uerr := rc.commit(got, n, &partLive)
-	if uerr != nil {
-		fail("%s", uerr.msg)
-		return
-	}
-	slog.Info("exportTemplate", "image", image, "outcome", "done", "bytes", n)
-	st.send(api.ExportTemplateEvent{Event: api.ExportTemplateEventEventDone, Image: &out})
+	return got, nil
 }
 
 func shortDigest(s string) string {
@@ -322,7 +299,7 @@ func shortDigest(s string) string {
 // forwardExport serves exportTemplate on a workstation for a listed host: the
 // request goes to that host's daemon (remote.Manager.ExportTemplate) and its
 // progress is relayed as it arrives.
-func (h *handlers) forwardExport(w http.ResponseWriter, r *http.Request, host, name, pool string) {
+func (h *handlers) forwardExport(w http.ResponseWriter, r *http.Request, host, name, pool string, hash bool) {
 	if !vmtool.ValidImageName(name) {
 		writeExportStatus(w, http.StatusBadRequest, badTemplateName(name))
 		return
@@ -339,7 +316,7 @@ func (h *handlers) forwardExport(w http.ResponseWriter, r *http.Request, host, n
 		return
 	}
 	st := newNDJSON(w)
-	img, err := x.ExportTemplate(r.Context(), name, pool, func(e app.ExportEvent) {
+	img, err := x.ExportTemplate(r.Context(), name, pool, hash, func(e app.ExportEvent) {
 		stage := api.Export
 		if e.Stage == "hash" {
 			stage = api.Hash
@@ -357,7 +334,7 @@ func (h *handlers) forwardExport(w http.ResponseWriter, r *http.Request, host, n
 		return
 	}
 	st.send(api.ExportTemplateEvent{Event: api.ExportTemplateEventEventDone, Image: &api.ImageManifestEntry{
-		Name: img.Name, Sha256: &img.SHA256, Size: &img.Size, Path: ptrToNonEmpty(img.Path)}})
+		Name: img.Name, Sha256: ptrToNonEmpty(img.SHA256), Size: &img.Size, Path: ptrToNonEmpty(img.Path)}})
 }
 
 func ptrToNonEmpty(s string) *string {
@@ -405,6 +382,26 @@ func (h *handlers) getImageBlob(w http.ResponseWriter, r *http.Request, host, na
 		return
 	}
 	defer done()
+	if !listed {
+		// Not a cached image: a template's export volume of that name is served
+		// next (no libvirt needed). Only "there is none" falls through.
+		if x, ok := m.(app.TemplateVolumeExporter); ok {
+			rc, ev, err := x.OpenExport(name)
+			switch {
+			case err == nil:
+				h.serveExport(w, x, name, host, rc, ev)
+				return
+			case errors.Is(err, app.ErrNoThinPools), kindOf(err) == app.KindNotFound:
+				// no export of that name
+			default:
+				if st := statusFor(err); st >= 500 {
+					slog.Error("getImageBlob", "image", name, "err", err)
+				}
+				writeBlobStatus(w, statusFor(err), err.Error())
+				return
+			}
+		}
+	}
 	dir, err := h.poolDirOf(host, func() (string, error) { return cachePoolDir(m, host) })
 	if err != nil {
 		writeBlobStatus(w, http.StatusInternalServerError, err.Error())
@@ -419,7 +416,9 @@ func (h *handlers) getImageBlob(w http.ResponseWriter, r *http.Request, host, na
 			writeBlobStatus(w, http.StatusConflict, fmt.Sprintf(
 				"image %q on %s at %s was not created by vmtool and will not be served: %s", name, host, p, app.ForeignImageHint))
 		default:
-			writeBlobStatus(w, http.StatusNotFound, fmt.Sprintf("image %q is not in the image cache of %s: %v", name, host, vmtool.ErrNotFound))
+			writeBlobStatus(w, http.StatusNotFound, fmt.Sprintf(
+				"image %q is not in the image cache of %s and no template export has that name (exports are kept 24 hours; make one with `vmtool templates export %s/%s`): %v",
+				name, host, host, name, vmtool.ErrNotFound))
 		}
 		return
 	}
@@ -473,6 +472,55 @@ func (h *handlers) getImageBlob(w http.ResponseWriter, r *http.Request, host, na
 	slog.Info("getImageBlob", "image", name, "outcome", "done", "bytes", n)
 }
 
+// serveExport streams the export volume ev from rc (exactly ev.Bytes bytes,
+// or a read error). With its digest on the volume's tags the answer is as for
+// a cached image (Content-Length, X-Image-SHA256). Without, it carries
+// X-Image-Size, declares the trailer X-Image-SHA256 and sends the digest of
+// what it sent after the last byte; the digest is recorded on the template and
+// the volume only after the whole body was written, and only if exactly
+// ev.Bytes bytes went out. A short send, or a client that went away, records
+// nothing.
+func (h *handlers) serveExport(w http.ResponseWriter, x app.TemplateVolumeExporter, name, host string, rc io.ReadCloser, ev app.ExportVolume) {
+	defer rc.Close()
+	w.Header().Set("Content-Type", "application/octet-stream")
+	known := ev.SHA256 != ""
+	if known {
+		w.Header().Set("Content-Length", strconv.FormatInt(ev.Bytes, 10))
+		w.Header().Set("X-Image-SHA256", ev.SHA256)
+	} else {
+		w.Header().Set("X-Image-Size", strconv.FormatInt(ev.Bytes, 10))
+		w.Header().Set("Trailer", "X-Image-SHA256")
+	}
+	w.WriteHeader(http.StatusOK)
+	sum := sha256.New()
+	var dst io.Writer = &idleWriter{w: w, rc: http.NewResponseController(w)}
+	if !known {
+		dst = io.MultiWriter(dst, sum)
+	}
+	n, err := io.Copy(dst, io.LimitReader(rc, ev.Bytes))
+	if err != nil || n != ev.Bytes {
+		// Headers are out: the client sees a short body and rejects it. No
+		// trailer is sent and nothing is recorded.
+		slog.Warn("getImageBlob", "image", name, "export", ev.Name, "outcome", "interrupted", "bytes", n)
+		return
+	}
+	slog.Info("getImageBlob", "image", name, "export", ev.Name, "outcome", "done", "bytes", n)
+	if known {
+		return
+	}
+	got := hex.EncodeToString(sum.Sum(nil))
+	w.Header().Set("X-Image-SHA256", got)
+	// The template is found by the LV the export was made from; if it is gone
+	// the digest is not recorded (the export expires on its own).
+	tpl, err := x.LookupTemplate(ev.From, "")
+	if err == nil {
+		err = x.RecordTemplateSHA(tpl, got)
+	}
+	if err != nil {
+		slog.Warn("getImageBlob: digest not recorded", "image", name, "host", host, "export", ev.Name, "err", err)
+	}
+}
+
 // idleWriter pushes the connection's write deadline forward before every
 // write, so only a stalled client times out.
 type idleWriter struct {
@@ -511,10 +559,31 @@ func (h *handlers) forwardBlob(w http.ResponseWriter, r *http.Request, host, nam
 	}
 	defer rc.Close()
 	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Length", strconv.FormatInt(info.Size, 10))
-	w.Header().Set("X-Image-SHA256", info.SHA256)
+	// The digest is relayed where the daemon put it: in the header (with
+	// Content-Length), or as the trailer after the last byte (with X-Image-Size).
+	trailer := info.SHA256 == "" && info.Trailer != nil
+	if trailer {
+		w.Header().Set("X-Image-Size", strconv.FormatInt(info.Size, 10))
+		w.Header().Set("Trailer", "X-Image-SHA256")
+	} else {
+		w.Header().Set("Content-Length", strconv.FormatInt(info.Size, 10))
+		w.Header().Set("X-Image-SHA256", info.SHA256)
+	}
 	w.WriteHeader(http.StatusOK)
-	if _, err := io.Copy(&idleWriter{w: w, rc: http.NewResponseController(w)}, io.LimitReader(rc, info.Size)); err != nil {
+	n, err := io.Copy(&idleWriter{w: w, rc: http.NewResponseController(w)}, io.LimitReader(rc, info.Size))
+	if err != nil || n != info.Size {
 		slog.Warn("getImageBlob forward", "image", name, "host", host, "outcome", "interrupted")
+		return
+	}
+	if trailer {
+		// The upstream trailer is there once its body is read to the end; no
+		// trailer (or more bytes than stated) means none is sent, and the
+		// client keeps nothing.
+		var extra [1]byte
+		if k, rerr := rc.Read(extra[:]); k == 0 && errors.Is(rerr, io.EOF) {
+			if d := info.Trailer(); d != "" {
+				w.Header().Set("X-Image-SHA256", d)
+			}
+		}
 	}
 }

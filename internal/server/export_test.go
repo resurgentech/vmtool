@@ -45,6 +45,12 @@ type exportMgr struct {
 	ecalls    []string
 	onExport  func()
 	noThin    bool
+	// the export volume of the template exportOf, once made: its tagged digest
+	// and, for a test, a send that breaks after breakAfter bytes
+	exported   bool
+	exportOf   app.TemplateInfo
+	expSHA     string
+	breakAfter int
 }
 
 func (m *exportMgr) ecall(format string, a ...any) {
@@ -87,7 +93,8 @@ func (m *exportMgr) LookupTemplate(name, pool string) (app.TemplateInfo, error) 
 
 func (m *exportMgr) ExportTemplateVolume(t app.TemplateInfo, on func(float64)) (app.ExportVolume, error) {
 	m.ecall("export %s", t.LV)
-	if on != nil {
+	// the helper refuses for lack of room before any progress
+	if on != nil && !errors.Is(m.exportErr, vmtool.ErrThinNoRoom) {
 		on(50)
 	}
 	if m.onExport != nil {
@@ -96,19 +103,61 @@ func (m *exportMgr) ExportTemplateVolume(t app.TemplateInfo, on func(float64)) (
 	if m.exportErr != nil {
 		return app.ExportVolume{}, m.exportErr
 	}
-	return app.ExportVolume{ThinExport: vmtool.ThinExport{Name: "vmexp-000000000001", VG: "vg-test", From: t.LV,
-		TemplateName: t.Name, Bytes: int64(len(m.data))}}, nil
+	m.emu.Lock()
+	defer m.emu.Unlock()
+	reused := m.exported
+	m.exported, m.exportOf = true, t
+	ev := m.volume()
+	ev.Reused = reused
+	return ev, nil
 }
 
+// volume is the export volume as tagged now (the caller holds emu).
+func (m *exportMgr) volume() app.ExportVolume {
+	return app.ExportVolume{ThinExport: vmtool.ThinExport{Name: "vmexp-000000000001", VG: "vg-test", From: m.exportOf.LV,
+		TemplateName: m.exportOf.Name, Bytes: int64(len(m.data)), SHA256: m.expSHA}}
+}
+
+// failReader serves the first n bytes and then fails, as a send that broke.
+type failReader struct {
+	r io.Reader
+	n int
+}
+
+func (f *failReader) Read(p []byte) (int, error) {
+	if f.n <= 0 {
+		return 0, errors.New("send: the volume read failed")
+	}
+	if len(p) > f.n {
+		p = p[:f.n]
+	}
+	n, err := f.r.Read(p)
+	f.n -= n
+	return n, err
+}
+
+// OpenExport finds the export volume by its LV name or its template's name.
 func (m *exportMgr) OpenExport(name string) (io.ReadCloser, app.ExportVolume, error) {
 	m.ecall("open %s", name)
-	return io.NopCloser(bytes.NewReader(m.data)), app.ExportVolume{ThinExport: vmtool.ThinExport{Name: name, Bytes: int64(len(m.data))}}, nil
+	m.emu.Lock()
+	defer m.emu.Unlock()
+	if !m.exported || (name != "vmexp-000000000001" && name != m.exportOf.Name) {
+		return nil, app.ExportVolume{}, &app.Error{Kind: app.KindNotFound, Err: fmt.Errorf("no export volume %q: %w", name, vmtool.ErrNotFound)}
+	}
+	var r io.Reader = bytes.NewReader(m.data)
+	if m.breakAfter > 0 {
+		r = &failReader{r: r, n: m.breakAfter}
+	}
+	return io.NopCloser(r), m.volume(), nil
 }
 
 func (m *exportMgr) RecordTemplateSHA(t app.TemplateInfo, sha string) error {
 	m.ecall("tag %s %s", t.LV, sha)
 	m.emu.Lock()
 	defer m.emu.Unlock()
+	if m.exported && m.exportOf.LV == t.LV {
+		m.expSHA = sha
+	}
 	for i := range m.tpls {
 		if m.tpls[i].LV == t.LV {
 			m.tpls[i].SHA256 = sha
@@ -191,10 +240,10 @@ func partsIn(t *testing.T, dir string) []string {
 	return out
 }
 
-// An exported saved template becomes a daemon-created image of the template's
-// name: hashed, in the pool directory, in the manifest, with the digest on the
-// template's tags, and a progress line or more before the done line.
-func TestExportTemplateWritesTheImage(t *testing.T) {
+// An exported saved template makes an export volume and nothing in the image
+// cache: no file, no `.part`, no manifest entry. done carries the template's
+// name and the byte count, and no digest without hash=true; no tag is written.
+func TestExportTemplateMakesNoCacheFile(t *testing.T) {
 	f := newExportFixture(t, config.RoleHypervisor, savedTpl(tplLVName, "proj", ""))
 	// The first request names the LV; the image is still called by the template's name.
 	rec := f.export(tplLVName, "")
@@ -203,49 +252,91 @@ func TestExportTemplateWritesTheImage(t *testing.T) {
 	if end.Event != api.ExportTemplateEventEventDone || end.Image == nil {
 		t.Fatalf("terminal %+v: %s", end, rec.Body)
 	}
-	want := hexSum(f.em.data)
 	img := end.Image
-	if img.Name != "proj" || img.Foreign || img.Sha256 == nil || *img.Sha256 != want || img.Size == nil || *img.Size != int64(len(f.em.data)) {
+	if img.Name != "proj" || img.Foreign || img.Sha256 != nil || img.Path != nil || img.Size == nil || *img.Size != int64(len(f.em.data)) {
 		t.Errorf("image %+v", img)
 	}
 	if len(evs) < 2 || evs[0].Event != api.ExportTemplateEventEventProgress || evs[0].Stage == nil || *evs[0].Stage != api.Export {
 		t.Errorf("no export progress line first: %+v", evs)
 	}
 	dir := f.pm.dirs[vmtool.HypervisorPool]
-	if b, _ := os.ReadFile(filepath.Join(dir, "proj")); !bytes.Equal(b, f.em.data) {
-		t.Error("the image is not in the pool directory")
+	if ents, _ := os.ReadDir(dir); len(ents) != 0 {
+		t.Errorf("the image directory has files: %v", ents)
 	}
-	if p := partsIn(t, dir); len(p) != 0 {
-		t.Errorf("temporary files left: %v", p)
+	if b := f.manifestBytes(t); strings.Contains(string(b), "proj") {
+		t.Errorf("manifest %q", b)
 	}
-	// daemon-created: the manifest lists it and it is not foreign
-	if e := getManifest(t, f.srv, "hv1", "proj"); e.Foreign || e.Sha256 == nil || *e.Sha256 != want {
-		t.Errorf("manifest %+v", e)
+	if n := f.em.ncalls("tag "); n != 0 {
+		t.Errorf("a plain export tagged %d times: %v", n, f.em.ecalls)
 	}
-	// the template carries the digest, so a create finds it with no rebuild
-	if got := f.em.ncalls("tag " + tplLVName + " " + want); got != 1 {
-		t.Errorf("template tagged %d times: %v", got, f.em.ecalls)
+	if n := f.em.ncalls("open "); n != 0 {
+		t.Errorf("a plain export read the volume: %v", f.em.ecalls)
 	}
-	if len(f.pm.refreshes) == 0 {
-		t.Error("the pool was not refreshed")
+	if len(f.pm.refreshes) != 0 {
+		t.Error("the pool was refreshed for an export that put nothing in it")
 	}
 }
 
-// Exporting the same template again, with the manifest entry equal to the
-// template's recorded digest and the file in place, is one done line and no
-// second conversion.
-func TestExportTemplateSameTemplateAgainIsDone(t *testing.T) {
+// hash=true reads the volume once, reports the digest in done and tags the
+// template (and, in the real thing, the volume); a second hash=true finds it
+// tagged and reads nothing.
+func TestExportTemplateHashTrue(t *testing.T) {
 	f := newExportFixture(t, config.RoleHypervisor, savedTpl(tplLVName, "proj", ""))
-	first := exportEvents(t, f.export("proj", ""))
-	img := first[len(first)-1].Image
-	rec := f.export("proj", "")
-	evs := exportEvents(t, rec)
-	if len(evs) != 1 || evs[0].Event != api.ExportTemplateEventEventDone || evs[0].Image == nil ||
-		*evs[0].Image.Sha256 != *img.Sha256 {
-		t.Fatalf("second export: %s", rec.Body)
+	want := hexSum(f.em.data)
+	evs := exportEvents(t, f.export("proj", "?hash=true"))
+	end := evs[len(evs)-1]
+	if end.Event != api.ExportTemplateEventEventDone || end.Image == nil || end.Image.Sha256 == nil || *end.Image.Sha256 != want ||
+		end.Image.Name != "proj" || *end.Image.Size != int64(len(f.em.data)) {
+		t.Fatalf("terminal %+v", end)
 	}
-	if n := f.em.ncalls("export "); n != 1 {
-		t.Errorf("%d conversions", n)
+	var sawHash bool
+	for _, e := range evs {
+		sawHash = sawHash || (e.Stage != nil && *e.Stage == api.Hash)
+	}
+	if !sawHash {
+		t.Errorf("no hash progress: %+v", evs)
+	}
+	if n := f.em.ncalls("open "); n != 1 {
+		t.Errorf("volume read %d times: %v", n, f.em.ecalls)
+	}
+	if got := f.em.ncalls("tag " + tplLVName + " " + want); got != 1 {
+		t.Errorf("template tagged %d times: %v", got, f.em.ecalls)
+	}
+	dir := f.pm.dirs[vmtool.HypervisorPool]
+	if ents, _ := os.ReadDir(dir); len(ents) != 0 {
+		t.Errorf("the image directory has files: %v", ents)
+	}
+	// again: the digest is on the volume, so no second read
+	evs = exportEvents(t, f.export("proj", "?hash=true"))
+	end = evs[len(evs)-1]
+	if end.Image == nil || end.Image.Sha256 == nil || *end.Image.Sha256 != want {
+		t.Fatalf("second: %+v", end)
+	}
+	if n := f.em.ncalls("open "); n != 1 {
+		t.Errorf("a tagged export was read again: %v", f.em.ecalls)
+	}
+}
+
+// A volume that cannot be read in full is an error line and no digest is tagged.
+func TestExportTemplateHashTrueShortReadTagsNothing(t *testing.T) {
+	f := newExportFixture(t, config.RoleHypervisor, savedTpl(tplLVName, "proj", ""))
+	f.em.breakAfter = 1000
+	evs := exportEvents(t, f.export("proj", "?hash=true"))
+	if end := evs[len(evs)-1]; end.Event != api.ExportTemplateEventEventError {
+		t.Fatalf("terminal %+v", end)
+	}
+	if n := f.em.ncalls("tag "); n != 0 {
+		t.Errorf("tagged after a short read: %v", f.em.ecalls)
+	}
+}
+
+// With no room on the array the answer is a plain 409 before the stream starts.
+func TestExportTemplateNoRoomIs409(t *testing.T) {
+	f := newExportFixture(t, config.RoleHypervisor, savedTpl(tplLVName, "proj", ""))
+	f.em.exportErr = &app.Error{Kind: app.KindConflict, Err: &vmtool.ExportRoomError{Template: "proj", VG: "vg-test", Need: 21 << 30, Free: 25 << 30, Reserve: 10 << 30}}
+	rec := f.export("proj", "")
+	if rec.Code != http.StatusConflict || !strings.Contains(errText(t, rec), "nothing was written") {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
 	}
 }
 
@@ -321,10 +412,10 @@ func TestExportTemplateForeign(t *testing.T) {
 	}
 }
 
-// A failure removes the export's own temporary file and nothing else: not the
-// other files in the pool, not another image's temporary file, not a manifest
-// entry.
-func TestExportTemplateFailureRemovesOnlyItsPart(t *testing.T) {
+// A failed conversion is an error line: nothing in the pool directory is
+// touched (other files, another upload's temporary file), no manifest entry,
+// no tag.
+func TestExportTemplateFailureTouchesNothing(t *testing.T) {
 	f := newExportFixture(t, config.RoleHypervisor, savedTpl(tplLVName, "proj", ""))
 	f.em.exportErr = errors.New("qemu-img: no space left")
 	dir := f.pm.dirs[vmtool.HypervisorPool]
@@ -336,9 +427,6 @@ func TestExportTemplateFailureRemovesOnlyItsPart(t *testing.T) {
 	end := evs[len(evs)-1]
 	if end.Event != api.ExportTemplateEventEventError || end.Error == nil || !strings.Contains(*end.Error, "no space left") {
 		t.Fatalf("terminal %+v", end)
-	}
-	if _, err := os.Lstat(filepath.Join(dir, ".proj.part")); !os.IsNotExist(err) {
-		t.Error("the export's temporary file was left")
 	}
 	for _, p := range []string{keep, other} {
 		if _, err := os.Lstat(p); err != nil {
@@ -353,21 +441,6 @@ func TestExportTemplateFailureRemovesOnlyItsPart(t *testing.T) {
 	}
 	if n := f.em.ncalls("tag "); n != 0 {
 		t.Error("a failed export tagged the template")
-	}
-
-	// A temporary file that is not ours (the helper refuses: it exists) is not
-	// removed by the failure path.
-	g := newExportFixture(t, config.RoleHypervisor, savedTpl(tplLVName, "proj", ""))
-	g.em.onExport = func() {
-		_ = os.WriteFile(filepath.Join(g.pm.dirs[vmtool.HypervisorPool], ".proj.part"), []byte("created by another process"), 0o644)
-	}
-	rec = g.export("proj", "")
-	evs = exportEvents(t, rec)
-	if evs[len(evs)-1].Event != api.ExportTemplateEventEventError {
-		t.Fatalf("%+v", evs)
-	}
-	if b, err := os.ReadFile(filepath.Join(g.pm.dirs[vmtool.HypervisorPool], ".proj.part")); err != nil || string(b) != "created by another process" {
-		t.Errorf("a file another process created was removed: %q %v", b, err)
 	}
 }
 
@@ -618,10 +691,20 @@ func TestWorkstationForwardsExportAndBlob(t *testing.T) {
 	if end.Event != api.ExportTemplateEventEventDone || end.Image == nil || end.Image.Name != "proj" {
 		t.Fatalf("forwarded export %+v", end)
 	}
+	// The digest is not known yet: the relay carries X-Image-Size and the trailer.
 	rec := blobVia(ws, "hv1", "proj", "caller-token")
 	if rec.Code != 200 || !bytes.Equal(rec.Body.Bytes(), hv.em.data) ||
-		rec.Header().Get("X-Image-SHA256") != hexSum(hv.em.data) || rec.Header().Get("Content-Length") != strconv.Itoa(len(hv.em.data)) {
+		rec.Result().Header.Get("X-Image-Size") != strconv.Itoa(len(hv.em.data)) || rec.Result().Header.Get("Content-Length") != "" || rec.Result().Header.Get("X-Image-SHA256") != "" {
 		t.Fatalf("forwarded blob: %d, headers %v", rec.Code, rec.Header())
+	}
+	if got := rec.Result().Trailer.Get("X-Image-SHA256"); got != hexSum(hv.em.data) {
+		t.Errorf("relayed trailer %q, want %q", got, hexSum(hv.em.data))
+	}
+	// The daemon recorded the digest after that send, so the next one is a header.
+	rec = blobVia(ws, "hv1", "proj", "caller-token")
+	if rec.Code != 200 || !bytes.Equal(rec.Body.Bytes(), hv.em.data) ||
+		rec.Header().Get("X-Image-SHA256") != hexSum(hv.em.data) || rec.Header().Get("Content-Length") != strconv.Itoa(len(hv.em.data)) {
+		t.Fatalf("forwarded tagged blob: %d, headers %v", rec.Code, rec.Header())
 	}
 	// a refusal is relayed as its status
 	if rec := blobVia(ws, "hv1", "nosuch", "caller-token"); rec.Code != 404 {
@@ -633,3 +716,156 @@ func TestWorkstationForwardsExportAndBlob(t *testing.T) {
 }
 
 var _ = io.Discard
+
+// --- getImageBlob serves export volumes ---
+
+// brokenWriter is a client that stops taking bytes after left of them.
+type brokenWriter struct {
+	*httptest.ResponseRecorder
+	left int
+}
+
+func (b *brokenWriter) Write(p []byte) (int, error) {
+	if len(p) > b.left {
+		n, _ := b.ResponseRecorder.Write(p[:b.left])
+		b.left = 0
+		return n, errors.New("client went away")
+	}
+	b.left -= len(p)
+	return b.ResponseRecorder.Write(p)
+}
+
+// exported is a fixture whose template has been exported (no hash).
+func exported(t *testing.T) *expFixture {
+	t.Helper()
+	f := newExportFixture(t, config.RoleHypervisor, savedTpl(tplLVName, "proj", ""))
+	if evs := exportEvents(t, f.export("proj", "")); evs[len(evs)-1].Event != api.ExportTemplateEventEventDone {
+		t.Fatalf("export: %+v", evs)
+	}
+	return f
+}
+
+// With the digest unknown the answer is chunked with X-Image-Size and the
+// digest as a trailer after the last byte; the tag is recorded after the whole
+// body went out, and the next send has the digest in its header.
+func TestImageBlobServesAnExportWithATrailer(t *testing.T) {
+	f := exported(t)
+	srv := httptest.NewServer(f.srv)
+	t.Cleanup(srv.Close)
+	want := hexSum(f.em.data)
+
+	resp, err := http.Get(srv.URL + "/v1/hosts/hv1/images/proj/blob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 200 || resp.ContentLength != -1 || resp.Header.Get("X-Image-Size") != strconv.Itoa(len(f.em.data)) || resp.Header.Get("X-Image-SHA256") != "" {
+		t.Fatalf("status %d, length %d, headers %v", resp.StatusCode, resp.ContentLength, resp.Header)
+	}
+	if _, declared := resp.Trailer["X-Image-Sha256"]; !declared {
+		t.Errorf("the trailer was not declared: %v", resp.Trailer)
+	}
+	if n := f.em.ncalls("tag "); n != 0 {
+		t.Errorf("tagged before the body was read: %v", f.em.ecalls)
+	}
+	body, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil || !bytes.Equal(body, f.em.data) {
+		t.Fatalf("body: %d bytes, %v", len(body), err)
+	}
+	if got := resp.Trailer.Get("X-Image-SHA256"); got != want {
+		t.Errorf("trailer %q, want %q", got, want)
+	}
+	if got := f.em.ncalls("tag " + tplLVName + " " + want); got != 1 {
+		t.Errorf("tagged %d times: %v", got, f.em.ecalls)
+	}
+	// the template's name or the export's LV name; no cache file was involved
+	if _, err := os.Lstat(filepath.Join(f.pm.dirs[vmtool.HypervisorPool], "proj")); !os.IsNotExist(err) {
+		t.Error("a cache file appeared")
+	}
+
+	// tagged now: Content-Length and the header digest, no trailer, no second tag
+	rec := f.blob("vmexp-000000000001")
+	if rec.Code != 200 || !bytes.Equal(rec.Body.Bytes(), f.em.data) ||
+		rec.Header().Get("Content-Length") != strconv.Itoa(len(f.em.data)) || rec.Header().Get("X-Image-SHA256") != want || rec.Header().Get("X-Image-Size") != "" {
+		t.Fatalf("tagged: %d %v", rec.Code, rec.Header())
+	}
+	if got := rec.Result().Trailer; len(got) != 0 {
+		t.Errorf("a trailer on a tagged send: %v", got)
+	}
+	if got := f.em.ncalls("tag "); got != 1 {
+		t.Errorf("tagged again: %v", f.em.ecalls)
+	}
+}
+
+// A send that stops short, and a client that goes away, record nothing and send
+// no trailer.
+func TestImageBlobInterruptedExportSendRecordsNoTag(t *testing.T) {
+	// the volume read fails after 1000 bytes
+	f := exported(t)
+	f.em.breakAfter = 1000
+	rec := f.blob("proj")
+	if got := rec.Result().Trailer.Get("X-Image-SHA256"); got != "" {
+		t.Errorf("a trailer after a short send: %q", got)
+	}
+	if n := f.em.ncalls("tag "); n != 0 {
+		t.Errorf("a short send tagged: %v", f.em.ecalls)
+	}
+	if f.em.expSHA != "" {
+		t.Error("the export has a digest")
+	}
+
+	// the client stops reading
+	g := exported(t)
+	bw := &brokenWriter{ResponseRecorder: httptest.NewRecorder(), left: 5000}
+	r := httptest.NewRequest(http.MethodGet, "/v1/hosts/hv1/images/proj/blob", nil)
+	g.srv.ServeHTTP(bw, r)
+	if got := bw.Result().Trailer.Get("X-Image-SHA256"); got != "" {
+		t.Errorf("a trailer to a client that left: %q", got)
+	}
+	if n := g.em.ncalls("tag "); n != 0 {
+		t.Errorf("an abandoned send tagged: %v", g.em.ecalls)
+	}
+
+	// a whole send afterwards still records
+	g.blob("proj")
+	if n := g.em.ncalls("tag "); n != 1 {
+		t.Errorf("a whole send did not tag: %v", g.em.ecalls)
+	}
+}
+
+// A template that went away between the export and the send: the bytes are
+// sent and the digest still follows, but there is nothing to tag.
+func TestImageBlobExportOfAVanishedTemplateIsNotTagged(t *testing.T) {
+	f := exported(t)
+	f.em.emu.Lock()
+	f.em.tpls = nil
+	f.em.emu.Unlock()
+	rec := f.blob("proj")
+	if rec.Code != 200 || !bytes.Equal(rec.Body.Bytes(), f.em.data) || rec.Result().Trailer.Get("X-Image-SHA256") != hexSum(f.em.data) {
+		t.Fatalf("%d, trailer %v", rec.Code, rec.Result().Trailer)
+	}
+	if n := f.em.ncalls("tag "); n != 0 {
+		t.Errorf("tagged a template that is gone: %v", f.em.ecalls)
+	}
+}
+
+// A manifest entry still wins and is served as before; with neither a listed
+// image nor an export the 404 names `templates export`.
+func TestImageBlobNotFoundNamesTemplatesExport(t *testing.T) {
+	f := newExportFixture(t, config.RoleHypervisor, savedTpl(tplLVName, "proj", ""))
+	rec := f.blob("proj")
+	if rec.Code != 404 {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	if msg := errText(t, rec); !strings.Contains(msg, "templates export hv1/proj") {
+		t.Errorf("message %q", msg)
+	}
+	// a listed image of the same name is served, exported or not
+	exportEvents(t, f.export("proj", ""))
+	data := randomBytes(t, 3000)
+	f.listed(t, "proj", data)
+	rec = f.blob("proj")
+	if rec.Code != 200 || !bytes.Equal(rec.Body.Bytes(), data) || rec.Header().Get("X-Image-SHA256") != hexSum(data) {
+		t.Errorf("listed image: %d %v", rec.Code, rec.Header())
+	}
+}

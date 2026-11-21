@@ -99,7 +99,7 @@ func leaveOutOwnNameTemplates(stderr io.Writer, e *env, rows []app.HostTemplates
 // ERROR row per host that did not answer. Only stale rows with stale set.
 func writeTemplateTable(out io.Writer, rows []app.HostTemplates, stale bool) error {
 	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tORIGIN\tIMAGE\tSHA256\tPOOL\tSIZE\tUSED\tCLONES\tSTALE\tCREATED")
+	fmt.Fprintln(w, "NAME\tORIGIN\tIMAGE\tSHA256\tPOOL\tSIZE\tUSED\tCLONES\tSTALE\tCREATED\tEXPORT")
 	for _, h := range rows {
 		if h.Err != nil {
 			fmt.Fprintf(w, "%s\tERROR: %s\n", h.Host, oneLine(h.Err.Error()))
@@ -118,8 +118,8 @@ func writeTemplateTable(out io.Writer, rows []app.HostTemplates, stale bool) err
 			if !t.Created.IsZero() {
 				created = t.Created.UTC().Format("2006-01-02 15:04")
 			}
-			fmt.Fprintf(w, "%s/%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\n", h.Host, t.Name, t.Origin, image, sha, t.Pool,
-				formatPoolBytes(t.SizeBytes), formatPoolBytes(t.UsedBytes), t.Clones, isStale, created)
+			fmt.Fprintf(w, "%s/%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\n", h.Host, t.Name, t.Origin, image, sha, t.Pool,
+				formatPoolBytes(t.SizeBytes), formatPoolBytes(t.UsedBytes), t.Clones, isStale, created, exportCell(t))
 		}
 	}
 	return w.Flush()
@@ -321,26 +321,29 @@ func templatesExportCmd(e *env) *cobra.Command {
 	var push bool
 	cmd := &cobra.Command{
 		Use:   "export <host>/<name>",
-		Short: "Write a template into the host's image cache as a qcow2 image",
-		Long: `Have <host>'s daemon write the template <name> (its name, or its LV name
-vmtpl-<12 hex>) into its image cache as a qcow2 image of the template's name,
-hashed, as an image the daemon created. The template's tags then carry the
-image's SHA-256, so a later create of that image name on <host> uses the
-template: no upload, no rebuild. A template is per host, and this is how one
-leaves it: take the image to another host with "vmtool images pull
-<host>/<name>" and create from it there as from any base image (the first
-create on a host builds that host's own template from it).
+		Short: "Export a template onto the host's NVMe array as a qcow2 volume, kept 24 hours",
+		Long: `Have <host>'s daemon convert the template <name> (its name, or its LV name
+vmtpl-<12 hex>) into a qcow2 file on a temporary volume in the host's NVMe
+array (its volume group), never the host's image cache or boot drive. The
+volume is kept 24 hours, then removed by the daemon ("vmtool templates list"
+shows each export and when it expires). Take it to another machine in that
+time with "vmtool images pull <host>/<name>" (the image is called by the
+template's name) and create from it there as from any base image (the first
+create on a host builds that host's own template from it). A template is
+per host, and this is how one leaves it. The SHA-256 is computed while the bytes are sent, in one pass, and checked at the end of the
+pull. With no room on the array the export is refused before anything is
+written.
 
 A name already in the host's image cache is refused unless it is this same
-template exported again (then nothing is rewritten); remove the cached image
-first with "vmtool images delete" to export a changed template under that
-name. Only a saved template makes a new image. Use --pool when the name is in
-more than one thin pool.
+template; remove the cached image first with "vmtool images delete". Only a
+saved template makes a new image. Use --pool when the name is in more than one
+thin pool.
 
 With --push the image then goes straight from <host>'s daemon into the store,
-as an image of the template's name, with no copy on this machine: the daemon's
-digest and size go to the store first and the store verifies the stream against
-them, as for "vmtool images push". Needs a store (server: in config.yml and
+as an image of the template's name, with no copy on this machine: the daemon
+reads the export once for its digest first (the store wants it before the
+bytes), and the digest and size go to the store, which verifies the stream
+against them, as for "vmtool images push". Needs a store (server: in config.yml and
 VMTOOL_SERVER_TOKEN, and the store must answer); without one --push is refused
 before <host> is contacted: use "vmtool images pull <host>/<name>" and
 "vmtool images push" instead. The store decides what happens when it already
@@ -414,7 +417,7 @@ has an image of that name.`,
 				fmt.Fprintf(out, "Image %s is in the store (%d bytes, sha256 %s), exported from %s/%s\n", res.Store.Name, res.Store.Size, res.Store.SHA256, host, name)
 				return nil
 			}
-			fmt.Fprintf(out, "Image %s/%s is in the image cache (%d bytes, sha256 %s)\n", host, img.Name, img.Size, img.SHA256)
+			fmt.Fprintln(out, app.ExportedLine(host, img))
 			fmt.Fprintf(out, "Take it to another machine with: vmtool images pull %s/%s\n", host, img.Name)
 			return nil
 		},
@@ -422,4 +425,22 @@ has an image of that name.`,
 	cmd.Flags().StringVar(&pool, "pool", "", "only the template in this thin pool")
 	cmd.Flags().BoolVar(&push, "push", false, "then push the image straight from the host into the store (needs a store)")
 	return cmd
+}
+
+// exportCell is the EXPORT column: "-" for a template with no export volume,
+// else its size, whether its SHA-256 is known, and when the daemon removes it.
+func exportCell(t app.TemplateInfo) string {
+	x := t.Export
+	if x == nil {
+		return "-"
+	}
+	sum := "sha256 not yet known"
+	if x.SHA256 != "" {
+		sum = "sha256 known"
+	}
+	exp := "expiry unknown"
+	if e := x.Expires(); !e.IsZero() {
+		exp = "expires " + e.UTC().Format("2006-01-02 15:04")
+	}
+	return fmt.Sprintf("%s, %s, %s", formatPoolBytes(x.Bytes), sum, exp)
 }

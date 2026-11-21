@@ -381,3 +381,32 @@ func TestExpireExportsHelperDownIsOneLogLine(t *testing.T) {
 		t.Errorf("log = %q", buf.String())
 	}
 }
+
+// A template's name finds its finished export: what `images pull host/<name>`
+// asks for. An unfinished export is not found by name.
+func TestOpenExportByTemplateName(t *testing.T) {
+	h := newHelperStub(t)
+	h.report(t, reportWithExports(exportRow(expLV, expDone, expTime)))
+	h.write(t, "on_send", `printf 0123456789`)
+	x := exporter(t, newThinFor(t, &thinInner{}, cache{}))
+	r, ev, err := x.OpenExport("proj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(r)
+	r.Close()
+	if string(b) != "0123456789" || ev.Name != expLV || ev.TemplateName != "proj" || ev.From != savedLV {
+		t.Errorf("read %q, volume %+v", b, ev)
+	}
+	eqStrings(t, "writes", h.writes(t), []string{"send vg-test " + expLV})
+
+	h2 := newHelperStub(t)
+	h2.report(t, reportWithExports(exportRow(expLV, expFrom, expTime))) // unfinished
+	x = exporter(t, newThinFor(t, &thinInner{}, cache{}))
+	if _, _, err := x.OpenExport("proj"); !vmtool.IsNotFound(err) {
+		t.Errorf("an unfinished export by name = %v, want not found", err)
+	}
+	if n := h2.count(t, "send"); n != 0 {
+		t.Errorf("send ran %d times", n)
+	}
+}

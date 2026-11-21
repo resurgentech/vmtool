@@ -1576,3 +1576,27 @@ are appended, never edited in; a hook refuses rewrites.
   `TestCreateVMRefusesTheExportPrefix` failing; green; `just check` green.
 - Commits: the E2 commit on `clone-identity` (it also carries E1's entry
   above).
+
+## 2026-11-20 — E3 Export, pull and push over the API (API 2.5.0)
+
+- `spec/openapi/vmtool.yaml` 2.5.0: exportTemplate `hash`; getImageBlob
+  `X-Image-Size` and the `X-Image-SHA256` trailer; `TemplateInfo.export`
+  {bytes, sha256, expires}. `internal/api` regenerated.
+- `internal/server/export.go`: exportTemplate makes no `.part`, cache file
+  or manifest entry; progress from the helper; a no-room refusal is a plain
+  409; `done` carries name and bytes, the digest only with `hash=true` (one
+  read when not yet tagged). getImageBlob serves a manifest entry as before,
+  else the template's export through `OpenExport`, hashed while sent: header
+  digest when tagged, else `X-Image-Size` and a trailer, tag recorded only
+  after a full send; 404 names `templates export`. forwardBlob relays
+  header or trailer.
+- `internal/app/exportpull.go`: PullHostImage takes a trailer digest,
+  compares after the last byte, keeps nothing on mismatch or none;
+  ExportTemplateToStore asks `hash=true`; `ExportedLine` says the export is
+  on the NVMe array and kept 24 hours. `internal/remote` reads the trailer.
+- CLI `templates list` and TUI templates view: EXPORT column.
+- `spec/README.md` route notes.
+- Red: tests written after the code (implementer); mutation reds: server
+  trailer line disabled fails the trailer and relay tests; the PullHostImage
+  trailer path disabled fails 2 tests (6 cases); green; `just check` green.
+- Commits: the E3 commit on `clone-identity`.

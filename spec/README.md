@@ -421,12 +421,12 @@ the body and keeps the error.
 | `DeleteImage` | `deleteImage` | `pool` query, default `default`. |
 | `ListPools` | `listPools` | `PoolInfo{name,path,active,type?,size_bytes?,used_bytes?,virtual_bytes?,data_percent?,metadata_percent?}`; `type` (2.2.0) is libvirt's pool type (`dir`, `logical`, …), or `thin` (2.4.0) for an LVM thin pool a hypervisor daemon lists itself. The usage fields (2.4.0) are omitted when unknown; libvirt pools fill size and used, thin pools all five. `GET` VM adds `disk_backing` (`file`/`block`) the same release, and `uuid` (the domain UUID) in 2.3.0. |
 | `CreatePool` | `createPool` | |
-| `ListTemplates` (`app.TemplateManager`) | `listTemplates` | New (2.4.0). Optional interface: a hypervisor daemon with thin pools, and the remote client for one. `TemplateInfo{name,origin,image?,sha256?,pool,lv,size_bytes,used_bytes,clones,stale,created?}`; `stale` is an image template whose (image, SHA-256) is not the daemon's current manifest entry. A host with no thin pools answers `[]`. `extra_disks` is set only by a save. |
+| `ListTemplates` (`app.TemplateManager`) | `listTemplates` | New (2.4.0). Optional interface: a hypervisor daemon with thin pools, and the remote client for one. `TemplateInfo{name,origin,image?,sha256?,pool,lv,size_bytes,used_bytes,clones,stale,created?,export?}` (`export` 2.5.0: `{bytes, sha256?, expires?}` of the template's finished export volume); `stale` is an image template whose (image, SHA-256) is not the daemon's current manifest entry. A host with no thin pools answers `[]`. `extra_disks` is set only by a save. |
 | `PrepareTemplate` | `createTemplate` | New (2.4.0). `POST templates` `{image, pool?}` builds the image template ahead through the same path the first create into the pool uses (room check, building LV, import, tag, rename, per-(VG, template LV) lock); an existing one is returned, nothing written. `from_vm`, `name` and `replace` select the save form (next row). 404 no such image on the host, 400 not a thin pool / not in the manifest / no thin pools, 409 no room. A workstation syncs the image to a listed host first, as `createVM` does. |
 | `DeleteTemplate` | `deleteTemplate` | New (2.4.0). `DELETE templates/{name}?pool=`; `{name}` is the template's name or its LV name (`vmtpl-<12hex>`). Removes only a volume the daemon's report lists as a template; anything else is 404. A name matching several templates is 409 listing them. Clones are never touched. Returns the removed `TemplateInfo`. `templates prune` is the workstation workflow: it lists, then deletes each stale template by LV name and pool. |
 | `SaveTemplate` (`app.TemplateSaver`) | `createTemplate` | New (2.4.0), the same route as `PrepareTemplate` with `{from_vm, name, replace?}` instead of `{image, pool}`: exactly one of `image` and `from_vm` (both or neither 400; with `from_vm`, `name` is required and `pool` refused; with `image`, `name` and `replace` refused). The host snapshots the shut-off VM's boot LV (a `vmtool_vol` thin LV) into a new saved template in the VM's own pool, in one helper write, tagged `vmtool_template`, `vmtool_origin=saved`, `vmtool_name=<name>`; nothing is booted, mounted or read. VM not shut off 409; disk not on a thin pool or bad name 400; VM unknown 404; name used by a template or a cached image 409 (`replace` replaces only a saved template, new one made first); no room 409. The 201 `TemplateInfo` carries `extra_disks` (the VM's targets other than `vda`, not part of the template). No image is synced. |
-| `LookupTemplate` / `ExportTemplateVolume` / `RecordTemplateSHA` (`app.TemplateVolumeExporter`); client `app.TemplateExporter` | `exportTemplate` | New (2.4.0). `POST templates/{name}/export?pool=`, `application/x-ndjson`, one `ExportTemplateEvent` per line: `progress` (stage `export` while the helper writes `.<name>.part`, stage `hash`), then one `done` (the manifest entry) or one `error`. `{name}` is a template's name or LV name (404 none, 409 several); the image takes the template's name. Same receive-path refusals as `uploadImage` (foreign 409, one at a time 409); a name the manifest lists is 409 unless it is the same template re-exported (recorded `sha256` equals the entry's and the file is in place: one `done`, no rewrite). The digest is written to the template's tags, so a later create of that image on the host clones the template: no upload, no rebuild. Served by `tunnelMux` (raw handler, `internal/server/export.go`). A workstation forwards to a listed host. |
-| `OpenImageBlob` (`app.ImageBlobSource`) | `getImageBlob` | New (2.4.0). `GET images/{name}/blob`, `application/octet-stream` with `Content-Length` and `X-Image-SHA256`. Only a file the daemon's manifest lists: not listed 404 (409 if a foreign volume has the name), symlink / non-regular / size differs from the manifest 409, name must be a valid image name (400). Served by `tunnelMux` (`internal/server/export.go`). `vmtool images pull <host>/<name>` writes it to `image_dir` / `--to` (`.part`, size and digest checked, linked in, never overwrites). |
+| `LookupTemplate` / `ExportTemplateVolume` / `OpenExport` / `RecordTemplateSHA` (`app.TemplateVolumeExporter`); client `app.TemplateExporter` | `exportTemplate` | 2.4.0, export volumes 2.5.0. `POST templates/{name}/export?pool=&hash=`, `application/x-ndjson`, one `ExportTemplateEvent` per line: `progress` (stage `export` from the converter's percent of the template's size, stage `hash` while the volume is read for its digest), then one `done` or one `error`. `{name}` is a template's name or LV name (404 none, 409 several). The template is converted into a temporary thick `vmexp-<12 hex>` volume in the array's volume group, kept 24 hours; nothing goes to the image cache (no file, no `.part`, no manifest entry). `done.image` carries `name` (the template's) and `size` (the qcow2's byte count); `sha256` only when `hash=true` (one read of the volume unless its digest is already tagged, then the tags). No room on the array is a plain 409 before the stream starts. Same name conflicts as before (foreign volume 409, one at a time 409; a manifest entry that is not this template's 409; an image template only as the cached image it came from: one `done` with the manifest entry). Served by `tunnelMux` (raw handler, `internal/server/export.go`). A workstation forwards to a listed host. |
+| `OpenImageBlob` (`app.ImageBlobSource`) | `getImageBlob` | 2.4.0, export volumes 2.5.0. `GET images/{name}/blob`, `application/octet-stream`. A manifest entry is served as before (`Content-Length`, `X-Image-SHA256`; not listed and no export 404, 409 if a foreign volume has the name, symlink / non-regular / size differs 409, bad name 400). Otherwise the template export volume of that name is served through `OpenExport` and hashed while sent: digest tagged, `Content-Length` and `X-Image-SHA256`; not yet, `X-Image-Size`, a declared `X-Image-SHA256` trailer after the last byte, chunked body; the tag is recorded only after the whole body was written, a short send or a client that left records nothing. The 404 names `templates export`. `forwardBlob` relays header or trailer unchanged. Served by `tunnelMux` (`internal/server/export.go`). `vmtool images pull <host>/<name>` writes it to `image_dir` / `--to` (`.part`, size and digest checked, a trailer digest compared after the last byte, nothing kept on a mismatch or a missing trailer, linked in, never overwrites). |
 | `ImageManifest` (`app.ImageStore`) | `getImageManifest` | New. Optional interface, remote only. `{name, sha256?, size?, foreign, path?}`. |
 | `UploadImage` (`app.ImageStore`) | `uploadImage` | New. `PUT images/{name}`, `application/octet-stream`, `X-Image-SHA256`, `Content-Length`; streamed. |
 
@@ -557,8 +557,8 @@ README, "The root helper"); the helper's tags are `vmtool_vol` (a VM's disk),
 | `GET /v1/hosts/{host}/templates` | `listTemplates` | every template of every thin pool; `[]` without thin pools |
 | `POST /v1/hosts/{host}/templates` | `createTemplate` | `{image, pool?}` builds an image template ahead; `{from_vm, name, replace?}` saves a shut-off VM as a saved template; 201 `TemplateInfo` |
 | `DELETE /v1/hosts/{host}/templates/{name}?pool=` | `deleteTemplate` | removes one template; 404 for anything that is not a template, 409 listing the candidates when the name is ambiguous |
-| `POST /v1/hosts/{host}/templates/{name}/export?pool=` | `exportTemplate` | NDJSON, below |
-| `GET /v1/hosts/{host}/images/{name}/blob` | `getImageBlob` | the bytes of an image the daemon created, below |
+| `POST /v1/hosts/{host}/templates/{name}/export?pool=&hash=` | `exportTemplate` | NDJSON, below |
+| `GET /v1/hosts/{host}/images/{name}/blob` | `getImageBlob` | the bytes of an image the daemon created or of a template's export volume, below |
 | `POST /v1/hosts/{host}/volumes/clone` | `cloneVolume` | gains `template` (the image name as asked, informational) and, for a thin target pool, `size_bytes` |
 
 `{name}` of a template is its name (`vmtool_name`) or its LV name
@@ -586,22 +586,32 @@ lines, then exactly one `done` or `error`:
 
 ```
 {"event":"progress","stage":"export","received":0,"total":10737418240}
-{"event":"progress","stage":"export","received":1073741824,"total":10737418240}
+{"event":"progress","stage":"export","received":5368709120,"total":10737418240}
 {"event":"progress","stage":"hash","received":2147483648,"total":2147483648}
 {"event":"done","image":{"name":"t1-tpl","sha256":"<64 hex>","size":2147483648,"foreign":false}}
 ```
 
-`export` counts the qcow2 file as the root helper writes it (`.t1-tpl.part`),
-with `total` the volume's size, an upper bound; `hash` counts the bytes hashed.
-`done` carries the manifest entry. An `error` line says what failed.
+`export` is the converter's percent of the template's size (`total`, an upper
+bound of the qcow2 file); `hash` counts the bytes read for the digest and
+appears only with `hash=true` and an unknown digest. `done.image.name` is the
+template's name (what `images pull` asks for) and `size` the qcow2's byte
+count; `sha256` is there only with `hash=true`. An `error` line says what
+failed.
 
-**`getImageBlob`.** Streams a cached image for `vmtool images pull host/<name>`,
-`application/octet-stream` with `Content-Length` and `X-Image-SHA256`. It serves
-only a file the daemon's manifest lists (400 bad name, 404 not listed or the
-file is missing, 409 a foreign volume has the name, or the file is a symlink or
-not a regular file of the listed size), opened without following a symlink,
-and the body is never logged. A workstation daemon forwards both this route and
-`exportTemplate` to a listed host and answers 403 for its own unlisted name.
+**`getImageBlob`.** Streams an image for `vmtool images pull host/<name>`,
+`application/octet-stream`. A name the daemon's manifest lists is served as
+before, with `Content-Length` and `X-Image-SHA256` (400 bad name, 404 the file
+is missing, 409 a foreign volume has the name, or the file is a symlink or not
+a regular file of the listed size, opened without following a symlink). A name
+it does not list is looked up among the template export volumes (2.5.0) and
+served from the volume, hashed while sent: with the digest already tagged the
+answer is as above; without it the answer is chunked with `X-Image-Size`, a
+declared `Trailer: X-Image-SHA256`, and the digest after the last byte, which
+the client compares with what it wrote. The daemon tags the volume and its
+template only after the whole body was written. 404 names `templates export`.
+The body is never logged. A workstation daemon forwards both this route
+(header or trailer relayed unchanged) and `exportTemplate` to a listed host and
+answers 403 for its own unlisted name.
 
 **What the API does not carry.** `createVM` is one synchronous JSON call and
 streams no progress; its timings are the CLI's closing line (`timings: clone

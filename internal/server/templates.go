@@ -26,6 +26,13 @@ func toAPITemplate(t app.TemplateInfo) api.TemplateInfo {
 		c := t.Created
 		out.Created = &c
 	}
+	if x := t.Export; x != nil {
+		e := &api.TemplateExport{Bytes: x.Bytes, Sha256: nonEmptyPtr(x.SHA256)}
+		if exp := x.Expires(); !exp.IsZero() {
+			e.Expires = &exp
+		}
+		out.Export = e
+	}
 	return out
 }
 

@@ -60,7 +60,10 @@ type ExportEvent struct {
 	Received, Total int64
 }
 
-// ExportedImage is the daemon's answer to an export: the cache entry.
+// ExportedImage is the daemon's answer to an export: the name `images pull`
+// asks for (the template's), the qcow2's byte count, and the digest only when
+// it was asked for (hash) or already known. Path is set only for an image
+// template's cached image.
 type ExportedImage struct {
 	Name   string
 	SHA256 string
@@ -69,16 +72,21 @@ type ExportedImage struct {
 }
 
 // TemplateExporter is implemented by a Manager whose host can export a
-// template into its image cache (the remote client for a hypervisor daemon).
-// on gets every progress line.
+// template onto its array (the remote client for a hypervisor daemon). hash
+// asks for the digest in the answer (one read of the volume). on gets every
+// progress line.
 type TemplateExporter interface {
-	ExportTemplate(ctx context.Context, name, pool string, on func(ExportEvent)) (ExportedImage, error)
+	ExportTemplate(ctx context.Context, name, pool string, hash bool, on func(ExportEvent)) (ExportedImage, error)
 }
 
 // ImageBlobInfo is what a host says about an image it is about to stream.
+// SHA256 is empty when the host does not know the digest yet: it then sends it
+// as a trailer after the last byte, and Trailer (never nil then) gives it once
+// the body was read to its end ("" when none came).
 type ImageBlobInfo struct {
-	Size   int64
-	SHA256 string
+	Size    int64
+	SHA256  string
+	Trailer func() string
 }
 
 // ImageBlobSource is implemented by a Manager whose host can stream an image
@@ -94,13 +102,17 @@ type ExportTemplateInput struct {
 	// Name is the template's name or LV name.
 	Name string
 	// Pool limits the match to one thin pool; empty is any.
-	Pool       string
+	Pool string
+	// Hash has the host read the export once and say its SHA-256 (the store
+	// push needs it before the bytes).
+	Hash       bool
 	OnProgress ProgressFunc
 }
 
-// ExportTemplate has the host write the template in.Name into its image
-// cache as an image of the template's name. The host does the work; this
-// forwards progress (stage "export").
+// ExportTemplate has the host export the template in.Name onto its array as a
+// volume that `images pull host/<name>` reads for the next 24 hours (the
+// template's name is the image name). The host does the work; this forwards
+// progress (stage "export").
 func (s *Service) ExportTemplate(ctx context.Context, m Manager, in ExportTemplateInput) (ExportedImage, error) {
 	const op = "export_template"
 	if !vmtool.ValidImageName(in.Name) {
@@ -111,8 +123,8 @@ func (s *Service) ExportTemplate(ctx context.Context, m Manager, in ExportTempla
 		return ExportedImage{}, invalid(op, fmt.Errorf("%s has no daemon with thin pools to export templates from", hostText(in.Host)))
 	}
 	in.OnProgress.emitEvent(ProgressEvent{Stage: "export", Status: "start",
-		Detail: fmt.Sprintf("exporting %s/%s as an image in %s's image cache", in.Host, in.Name, in.Host)})
-	img, err := x.ExportTemplate(ctx, in.Name, in.Pool, func(e ExportEvent) {
+		Detail: fmt.Sprintf("exporting %s/%s onto the NVMe array of %s", in.Host, in.Name, in.Host)})
+	img, err := x.ExportTemplate(ctx, in.Name, in.Pool, in.Hash, func(e ExportEvent) {
 		detail := "write"
 		if e.Stage == "hash" {
 			detail = "hash"
@@ -123,8 +135,22 @@ func (s *Service) ExportTemplate(ctx context.Context, m Manager, in ExportTempla
 		in.OnProgress.emit("export", "error", err.Error(), "")
 		return ExportedImage{}, wrap(op, err)
 	}
-	in.OnProgress.emit("export", "done", fmt.Sprintf("%s/%s is in the image cache (%d bytes, sha256 %s)", in.Host, img.Name, img.Size, img.SHA256), "")
+	in.OnProgress.emit("export", "done", ExportedLine(in.Host, img), "")
 	return img, nil
+}
+
+// ExportedLine is the one-line answer to an export: the template is exported
+// onto the host's array, how big, the digest if known, and how long it is kept.
+func ExportedLine(host string, img ExportedImage) string {
+	sum := ""
+	if img.SHA256 != "" {
+		sum = ", sha256 " + img.SHA256
+	}
+	if img.Path != "" {
+		return fmt.Sprintf("%s/%s is in the image cache (%d bytes%s)", host, img.Name, img.Size, sum)
+	}
+	return fmt.Sprintf("%s/%s is exported on the NVMe array of %s (%d bytes%s); it is kept %d hours, then removed",
+		host, img.Name, host, img.Size, sum, int(vmtool.ExportTTL.Hours()))
 }
 
 func hostText(h string) string {
@@ -187,16 +213,27 @@ func (s *Service) PullHostImage(ctx context.Context, m Manager, in PullHostImage
 	}
 	defer rc.Close()
 	want := strings.ToLower(info.SHA256)
+	// The digest is in the header, or (a template export whose digest the host
+	// does not know yet) it follows the last byte as a trailer and is compared
+	// then.
+	byTrailer := want == "" && info.Trailer != nil
 	if info.Size <= 0 {
 		return PulledImage{}, badGateway(op, fmt.Errorf("%s did not state the image's size", hostText(in.Host)))
 	}
-	if len(want) != 64 || strings.Trim(want, "0123456789abcdef") != "" {
+	if !byTrailer && !isHexDigest(want) {
 		return PulledImage{}, badGateway(op, fmt.Errorf("%s did not send a SHA-256 digest for the image", hostText(in.Host)))
 	}
 	res := PulledImage{Name: in.Name, SHA256: want, Size: info.Size, Path: dest}
 
 	if existed {
-		same, err := sameFile(dest, info.Size, want)
+		var same bool
+		var err error
+		if byTrailer {
+			same, want, err = sameFileByTrailer(dest, rc, info, in.Host)
+			res.SHA256 = want
+		} else {
+			same, err = sameFile(dest, info.Size, want)
+		}
 		if err != nil {
 			return PulledImage{}, wrap(op, err)
 		}
@@ -239,6 +276,15 @@ func (s *Service) PullHostImage(ctx context.Context, m Manager, in PullHostImage
 	if n != info.Size {
 		return PulledImage{}, badGateway(op, fmt.Errorf("download %s: got %s bytes, %s said %d", in.Name, sizeWord(n, info.Size), hostText(in.Host), info.Size))
 	}
+	if byTrailer {
+		// The body ended exactly at its stated size, so its end was reached and
+		// the trailer is in. None, or a malformed one, keeps nothing.
+		want = strings.ToLower(info.Trailer())
+		if !isHexDigest(want) {
+			return PulledImage{}, badGateway(op, fmt.Errorf("download %s: %s did not send the SHA-256 after the last byte; nothing was kept", in.Name, hostText(in.Host)))
+		}
+		res.SHA256 = want
+	}
 	if got := hex.EncodeToString(h.Sum(nil)); got != want {
 		return PulledImage{}, badGateway(op, fmt.Errorf("download %s: SHA-256 is %s, %s said %s; nothing was kept", in.Name, got, hostText(in.Host), want))
 	}
@@ -257,6 +303,36 @@ func (s *Service) PullHostImage(ctx context.Context, m Manager, in PullHostImage
 	}
 	in.OnProgress.emit("pull", "done", fmt.Sprintf("%s written (%d bytes, sha256 %s)", dest, n, want), "")
 	return res, nil
+}
+
+func isHexDigest(s string) bool {
+	return len(s) == 64 && strings.Trim(s, "0123456789abcdef") == ""
+}
+
+// sameFileByTrailer is sameFile for a host whose digest comes after the
+// bytes: the existing file must be a regular file of the stated size; the
+// host's stream is then read through (hashed, nothing written), its trailer
+// must match what was read, and the digest of the stream must be the file's.
+// It returns the stream's digest.
+func sameFileByTrailer(path string, rc io.Reader, info ImageBlobInfo, host string) (bool, string, error) {
+	st, err := os.Lstat(path)
+	if err != nil {
+		return false, "", err
+	}
+	if !st.Mode().IsRegular() || st.Size() != info.Size {
+		return false, "", nil
+	}
+	h := sha256.New()
+	n, err := io.Copy(h, io.LimitReader(rc, info.Size+1))
+	if err != nil {
+		return false, "", badGateway("images pull", fmt.Errorf("download from %s: %w", hostText(host), err))
+	}
+	got := hex.EncodeToString(h.Sum(nil))
+	if want := strings.ToLower(info.Trailer()); n != info.Size || want != got {
+		return false, "", badGateway("images pull", fmt.Errorf("%s's stream did not match its stated size and SHA-256 (%d bytes read); nothing was kept", hostText(host), n))
+	}
+	same, err := sameFile(path, info.Size, got)
+	return same, got, err
 }
 
 func sizeWord(n, size int64) string {
@@ -325,6 +401,9 @@ func (s *Service) ExportTemplateToStore(ctx context.Context, m Manager, in Expor
 	}
 	cat := s.Store.CatalogFor(ctx)
 
+	// The store wants the digest before the bytes: have the host read the
+	// export once now, so the blob that follows carries it in its header.
+	in.Hash = true
 	img, err := s.ExportTemplate(ctx, m, in)
 	if err != nil {
 		return ExportedToStore{}, err

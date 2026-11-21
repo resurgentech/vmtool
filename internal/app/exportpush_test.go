@@ -273,3 +273,24 @@ func TestExportTemplateToStoreNeverShowsTheToken(t *testing.T) {
 		t.Errorf("token in %q", all)
 	}
 }
+
+// --push has the host hash the export first (hash=true): the store wants the
+// digest before the bytes. A plain export does not ask.
+func TestExportTemplateToStoreAsksTheHostToHash(t *testing.T) {
+	blob := []byte(strings.Repeat("PLACEHOLDER image bytes ", 1000))
+	st := newXPStore(t)
+	h := xpHost(blob)
+	if _, err := st.svc(t, nil).ExportTemplateToStore(context.Background(), h, ExportTemplateInput{Host: "hv1", Name: "proj"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.hashes) != 1 || !h.hashes[0] {
+		t.Errorf("export asked with hash=%v, want true", h.hashes)
+	}
+	h2 := xpHost(blob)
+	if _, err := (&Service{}).ExportTemplate(context.Background(), h2, ExportTemplateInput{Host: "hv1", Name: "proj"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(h2.hashes) != 1 || h2.hashes[0] {
+		t.Errorf("a plain export asked with hash=%v, want false", h2.hashes)
+	}
+}

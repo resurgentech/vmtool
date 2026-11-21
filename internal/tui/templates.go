@@ -159,7 +159,7 @@ func (m model) viewTemplates() string {
 	if len(m.tplRows) == 0 {
 		b.WriteString("  No templates found.\n")
 	} else {
-		b.WriteString(statusStyle.Render(fmt.Sprintf("  %-28s %-6s %-14s %-12s %-8s %-8s %-6s %s", "NAME", "ORIGIN", "SHA256", "POOL", "SIZE", "USED", "CLONES", "STALE")))
+		b.WriteString(statusStyle.Render(fmt.Sprintf("  %-28s %-6s %-14s %-12s %-8s %-8s %-6s %-6s %s", "NAME", "ORIGIN", "SHA256", "POOL", "SIZE", "USED", "CLONES", "STALE", "EXPORT")))
 		b.WriteString("\n")
 		for i, r := range m.tplRows {
 			var line string
@@ -174,8 +174,8 @@ func (m model) viewTemplates() string {
 				if r.Stale {
 					stale = "stale"
 				}
-				line = fmt.Sprintf("  %-28s %-6s %-14s %-12s %-8s %-8s %-6d %s", r.Host+"/"+r.Name, r.Origin, sha, r.Pool,
-					humanBytes(r.SizeBytes), humanBytes(r.UsedBytes), r.Clones, stale)
+				line = fmt.Sprintf("  %-28s %-6s %-14s %-12s %-8s %-8s %-6d %-6s %s", r.Host+"/"+r.Name, r.Origin, sha, r.Pool,
+					humanBytes(r.SizeBytes), humanBytes(r.UsedBytes), r.Clones, stale, tuiExportCell(r.TemplateInfo))
 			}
 			if i == m.tplCursor {
 				b.WriteString(selectedStyle.Render("> " + line[2:]))
@@ -272,4 +272,22 @@ func (m model) viewSaveTemplate() string {
 	b.WriteString(helpStyle.Render("enter=save  tab=toggle replace  esc=cancel"))
 	b.WriteString("\n")
 	return b.String()
+}
+
+// tuiExportCell is the EXPORT column: "-" with no export volume, else its
+// size, "sha" when the digest is known, and when the daemon removes it.
+func tuiExportCell(t app.TemplateInfo) string {
+	x := t.Export
+	if x == nil {
+		return "-"
+	}
+	sum := "no sha"
+	if x.SHA256 != "" {
+		sum = "sha"
+	}
+	exp := ""
+	if e := x.Expires(); !e.IsZero() {
+		exp = ", expires " + e.UTC().Format("01-02 15:04")
+	}
+	return fmt.Sprintf("%s, %s%s", humanBytes(x.Bytes), sum, exp)
 }

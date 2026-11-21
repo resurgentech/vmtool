@@ -100,10 +100,10 @@ func TestTemplatesListAllHosts(t *testing.T) {
 	if r.err != nil {
 		t.Fatalf("list: %v (a failed host must not fail the listing)", r.err)
 	}
-	want := `NAME ORIGIN IMAGE SHA256 POOL SIZE USED CLONES STALE CREATED
-veritech01/img1 image img1 abababababab thin-test 10G 1G 2 no 2026-11-18 10:30
-veritech01/img1 image img1 cdcdcdcdcdcd thin-test 10G 1G 0 yes 2026-11-18 10:30
-veritech01/proj saved - - thin-test 10G 1G 1 no 2026-11-18 10:30
+	want := `NAME ORIGIN IMAGE SHA256 POOL SIZE USED CLONES STALE CREATED EXPORT
+veritech01/img1 image img1 abababababab thin-test 10G 1G 2 no 2026-11-18 10:30 -
+veritech01/img1 image img1 cdcdcdcdcdcd thin-test 10G 1G 0 yes 2026-11-18 10:30 -
+veritech01/proj saved - - thin-test 10G 1G 1 no 2026-11-18 10:30 -
 veritech02 ERROR: list_templates: daemon down
 `
 	if got := norm(r.out); got != want {
@@ -245,7 +245,7 @@ func TestWriteTemplateTable(t *testing.T) {
 		t.Fatal(err)
 	}
 	// an unknown creation time is "-"
-	want := "NAME ORIGIN IMAGE SHA256 POOL SIZE USED CLONES STALE CREATED\nhv1/img1 image img1 aaaaaaaaaaaa thin-test 5G 0 0 no -\n"
+	want := "NAME ORIGIN IMAGE SHA256 POOL SIZE USED CLONES STALE CREATED EXPORT\nhv1/img1 image img1 aaaaaaaaaaaa thin-test 5G 0 0 no - -\n"
 	if got := norm(b.String()); got != want {
 		t.Errorf("table:\n%q\nwant\n%q", got, want)
 	}
@@ -254,4 +254,28 @@ func TestWriteTemplateTable(t *testing.T) {
 
 func (h tplHost) ListPools() ([]vmtool.PoolInfo, error) {
 	return []vmtool.PoolInfo{{Name: "thin-test", Path: "/dev/vg-test", Active: true, Type: vmtool.PoolTypeThin}}, nil
+}
+
+// A template with an export volume shows its size, whether the digest is known
+// and when the daemon removes it.
+func TestWriteTemplateTableShowsTheExport(t *testing.T) {
+	created := time.Date(2026, 11, 20, 10, 30, 0, 0, time.UTC)
+	mk := func(name, sha string) app.TemplateInfo {
+		return app.TemplateInfo{Template: vmtool.Template{Name: name, Origin: "saved", Pool: "thin-test", SizeBytes: 20 << 30},
+			Export: &app.ExportVolume{ThinExport: vmtool.ThinExport{Bytes: 11 << 30, SHA256: sha, Created: created}}}
+	}
+	var b bytes.Buffer
+	rows := []app.HostTemplates{{Host: "hv1", Templates: []app.TemplateInfo{mk("a", ""), mk("b", strings.Repeat("a", 64))}}}
+	if err := writeTemplateTable(&b, rows, false); err != nil {
+		t.Fatal(err)
+	}
+	got := norm(b.String())
+	for _, want := range []string{
+		"hv1/a saved - - thin-test 20G 0 0 no - 11G, sha256 not yet known, expires 2026-11-21 10:30",
+		"hv1/b saved - - thin-test 20G 0 0 no - 11G, sha256 known, expires 2026-11-21 10:30",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("table lacks %q:\n%s", want, got)
+		}
+	}
 }

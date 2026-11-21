@@ -25,13 +25,13 @@ type xferCLIHost struct {
 	exportErr error
 }
 
-func (h xferCLIHost) ExportTemplate(_ context.Context, name, pool string, on func(app.ExportEvent)) (app.ExportedImage, error) {
+func (h xferCLIHost) ExportTemplate(_ context.Context, name, pool string, hash bool, on func(app.ExportEvent)) (app.ExportedImage, error) {
 	h.rec("export " + name + " " + pool)
 	on(app.ExportEvent{Stage: "export", Received: 1 << 20, Total: 4 << 20})
 	if h.exportErr != nil {
 		return app.ExportedImage{}, h.exportErr
 	}
-	return app.ExportedImage{Name: "proj", SHA256: strings.Repeat("ab", 32), Size: 3 << 20, Path: "/var/lib/vmtool/images/proj"}, nil
+	return app.ExportedImage{Name: "proj", SHA256: strings.Repeat("ab", 32), Size: 3 << 20}, nil
 }
 
 func (h xferCLIHost) OpenImageBlob(_ context.Context, name string) (io.ReadCloser, app.ImageBlobInfo, error) {
@@ -68,6 +68,9 @@ func TestTemplatesExportPrintsProgressAndTheImage(t *testing.T) {
 	}
 	if !strings.Contains(r.out, "veritech01/proj") || !strings.Contains(r.out, strings.Repeat("ab", 32)) || !strings.Contains(r.out, "3145728") {
 		t.Errorf("image line %q", r.out)
+	}
+	if !strings.Contains(r.out, "NVMe array of veritech01") || !strings.Contains(r.out, "kept 24 hours") || strings.Contains(r.out, "image cache") {
+		t.Errorf("the line must say the export is on the array and how long it is kept: %q", r.out)
 	}
 	if !strings.Contains(r.out, "vmtool images pull veritech01/proj") {
 		t.Errorf("no hint at how to pull: %q", r.out)

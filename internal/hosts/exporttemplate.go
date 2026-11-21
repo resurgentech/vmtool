@@ -209,8 +209,9 @@ func (t ThinPools) ExportTemplateVolume(tpl app.TemplateInfo, on func(pct float6
 // finished export volume name, as a reader of exactly its vmtool_bytes bytes.
 func (t ThinPools) OpenExport(name string) (io.ReadCloser, app.ExportVolume, error) {
 	const op = "open export"
-	if !vmtool.ValidExportLVName(name) {
-		return nil, app.ExportVolume{}, invalidErr(op, "%q is not an export volume name (vmexp- and 12 hex characters)", name)
+	byLV := vmtool.ValidExportLVName(name)
+	if !byLV && !vmtool.ValidImageName(name) {
+		return nil, app.ExportVolume{}, invalidErr(op, "%q is neither an export volume name (vmexp- and 12 hex characters) nor a template name", name)
 	}
 	if t.Thin == nil {
 		return nil, app.ExportVolume{}, app.ErrNoThinPools
@@ -219,11 +220,30 @@ func (t ThinPools) OpenExport(name string) (io.ReadCloser, app.ExportVolume, err
 	if err != nil {
 		return nil, app.ExportVolume{}, err
 	}
-	for _, v := range vols {
-		if v.Kind != vmtool.ThinKindExport || v.Name != name {
+	// name is the export volume's LV name, or a template's name: then the
+	// newest finished export of a template of that name.
+	var pick *vmtool.ThinVolume
+	for i, v := range vols {
+		if v.Kind != vmtool.ThinKindExport {
+			continue
+		}
+		if byLV {
+			if v.Name == name {
+				pick = &vols[i]
+				break
+			}
 			continue
 		}
 		e := vmtool.ExportFromVolume(v)
+		if e.TemplateName != name || !e.Complete() {
+			continue
+		}
+		if pick == nil || e.Created.After(vmtool.ExportFromVolume(*pick).Created) {
+			pick = &vols[i]
+		}
+	}
+	if pick != nil {
+		e := vmtool.ExportFromVolume(*pick)
 		if !e.Complete() {
 			return nil, app.ExportVolume{}, conflictErr(op, "export volume %s is not finished (it has no vmtool_bytes tag)", name)
 		}
