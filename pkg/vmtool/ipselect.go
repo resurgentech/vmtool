@@ -32,14 +32,14 @@ type IPSources struct {
 
 func normMAC(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
 
-// pickIP chooses the domain's address. Order: lease, agent, ARP. Only rows
-// and interfaces whose MAC is one of macs count. macs are in card order: the
-// first MAC with an address decides (a later card never takes VMInfo.ip over);
-// of several rows for one MAC, the
-// newest expiry wins. An address the lease table assigns
-// to a different MAC (the newest row for that address is foreign) is
-// unknown and is never returned, whatever the agent or ARP say. Returns ""
-// when nothing qualifies.
+// pickIP chooses the domain's address. Order: lease, agent, ARP. macs are in
+// card order and only the FIRST MAC counts: rows and interfaces of a later
+// card are never returned (they appear in VMInfo.networks only), even when
+// the first card has no address yet. Of several rows for that MAC, the
+// newest expiry wins. Leases of every MAC (all attached networks) still
+// decide who holds an address: one whose newest row is foreign is unknown and
+// is never returned, whatever the agent or ARP say. Returns "" when nothing
+// qualifies.
 func pickIP(macs []string, src IPSources) string {
 	own := map[string]bool{}
 	for _, m := range macs {
@@ -64,37 +64,36 @@ func pickIP(macs []string, src IPSources) string {
 		return ok && !h.ours
 	}
 
-	// The first card (the first MAC) decides: a later card, such as one on a
-	// vmtool network whose reservation never expires, never takes the address
-	// over while the first card has one. Within one MAC the newest expiry wins.
-	for _, mac := range macs {
-		mac = normMAC(mac)
-		var best *LeaseRow
-		for i := range src.Leases {
-			r := &src.Leases[i]
-			if normMAC(r.MAC) != mac || contested(r.IP) || !usableIPv4(r.IP) {
-				continue
-			}
-			if best == nil || r.Expiry.After(best.Expiry) {
-				best = r
-			}
+	// Only the first card (the first MAC) counts: a later card, such as one on
+	// a vmtool network whose reservation is leased from the start, never
+	// stands in while the first card has none yet. Within the MAC the newest
+	// expiry wins.
+	if len(macs) == 0 {
+		return ""
+	}
+	mac := normMAC(macs[0])
+	var best *LeaseRow
+	for i := range src.Leases {
+		r := &src.Leases[i]
+		if normMAC(r.MAC) != mac || contested(r.IP) || !usableIPv4(r.IP) {
+			continue
 		}
-		if best != nil {
-			return best.IP
+		if best == nil || r.Expiry.After(best.Expiry) {
+			best = r
 		}
+	}
+	if best != nil {
+		return best.IP
 	}
 
 	for _, list := range [][]IfaceAddr{src.Agent, src.ARP} {
-		for _, mac := range macs {
-			mac = normMAC(mac)
-			for _, ifc := range list {
-				if normMAC(ifc.MAC) != mac {
-					continue
-				}
-				for _, ip := range ifc.IPs {
-					if usableIPv4(ip) && !contested(ip) {
-						return ip
-					}
+		for _, ifc := range list {
+			if normMAC(ifc.MAC) != mac {
+				continue
+			}
+			for _, ip := range ifc.IPs {
+				if usableIPv4(ip) && !contested(ip) {
+					return ip
 				}
 			}
 		}

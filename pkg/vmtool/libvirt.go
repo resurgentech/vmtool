@@ -767,22 +767,36 @@ func (m *Manager) List() ([]VMInfo, error) {
 	return vms, nil
 }
 
-// getIP retrieves the IPv4 address of a running domain by the domain's own
-// MAC address(es), read from its XML. Only an interface or lease row whose
-// MAC is one of the domain's counts. Order: LEASE (the lease tables of the
-// domain's libvirt networks; when a MAC has several rows, as after a
-// machine-id change, the newest expiry wins), then the guest AGENT, then
-// ARP. An address that the lease table assigns to a different MAC is
-// unknown: no address is returned for this domain, whatever the agent or
-// ARP report. The choice is made by pickIP.
+// getIP retrieves the IPv4 address of a running domain's FIRST card (the card
+// vmtool reaches the VM through, first in the domain XML), by that card's MAC
+// read from the XML. Order: LEASE (the lease tables of all the domain's
+// libvirt networks; when the MAC has several rows, as after a machine-id
+// change, the newest expiry wins), then the guest AGENT, then ARP. A later
+// card's address is never returned: while the first card has none, the
+// result is an error. An address that the lease table assigns to a different
+// MAC is unknown, whatever the agent or ARP report. The choice is made by
+// pickIP.
 func (m *Manager) getIP(dom *libvirt.Domain) (string, error) {
+	macs, src, err := m.ipSources(dom)
+	if err != nil {
+		return "", err
+	}
+	if ip := pickIP(macs, src); ip != "" {
+		return ip, nil
+	}
+	return "", fmt.Errorf("no IPv4 address found")
+}
+
+// ipSources reads the domain's card MACs (card order) and what each address
+// source reports for them.
+func (m *Manager) ipSources(dom *libvirt.Domain) ([]string, IPSources, error) {
 	domXML, err := dom.GetXMLDesc(0)
 	if err != nil {
-		return "", fmt.Errorf("reading domain XML: %w", err)
+		return nil, IPSources{}, fmt.Errorf("reading domain XML: %w", err)
 	}
 	macs, networks, err := parseDomainNICs(domXML)
 	if err != nil {
-		return "", fmt.Errorf("parsing domain XML: %w", err)
+		return nil, IPSources{}, fmt.Errorf("parsing domain XML: %w", err)
 	}
 
 	var src IPSources
@@ -820,13 +834,12 @@ func (m *Manager) getIP(dom *libvirt.Domain) (string, error) {
 	src.Agent = collect(libvirt.DOMAIN_INTERFACE_ADDRESSES_SRC_AGENT)
 	src.ARP = collect(libvirt.DOMAIN_INTERFACE_ADDRESSES_SRC_ARP)
 
-	if ip := pickIP(macs, src); ip != "" {
-		return ip, nil
-	}
-	return "", fmt.Errorf("no IPv4 address found")
+	return macs, src, nil
 }
 
-// WaitForIP polls until the VM has an IP address or the timeout is reached.
+// WaitForIP polls until the VM's first card has an IP address or the timeout
+// is reached. Another card's address (a vmtool network's reservation) never
+// ends the wait; see pickIP.
 func (m *Manager) WaitForIP(name string, timeout time.Duration) (string, error) {
 	dom, err := m.conn.LookupDomainByName(name)
 	if err != nil {
@@ -834,15 +847,30 @@ func (m *Manager) WaitForIP(name string, timeout time.Duration) (string, error) 
 	}
 	defer dom.Free()
 
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		ip, err := m.getIP(dom)
-		if err == nil && net.ParseIP(ip) != nil {
-			return ip, nil
-		}
-		time.Sleep(time.Second)
+	ip, err := pollIP(timeout,
+		func() ([]string, IPSources, error) { return m.ipSources(dom) },
+		time.Now, time.Sleep)
+	if err != nil {
+		return "", fmt.Errorf("%w on %q", err, name)
 	}
-	return "", fmt.Errorf("timed out waiting for IP on %q", name)
+	return ip, nil
+}
+
+// pollIP polls get once a second until pickIP finds the first card's address
+// or timeout passes by now. get, now and sleep are injected so a test can run
+// it against a fake source sequence.
+func pollIP(timeout time.Duration, get func() ([]string, IPSources, error), now func() time.Time, sleep func(time.Duration)) (string, error) {
+	deadline := now().Add(timeout)
+	for now().Before(deadline) {
+		macs, src, err := get()
+		if err == nil {
+			if ip := pickIP(macs, src); net.ParseIP(ip) != nil {
+				return ip, nil
+			}
+		}
+		sleep(time.Second)
+	}
+	return "", fmt.Errorf("timed out waiting for IP")
 }
 
 // EnsureDefaultNetwork creates and starts the default NAT network if it doesn't exist.

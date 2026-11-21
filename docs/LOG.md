@@ -2376,3 +2376,23 @@ are appended, never edited in; a hook refuses rewrites.
   `lv_when_full`, no `vars._when_full`). Green; `just check` and the
   opt-in syntax check green.
 - Commits: the H3 commit on `clone-identity` (this entry rides in it).
+
+## 2026-11-21 — K1 wait_ip waits for the first card's address only
+
+- `pickIP` (`pkg/vmtool/ipselect.go`) considers only the first card's MAC
+  (first in the domain XML) for leases, agent and ARP; every attached
+  network's leases still decide whether an address is held by another MAC.
+  While card 1 has no address the VM's `ip` is empty and `WaitForIP` keeps
+  waiting; a vmtool network card's reservation no longer ends `wait_ip` or
+  becomes `VMInfo.ip` (it shows only in `VMInfo.networks`). `Info` and
+  `List` follow through `getIP`.
+- `getIP` is split into `ipSources` + `pickIP`; `WaitForIP`'s loop is
+  `pollIP(timeout, get, now, sleep)`, same 1 s interval and error text.
+- Tests: `TestWaitIPFirstCardOnly` (card 2 leased, card 1 not yet → keeps
+  polling; card 1's lease → that address), `TestWaitIPTimesOutWithoutFirstCard`,
+  `TestWaitIPSourceErrorKeepsWaiting`; TestPickIP's "second card's lease is
+  used" case flipped to "not used", two cases added. Single-card cases
+  unchanged.
+- Red: pickIP returned 10.77.1.100 / 10.77.0.100 from card 2. Green; `just
+  check` green.
+- Commits: the K1 commit on `clone-identity` (this entry rides in it).

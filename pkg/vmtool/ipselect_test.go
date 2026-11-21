@@ -123,12 +123,32 @@ func TestPickIP(t *testing.T) {
 			want: "192.168.122.10",
 		},
 		{
-			name: "the first card has no lease yet: the second card's lease is used",
+			// K1: only the first card's address is reported; a later card's
+			// reserved lease never stands in while the first has none yet.
+			name: "the first card has no lease yet: the second card's lease is not used",
 			macs: []string{older, newer},
 			src: IPSources{Leases: []LeaseRow{
 				{MAC: newer, IP: "10.77.1.100", Expiry: t0},
 			}},
-			want: "10.77.1.100",
+			want: "",
+		},
+		{
+			name: "the first card has no lease yet: the second card's agent and ARP are not used",
+			macs: []string{older, newer},
+			src: IPSources{
+				Agent: []IfaceAddr{{MAC: newer, IPs: []string{"10.77.1.100"}}},
+				ARP:   []IfaceAddr{{MAC: newer, IPs: []string{"10.77.1.100"}}},
+			},
+			want: "",
+		},
+		{
+			name: "the first card's address held by another MAC's lease row is contested",
+			macs: []string{older, newer},
+			src: IPSources{
+				Leases: []LeaseRow{{MAC: foreign, IP: "192.168.122.10", Expiry: t0}},
+				Agent:  []IfaceAddr{arp(older, "192.168.122.10")},
+			},
+			want: "",
 		},
 		{
 			name: "two cards, agent only: the first card's address, whatever the order reported",
