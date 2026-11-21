@@ -1634,3 +1634,24 @@ are appended, never edited in; a hook refuses rewrites.
   these were green at first run, regression pins).
 - Red: 8 helper tests failing; green; `just check` green.
 - Commits: the D1 commit on `clone-identity`.
+
+## 2026-11-20 — D2 Host setup: discards for thick volumes and a clean start for the pool
+
+- `ansible/playbooks/tasks/nvme_stripe.yml`: `issue_discards = 1` in
+  lvm.conf (lineinfile, a commented/0/1 line replaced or the line added
+  after `devices {`), checked with `lvmconfig devices/issue_discards`
+  (skipped under `--check`). Before a pool that does not exist: a leftover
+  `vmtool-discard-scratch` is reused only if tagged `vmtool_scratch`
+  (untagged fails the play), else one is made over 100%FREE (`--zero n
+  --wipesignatures n`); `blkdiscard` it; a failed discard stops the play
+  with the volume left and the manual removal; else `lvremove -y` it. Pool
+  created with `--discards passdown`; the probe reads `discards`; an
+  adopted pool not at `passdown` gets `lvchange --discards passdown`, with
+  a plain failure if LVM refuses.
+- `scripts/nvme_stripe_test.go`: the never-destroys test narrowed
+  (`lvremove` once, scratch only; lvcreate thin-pool or scratch; lvchange
+  three forms); six new tests (lvm.conf edit and its regexp, scratch
+  guards, scratch-only discard, sequence and failure, passdown).
+- Red: 8 tests failing; green; `just check` green;
+  `VMTOOL_TEST_ANSIBLE_SYNTAX=1 just test ./scripts/` green.
+- Commits: the D2 commit on `clone-identity`.

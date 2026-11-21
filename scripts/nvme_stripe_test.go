@@ -172,25 +172,28 @@ func TestNvmeStripeOnlyCreatesNeverDestroys(t *testing.T) {
 		}
 	}
 	for _, re := range []string{
-		`lvremove`, `vgremove`, `pvremove`, `lvreduce`, `vgreduce`, `lvextend`, `lvconvert`, `lvrename`, `--zero-superblock`, `--stop\b`,
+		`vgremove`, `pvremove`, `lvreduce`, `vgreduce`, `lvextend`, `lvconvert`, `lvrename`, `--zero-superblock`, `--stop\b`,
 		`\bdd\b`, `mkfs`, `sgdisk`, `\bparted\b`, `--force`, `pool-build`,
 	} {
 		if regexp.MustCompile(re).MatchString(code) {
 			t.Errorf("file must not contain %s", re)
 		}
 	}
-	// T1: lvcreate only as `lvcreate --type thin-pool`, lvchange only to set
-	// zeroing off or to attach the profile.
+	// T1/D2: lvcreate only as `lvcreate --type thin-pool` or as the one
+	// scratch volume over the free space; lvchange only to set zeroing off, to
+	// attach the profile or to set discards to passdown. (lvremove and
+	// blkdiscard have their own test, TestNvmeScratchOnlyScratchIsDiscarded.)
 	norc := norm(code)
 	nCreate := strings.Count(norc, "lvcreate")
 	nThin := len(regexp.MustCompile(`'lvcreate', '--type', 'thin-pool'`).FindAllString(norc, -1))
-	if nCreate != nThin || nCreate == 0 {
-		t.Errorf("every lvcreate must be `lvcreate --type thin-pool`: %d lvcreate, %d thin-pool", nCreate, nThin)
+	nScratch := len(regexp.MustCompile(`lvcreate, -l, 100%FREE, -n, vmtool-discard-scratch,`).FindAllString(norc, -1))
+	if nThin != 1 || nScratch != 1 || nCreate != nThin+nScratch {
+		t.Errorf("every lvcreate must be `lvcreate --type thin-pool` (1) or the scratch form (1): %d lvcreate, %d thin-pool, %d scratch", nCreate, nThin, nScratch)
 	}
 	nChange := strings.Count(norc, "lvchange")
-	nOK := len(regexp.MustCompile(`lvchange, (--zero, "n"|--metadataprofile, vmtool-thin)`).FindAllString(norc, -1))
-	if nChange != nOK || nChange == 0 {
-		t.Errorf("lvchange only with --zero n or --metadataprofile vmtool-thin: %d lvchange, %d allowed", nChange, nOK)
+	nOK := len(regexp.MustCompile(`lvchange, (--zero, "n"|--metadataprofile, vmtool-thin|--discards, passdown)`).FindAllString(norc, -1))
+	if nChange != nOK || nChange != 3 {
+		t.Errorf("lvchange only with --zero n, --metadataprofile vmtool-thin or --discards passdown: %d lvchange, %d allowed (want 3)", nChange, nOK)
 	}
 	creates := map[string]bool{}
 	for _, tk := range nvmeTasks(t) {
@@ -259,7 +262,18 @@ func TestNvmeStripePreflightBeforeAnyWrite(t *testing.T) {
 	}
 	// The ARRAY-without-VG refusal says nothing was changed.
 	for _, tk := range tasks {
-		if tk.body["ansible.builtin.fail"] != nil && !strings.Contains(tk.text(), "nothing was changed") && !strings.Contains(tk.text(), "Nothing was changed") {
+		if tk.body["ansible.builtin.fail"] == nil {
+			continue
+		}
+		// D2: the one fail that follows a failed discard leaves the scratch
+		// volume behind on purpose and says so instead.
+		if strings.Contains(tk.text(), "vmtool_nvme_scratch_discard") {
+			if !strings.Contains(tk.text(), "was left in place") {
+				t.Errorf("fail task %q must say the scratch volume was left in place", tk.name)
+			}
+			continue
+		}
+		if !strings.Contains(tk.text(), "nothing was changed") && !strings.Contains(tk.text(), "Nothing was changed") {
 			t.Errorf("fail task %q must say nothing was changed", tk.name)
 		}
 	}
@@ -336,7 +350,7 @@ func TestNvmeStripePersistence(t *testing.T) {
 	tasks := nvmeTasks(t)
 	var conf, upd = -1, -1
 	for _, tk := range tasks {
-		if li, ok := tk.body["ansible.builtin.lineinfile"].(map[string]any); ok {
+		if li, ok := tk.body["ansible.builtin.lineinfile"].(map[string]any); ok && li["path"] != "/etc/lvm/lvm.conf" {
 			conf = tk.index
 			if li["path"] != "/etc/mdadm/mdadm.conf" {
 				t.Errorf("lineinfile path = %v", li["path"])
@@ -801,14 +815,14 @@ func TestNvmeThinCreate(t *testing.T) {
 	if probe.body["changed_when"] != false || probe.body["check_mode"] != false {
 		t.Errorf("probe must be read-only (changed_when/check_mode false)")
 	}
-	cr := thinTask(t, "create")
+	cr := thinTask(t, "create the pool")
 	code := norm(argvText(cr))
 	for _, w := range []string{
 		"'lvcreate', '--type', 'thin-pool'", "'-n', vmtool_nvme_thin_pool",
 		"'--chunksize', vmtool_nvme_thin_chunk", "'--poolmetadatasize', vmtool_nvme_thin_metadata",
 		"'--zero', 'n'", "'--errorwhenfull', 'n'", "'--monitor', 'y'",
 		"'--metadataprofile', 'vmtool-thin'", "'--addtag', 'vmtool_thinpool'", "vmtool_nvme_vg",
-		"'%' in", "'-l'", "'-L'", "vmtool_nvme_thin_size",
+		"'--discards', 'passdown'", "'%' in", "'-l'", "'-L'", "vmtool_nvme_thin_size",
 	} {
 		if !strings.Contains(code, w) {
 			t.Errorf("lvcreate task lacks %s: %s", w, code)
@@ -840,7 +854,7 @@ func TestNvmeThinAdoptAndRefuse(t *testing.T) {
 	if !hasWhen(refuse.whens, "vmtool_nvme_thin_present | bool") || !hasWhen(refuse.whens, "not (vmtool_nvme_thin_adoptable | bool)") {
 		t.Errorf("refusal must fire when present and not adoptable: %v", refuse.whens)
 	}
-	cr := thinTask(t, "create")
+	cr := thinTask(t, "create the pool")
 	if !(refuse.index < cr.index) {
 		t.Errorf("refusal (%d) must come before create (%d)", refuse.index, cr.index)
 	}
@@ -893,8 +907,30 @@ func TestNvmeThinExpressionsEvaluate(t *testing.T) {
 	rp := thinTask(t, "read the probe")
 	sf, _ := rp.body["ansible.builtin.set_fact"].(map[string]any)
 	lv := taskVar(t, rp, "_lv")
-	report := func(name, attr, tags, zero, profile string) string {
-		return `{"report":[{"lv":[{"lv_name":"` + name + `","lv_attr":"` + attr + `","lv_tags":"` + tags + `","zero":"` + zero + `","lv_profile":"` + profile + `"}]}]}`
+	report := func(name, attr, tags, zero, profile string, discards ...string) string {
+		d := ""
+		if len(discards) > 0 {
+			d = discards[0]
+		}
+		return `{"report":[{"lv":[{"lv_name":"` + name + `","lv_attr":"` + attr + `","lv_tags":"` + tags + `","zero":"` + zero + `","lv_profile":"` + profile + `","discards":"` + d + `"}]}]}`
+	}
+	// D2: the discards column, from the same expression.
+	discardsExpr, _ := sf["vmtool_nvme_thin_discards"].(string)
+	if discardsExpr == "" {
+		t.Fatal("set_fact lacks vmtool_nvme_thin_discards")
+	}
+	for label, c := range map[string]struct{ stdout, want string }{
+		"discards passdown":   {report("thin-test", "twi-aotz--", "vmtool_thinpool", "", "", "passdown"), "passdown"},
+		"discards ignore":     {report("thin-test", "twi-aotz--", "vmtool_thinpool", "", "", "ignore"), "ignore"},
+		"discards nopassdown": {report("thin-test", "twi-aotz--", "vmtool_thinpool", "", "", "nopassdown"), "nopassdown"},
+		"discards absent":     {"", ""},
+	} {
+		rc := 0
+		if c.stdout == "" {
+			rc = 5
+		}
+		vars := map[string]any{"_lv": lv, "vmtool_nvme_thin_discards": discardsExpr, "vmtool_nvme_thin_probe": map[string]any{"rc": rc, "stdout": c.stdout}}
+		wantEval(t, label, "vmtool_nvme_thin_discards", vars, c.want)
 	}
 	for _, c := range []struct {
 		label                  string
@@ -926,7 +962,7 @@ func TestNvmeThinExpressionsEvaluate(t *testing.T) {
 	}
 
 	// -l for a percentage, -L for a size, from the very expression in the argv.
-	code := norm(argvText(thinTask(t, "create")))
+	code := norm(argvText(thinTask(t, "create the pool")))
 	m := regexp.MustCompile(`\['-l' if [^\]]*\]`).FindString(code)
 	if m == "" {
 		t.Fatalf("no size-flag expression in: %s", code)
@@ -936,5 +972,278 @@ func TestNvmeThinExpressionsEvaluate(t *testing.T) {
 		if ok && got != want {
 			t.Errorf("size %s: args %#v, want %q", size, got, want)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------- D2
+// Discards: issue_discards for thick volumes, and a one-time discard of the
+// free space before a thin pool is made. Shape tests only; nothing here runs
+// ansible (the regexp and expression checks are Go or opt-in) or any lvm tool.
+
+const (
+	lvmConfPath  = "/etc/lvm/lvm.conf"
+	scratchLV    = "vmtool-discard-scratch"
+	scratchGuard = "not (vmtool_nvme_thin_present | bool)"
+
+	scratchLook    = "Thin pool: look for a leftover scratch volume"
+	scratchRead    = "Thin pool: read the leftover scratch volume"
+	scratchNotOurs = "Thin pool: fail on a scratch volume that vmtool did not make"
+	scratchMake    = "Thin pool: create the discard scratch volume"
+	scratchDiscard = "Thin pool: discard the scratch volume"
+	scratchStop    = "Thin pool: stop when the scratch discard failed"
+	scratchRemove  = "Thin pool: remove the scratch volume"
+	poolCreate     = "Thin pool: create the pool"
+)
+
+func TestNvmeIssueDiscardsInLvmConf(t *testing.T) {
+	tasks := nvmeTasks(t)
+	var edit botTask
+	n := 0
+	for _, tk := range tasks {
+		if li, ok := tk.body["ansible.builtin.lineinfile"].(map[string]any); ok && li["path"] == lvmConfPath {
+			edit = tk
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("want one lineinfile on %s, got %d", lvmConfPath, n)
+	}
+	li, _ := edit.body["ansible.builtin.lineinfile"].(map[string]any)
+	if line, _ := li["line"].(string); strings.TrimSpace(line) != "issue_discards = 1" {
+		t.Errorf("line = %q, want issue_discards = 1", li["line"])
+	}
+	if re, _ := li["regexp"].(string); !strings.Contains(re, "issue_discards") {
+		t.Errorf("regexp must key on issue_discards: %q", li["regexp"])
+	}
+	if ia, _ := li["insertafter"].(string); !strings.Contains(ia, "devices") {
+		t.Errorf("a missing line must go after `devices {`: insertafter = %q", li["insertafter"])
+	}
+	if li["create"] == true {
+		t.Errorf("lvm.conf must not be created")
+	}
+	if !hasWhen(edit.whens, nvmeGuard) || hasWhen(edit.whens, thinGuard) {
+		t.Errorf("the lvm.conf edit runs with the stripe, not only with the thin pool: %v", edit.whens)
+	}
+	// After the volume group exists (preflight is over), before the pool.
+	vg := firstIndex(tasks, func(b botTask) bool { return b.name == "Create the volume group" })
+	if vg < 0 || edit.index < vg {
+		t.Errorf("the lvm.conf edit (%d) must follow the preflight and the VG create (%d)", edit.index, vg)
+	}
+	// The check: lvmconfig prints issue_discards=1 or the play fails.
+	read := firstIndex(tasks, func(b botTask) bool { return strings.Contains(argvText(b), "lvmconfig devices/issue_discards") })
+	if read < 0 {
+		t.Fatal("no `lvmconfig devices/issue_discards` task")
+	}
+	rt := tasks[read]
+	if rt.body["changed_when"] != false || rt.body["check_mode"] != false || rt.body["failed_when"] != false {
+		t.Errorf("the lvmconfig read must be read-only and leave the verdict to the fail task")
+	}
+	fail := firstIndex(tasks, func(b botTask) bool {
+		return b.body["ansible.builtin.fail"] != nil && strings.Contains(b.text(), "issue_discards=1")
+	})
+	if fail < 0 {
+		t.Fatal("no fail task on issue_discards=1")
+	}
+	ft := tasks[fail]
+	if !hasWhen(ft.whens, "not ansible_check_mode") || !hasWhen(ft.whens, "issue_discards=1") || !hasWhen(ft.whens, nvmeGuard) {
+		t.Errorf("the check fails the play unless issue_discards=1, not under --check: %v", ft.whens)
+	}
+	if !(edit.index < read && read < fail) {
+		t.Errorf("want edit (%d) < lvmconfig read (%d) < fail (%d)", edit.index, read, fail)
+	}
+	pool := firstIndex(tasks, func(b botTask) bool { return strings.Contains(b.text(), "pool-info") })
+	if fail > pool {
+		t.Errorf("the check (%d) must come before the libvirt pool (%d)", fail, pool)
+	}
+}
+
+// The line is found whether commented, 0 or already 1 (so a file that is right
+// is left alone and no second line is added), and nothing else matches.
+func TestNvmeIssueDiscardsRegexp(t *testing.T) {
+	var re string
+	for _, tk := range nvmeTasks(t) {
+		if li, ok := tk.body["ansible.builtin.lineinfile"].(map[string]any); ok && li["path"] == lvmConfPath {
+			re, _ = li["regexp"].(string)
+		}
+	}
+	if re == "" {
+		t.Fatal("no regexp on the lvm.conf edit")
+	}
+	rx, err := regexp.Compile(re)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, l := range []string{"\tissue_discards = 0", "\t# issue_discards = 0", "    issue_discards=0", "issue_discards = 1", "\tissue_discards = 1"} {
+		if !rx.MatchString(l) {
+			t.Errorf("regexp %q must match %q", re, l)
+		}
+	}
+	for _, l := range []string{"\t# Configuration option devices/issue_discards.", "\tissue_discards_x = 1", "\tthin_pool_discards = 1", "devices {", ""} {
+		if rx.MatchString(l) {
+			t.Errorf("regexp %q must not match %q", re, l)
+		}
+	}
+}
+
+// scratchTasks are the tasks that mention the scratch volume.
+func scratchTasks(t *testing.T) []botTask {
+	t.Helper()
+	var out []botTask
+	for _, tk := range nvmeTasks(t) {
+		if strings.Contains(tk.text(), "scratch") {
+			out = append(out, tk)
+		}
+	}
+	if len(out) != 7 {
+		t.Fatalf("want 7 scratch tasks, found %d", len(out))
+	}
+	return out
+}
+
+// None of the scratch tasks can run when the pool exists.
+func TestNvmeScratchGuardedLikeThePoolCreate(t *testing.T) {
+	for _, tk := range scratchTasks(t) {
+		for _, g := range []string{nvmeGuard, thinGuard, scratchGuard} {
+			if !hasWhen(tk.whens, g) {
+				t.Errorf("scratch task %q lacks when: %s", tk.name, g)
+			}
+		}
+		if !strings.HasPrefix(tk.name, thinPrefix) {
+			t.Errorf("scratch task %q must be named %q...", tk.name, thinPrefix)
+		}
+	}
+	if cr := nvmeTaskNamed(t, poolCreate); !hasWhen(cr.whens, scratchGuard) {
+		t.Errorf("the pool create lost its guard")
+	}
+}
+
+// The scratch volume is the only thing discarded or removed, never forced.
+func TestNvmeScratchOnlyScratchIsDiscarded(t *testing.T) {
+	var discards, removes int
+	for _, tk := range nvmeTasks(t) {
+		txt := tk.text()
+		argv := argvText(tk)
+		isCmd := tk.body["ansible.builtin.command"] != nil
+		if strings.Contains(txt, "blkdiscard") {
+			discards++
+			if !isCmd || norm(argv) != "blkdiscard /dev/{{ vmtool_nvme_vg }}/"+scratchLV {
+				t.Errorf("blkdiscard only as `blkdiscard /dev/{{ vmtool_nvme_vg }}/%s`: task %q has %q", scratchLV, tk.name, argv)
+			}
+		}
+		if strings.Contains(txt, "lvremove") {
+			if isCmd {
+				removes++
+				if norm(argv) != "lvremove -y {{ vmtool_nvme_vg }}/"+scratchLV {
+					t.Errorf("lvremove only as `lvremove -y {{ vmtool_nvme_vg }}/%s`: task %q has %q", scratchLV, tk.name, argv)
+				}
+			} else if tk.body["ansible.builtin.fail"] == nil {
+				t.Errorf("task %q mentions lvremove and is neither the removal nor a fail message", tk.name)
+			}
+		}
+		for _, f := range strings.Fields(argv) {
+			if (f == "-f" || f == "--force") && (strings.Contains(txt, "blkdiscard") || strings.Contains(txt, "lvremove")) {
+				t.Errorf("task %q forces: %q", tk.name, argv)
+			}
+		}
+	}
+	if discards != 1 || removes != 1 {
+		t.Errorf("want one blkdiscard task and one lvremove task, got %d and %d", discards, removes)
+	}
+	if n := strings.Count(nvmeCode(t), "blkdiscard"); n != 1 {
+		t.Errorf("blkdiscard appears %d times in the code, want 1 (no message names it)", n)
+	}
+}
+
+func TestNvmeScratchSequenceAndFailure(t *testing.T) {
+	look := nvmeTaskNamed(t, scratchLook)
+	read := nvmeTaskNamed(t, scratchRead)
+	notOurs := nvmeTaskNamed(t, scratchNotOurs)
+	mk := nvmeTaskNamed(t, scratchMake)
+	disc := nvmeTaskNamed(t, scratchDiscard)
+	stop := nvmeTaskNamed(t, scratchStop)
+	rm := nvmeTaskNamed(t, scratchRemove)
+	pool := nvmeTaskNamed(t, poolCreate)
+	probe := thinTask(t, "read the probe")
+	refuse := thinTask(t, "refuse")
+	if !(probe.index < refuse.index && refuse.index < look.index && look.index < read.index && read.index < notOurs.index &&
+		notOurs.index < mk.index && mk.index < disc.index && disc.index < stop.index && stop.index < rm.index && rm.index < pool.index) {
+		t.Errorf("order: probe %d refuse %d look %d read %d not-ours %d create %d discard %d stop %d remove %d pool %d",
+			probe.index, refuse.index, look.index, read.index, notOurs.index, mk.index, disc.index, stop.index, rm.index, pool.index)
+	}
+	// The leftover probe is read-only; the tag decides whether it is ours.
+	lt := norm(argvText(look))
+	if !strings.HasPrefix(lt, "lvs ") || !strings.Contains(lt, "lv_tags") || !strings.HasSuffix(lt, "{{ vmtool_nvme_vg }}/"+scratchLV) {
+		t.Errorf("leftover probe argv = %q", lt)
+	}
+	if look.body["changed_when"] != false || look.body["check_mode"] != false || look.body["failed_when"] != false {
+		t.Errorf("the leftover probe must be read-only")
+	}
+	sf, _ := read.body["ansible.builtin.set_fact"].(map[string]any)
+	if ours, _ := sf["vmtool_nvme_scratch_ours"].(string); !strings.Contains(ours, "'vmtool_scratch' in") {
+		t.Errorf("the tag decides whether the leftover is ours: %v", sf)
+	}
+	if notOurs.body["ansible.builtin.fail"] == nil || !hasWhen(notOurs.whens, "vmtool_nvme_scratch_present | bool") || !hasWhen(notOurs.whens, "not (vmtool_nvme_scratch_ours | bool)") {
+		t.Errorf("a leftover without the tag must fail the play before anything touches it: %v", notOurs.whens)
+	}
+	// Created as the step says, only when there is no leftover to reuse.
+	mc := norm(argvText(mk))
+	if !strings.HasPrefix(mc, "lvcreate -l 100%FREE -n "+scratchLV+" ") || !strings.Contains(mc, "--addtag vmtool_scratch") || !strings.HasSuffix(mc, "{{ vmtool_nvme_vg }}") {
+		t.Errorf("scratch lvcreate argv = %q", mc)
+	}
+	if !hasWhen(mk.whens, "not (vmtool_nvme_scratch_present | bool)") {
+		t.Errorf("a leftover is reused, not made again: %v", mk.whens)
+	}
+	// The discard's failure is read, not raised, so the message is ours.
+	if disc.body["register"] != "vmtool_nvme_scratch_discard" || disc.body["failed_when"] != false {
+		t.Errorf("the discard must register vmtool_nvme_scratch_discard and set failed_when: false")
+	}
+	if stop.body["ansible.builtin.fail"] == nil || !hasWhen(stop.whens, "vmtool_nvme_scratch_discard.rc | default(0) != 0") {
+		t.Errorf("a failed discard must stop the play: %v", stop.whens)
+	}
+	st := norm(stop.text())
+	for _, w := range []string{scratchLV, "was left in place", "holds no data of value", "lvremove {{ vmtool_nvme_vg }}/" + scratchLV, "was not created"} {
+		if !strings.Contains(st, w) {
+			t.Errorf("the failed-discard message lacks %q", w)
+		}
+	}
+	// lvremove runs only after a discard that succeeded.
+	if !hasWhen(rm.whens, "vmtool_nvme_scratch_discard.rc | default(1) == 0") {
+		t.Errorf("lvremove must be gated on a successful discard: %v", rm.whens)
+	}
+}
+
+func TestNvmeThinDiscardsPassdown(t *testing.T) {
+	if !strings.Contains(norm(thinTask(t, "probe").text()), "discards") {
+		t.Errorf("the probe must read the discards column")
+	}
+	rp := thinTask(t, "read the probe")
+	if sf, _ := rp.body["ansible.builtin.set_fact"].(map[string]any); sf["vmtool_nvme_thin_discards"] == nil {
+		t.Errorf("the probe's set_fact lacks vmtool_nvme_thin_discards")
+	}
+	set := nvmeTaskNamed(t, "Thin pool: pass discards down on an adopted pool")
+	stop := nvmeTaskNamed(t, "Thin pool: stop when LVM would not set discards")
+	refuse := thinTask(t, "refuse")
+	if norm(argvText(set)) != "lvchange --discards passdown {{ vmtool_nvme_vg }}/{{ vmtool_nvme_thin_pool }}" {
+		t.Errorf("set argv = %q", argvText(set))
+	}
+	for _, w := range []string{"vmtool_nvme_thin_adoptable | bool", "vmtool_nvme_thin_discards != 'passdown'"} {
+		if !hasWhen(set.whens, w) {
+			t.Errorf("setting discards must be guarded by %q: %v", w, set.whens)
+		}
+	}
+	if set.body["failed_when"] != false || set.body["register"] != "vmtool_nvme_thin_discards_change" {
+		t.Errorf("the change must register vmtool_nvme_thin_discards_change with failed_when: false")
+	}
+	if stop.body["ansible.builtin.fail"] == nil || !hasWhen(stop.whens, "vmtool_nvme_thin_discards_change.rc | default(0) != 0") {
+		t.Errorf("a refused change must stop the play: %v", stop.whens)
+	}
+	st := strings.ToLower(norm(stop.text()))
+	for _, w := range []string{"ignore", "inactive", "nothing was changed"} {
+		if !strings.Contains(st, w) {
+			t.Errorf("the refusal message lacks %q", w)
+		}
+	}
+	if !(refuse.index < set.index && set.index < stop.index) {
+		t.Errorf("want refuse (%d) < set (%d) < stop (%d)", refuse.index, set.index, stop.index)
 	}
 }

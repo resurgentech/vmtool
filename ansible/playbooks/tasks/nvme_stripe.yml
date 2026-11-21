@@ -321,6 +321,44 @@
     - vmtool_nvme_drives | length > 0
     - vmtool_nvme_create | bool
 
+# ----------------------------------------------------------- thick discards
+
+# issue_discards = 1 makes LVM discard the extents of any volume it removes or
+# shrinks, so a thick volume's old data does not reach the next volume that
+# takes its extents (libvirt's vol-delete runs lvremove, so it is covered too).
+# The key exists only in the devices section; a commented, 0 or 1 line is
+# replaced by the one line, so a file that is right is left as it is, and a
+# missing line goes after `devices {`. No back-references.
+- name: "Set issue_discards = 1 in /etc/lvm/lvm.conf"
+  ansible.builtin.lineinfile:
+    path: /etc/lvm/lvm.conf
+    regexp: '^\s*#?\s*issue_discards\s*='
+    insertafter: '^devices\s*\{'
+    line: "\tissue_discards = 1"
+  when: vmtool_nvme_drives | length > 0
+
+# Read-only. Under --check the file was not written, so the verdict is skipped.
+- name: Read issue_discards back from LVM
+  ansible.builtin.command:
+    argv: [lvmconfig, devices/issue_discards]
+  register: vmtool_nvme_issue_discards
+  changed_when: false
+  check_mode: false
+  failed_when: false
+  when: vmtool_nvme_drives | length > 0
+
+- name: Fail unless LVM reports issue_discards=1
+  ansible.builtin.fail:
+    msg: >-
+      lvmconfig devices/issue_discards says '{{ vmtool_nvme_issue_discards.stdout | default('') | trim }}'
+      (rc {{ vmtool_nvme_issue_discards.rc | default('?') }}), not issue_discards=1, so removed thick volumes
+      would not be discarded. Nothing was changed in the volume group; look at the devices section of
+      /etc/lvm/lvm.conf (an active line elsewhere, or no devices section) and run the play again.
+  when:
+    - vmtool_nvme_drives | length > 0
+    - not ansible_check_mode
+    - (vmtool_nvme_issue_discards.stdout | default('') | trim) != 'issue_discards=1'
+
 # -------------------------------------------------------------- persistence
 
 - name: Look for the md array again
@@ -440,9 +478,12 @@
 # Opt-in (vmtool_nvme_thin): an LVM thin pool in the volume group, tagged
 # vmtool_thinpool, for the daemon's thin clones. libvirt's logical pool neither
 # lists nor creates thin pools, so none of this touches the libvirt pool above.
-# The only writes are `lvcreate --type thin-pool` and, on an adopted pool,
-# `lvchange --zero n` and `lvchange --metadataprofile`; nothing is removed,
-# reduced, forced or wiped.
+# The writes are `lvcreate --type thin-pool` and, on an adopted pool,
+# `lvchange --zero n`, `lvchange --metadataprofile` and `lvchange --discards
+# passdown`. Before a pool that does not exist yet, one scratch volume
+# (vmtool-discard-scratch, tagged vmtool_scratch) over the free space is made,
+# discarded and removed, and nothing else is ever discarded or removed;
+# nothing is reduced, forced or wiped.
 - name: "Thin pool: install thin-provisioning-tools"
   ansible.builtin.apt:
     name: thin-provisioning-tools
@@ -481,7 +522,7 @@
       - --reportformat
       - json
       - -o
-      - "lv_name,lv_attr,lv_tags,zero,lv_profile"
+      - "lv_name,lv_attr,lv_tags,zero,lv_profile,discards"
       - "{{ vmtool_nvme_vg }}/{{ vmtool_nvme_thin_pool }}"
   register: vmtool_nvme_thin_probe
   changed_when: false
@@ -500,6 +541,7 @@
     vmtool_nvme_thin_adoptable: "{{ (_lv.lv_attr | default(''))[:1] == 't' and 'vmtool_thinpool' in ((_lv.lv_tags | default('')).split(',')) }}"
     vmtool_nvme_thin_zeroing: "{{ (_lv.zero | default('')) | trim != '' }}"
     vmtool_nvme_thin_profile_now: "{{ (_lv.lv_profile | default('')) | trim }}"
+    vmtool_nvme_thin_discards: "{{ (_lv.discards | default('')) | trim }}"
   vars:
     _lv: >-
       {{ ((vmtool_nvme_thin_probe.stdout | from_json).report[0].lv | default([]) | first | default({}))
@@ -521,15 +563,104 @@
     - vmtool_nvme_thin_present | bool
     - not (vmtool_nvme_thin_adoptable | bool)
 
+# Once, before a pool that does not exist yet: the drives hold old data, and a
+# pool made without zeroing hands it out. A scratch volume over all the VG's
+# free space is discarded (the drives are assumed to return zeros for what is
+# discarded) and removed, so the pool's space starts discarded. None of this
+# runs when the pool exists. A leftover scratch volume of an interrupted run
+# is reused (it is discarded again and removed); one without the vmtool_scratch
+# tag is somebody's own and fails the play. The scratch volume is made without
+# zeroing or signature wiping, so nothing prompts and nothing is written.
+- name: "Thin pool: look for a leftover scratch volume"
+  ansible.builtin.command:
+    argv: [lvs, --noheadings, -o, lv_tags, "{{ vmtool_nvme_vg }}/vmtool-discard-scratch"]
+  register: vmtool_nvme_scratch_probe
+  changed_when: false
+  check_mode: false
+  failed_when: false
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_thin | bool
+    - not (vmtool_nvme_thin_present | bool)
+
+# No regular expressions: the tag list is split on commas.
+- name: "Thin pool: read the leftover scratch volume"
+  ansible.builtin.set_fact:
+    vmtool_nvme_scratch_present: "{{ vmtool_nvme_scratch_probe.rc == 0 }}"
+    vmtool_nvme_scratch_ours: "{{ 'vmtool_scratch' in ((vmtool_nvme_scratch_probe.stdout | default('') | trim).split(',')) }}"
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_thin | bool
+    - not (vmtool_nvme_thin_present | bool)
+
+- name: "Thin pool: fail on a scratch volume that vmtool did not make"
+  ansible.builtin.fail:
+    msg: >-
+      {{ vmtool_nvme_vg }}/vmtool-discard-scratch exists without the
+      vmtool_scratch tag, so vmtool will not discard or remove it. Nothing was
+      changed on the pool; rename it yourself and run the play again.
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_thin | bool
+    - not (vmtool_nvme_thin_present | bool)
+    - vmtool_nvme_scratch_present | bool
+    - not (vmtool_nvme_scratch_ours | bool)
+
+- name: "Thin pool: create the discard scratch volume"
+  ansible.builtin.command:
+    argv: [lvcreate, -l, 100%FREE, -n, vmtool-discard-scratch, --zero, "n", --wipesignatures, "n", --addtag, vmtool_scratch, "{{ vmtool_nvme_vg }}"]
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_thin | bool
+    - not (vmtool_nvme_thin_present | bool)
+    - not (vmtool_nvme_scratch_present | bool)
+
+# A failure is read, not raised, so the next task can say what to do.
+- name: "Thin pool: discard the scratch volume"
+  ansible.builtin.command:
+    argv: [blkdiscard, "/dev/{{ vmtool_nvme_vg }}/vmtool-discard-scratch"]
+  register: vmtool_nvme_scratch_discard
+  failed_when: false
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_thin | bool
+    - not (vmtool_nvme_thin_present | bool)
+
+- name: "Thin pool: stop when the scratch discard failed"
+  ansible.builtin.fail:
+    msg: >-
+      Discarding {{ vmtool_nvme_vg }}/vmtool-discard-scratch failed
+      ({{ vmtool_nvme_scratch_discard.stderr | default('') | trim }}). The
+      scratch volume was left in place and the thin pool was not created.
+      The scratch volume holds no data of value: once nothing has it open,
+      remove it with `lvremove {{ vmtool_nvme_vg }}/vmtool-discard-scratch`
+      and run the play again.
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_thin | bool
+    - not (vmtool_nvme_thin_present | bool)
+    - vmtool_nvme_scratch_discard.rc | default(0) != 0
+
+# Only after a discard that succeeded.
+- name: "Thin pool: remove the scratch volume"
+  ansible.builtin.command:
+    argv: [lvremove, -y, "{{ vmtool_nvme_vg }}/vmtool-discard-scratch"]
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_thin | bool
+    - not (vmtool_nvme_thin_present | bool)
+    - vmtool_nvme_scratch_discard.rc | default(1) == 0
+
 # -l for a percentage (70%FREE), -L for a size (2T). Zeroing off, because it
 # halves sequential writes; the profile and monitoring grow the pool.
+# Discards pass down to the drives, written out instead of left to the default.
 - name: "Thin pool: create the pool"
   ansible.builtin.command:
     argv: >-
       {{ ['lvcreate', '--type', 'thin-pool', '-n', vmtool_nvme_thin_pool]
          + ['-l' if '%' in (vmtool_nvme_thin_size | string) else '-L', vmtool_nvme_thin_size | string]
          + ['--chunksize', vmtool_nvme_thin_chunk, '--poolmetadatasize', vmtool_nvme_thin_metadata,
-            '--zero', 'n', '--errorwhenfull', 'n', '--monitor', 'y',
+            '--zero', 'n', '--discards', 'passdown', '--errorwhenfull', 'n', '--monitor', 'y',
             '--metadataprofile', 'vmtool-thin', '--addtag', 'vmtool_thinpool', vmtool_nvme_vg] }}
   when:
     - vmtool_nvme_drives | length > 0
@@ -553,6 +684,32 @@
     - vmtool_nvme_thin | bool
     - vmtool_nvme_thin_adoptable | bool
     - vmtool_nvme_thin_profile_now != 'vmtool-thin'
+
+# A pool at ignore must be inactive to change; LVM's refusal is read, not
+# raised, so the next task can say so plainly.
+- name: "Thin pool: pass discards down on an adopted pool"
+  ansible.builtin.command:
+    argv: [lvchange, --discards, passdown, "{{ vmtool_nvme_vg }}/{{ vmtool_nvme_thin_pool }}"]
+  register: vmtool_nvme_thin_discards_change
+  failed_when: false
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_thin | bool
+    - vmtool_nvme_thin_adoptable | bool
+    - vmtool_nvme_thin_discards != 'passdown'
+
+- name: "Thin pool: stop when LVM would not set discards"
+  ansible.builtin.fail:
+    msg: >-
+      LVM would not set discards to passdown on {{ vmtool_nvme_vg }}/{{ vmtool_nvme_thin_pool }}
+      (it is at '{{ vmtool_nvme_thin_discards }}': {{ vmtool_nvme_thin_discards_change.stderr | default('') | trim }}).
+      A pool at ignore must be inactive to change: deactivate it, which needs
+      every volume in it closed, and run the play again. Nothing was changed on the pool.
+  when:
+    - vmtool_nvme_drives | length > 0
+    - vmtool_nvme_thin | bool
+    - vmtool_nvme_thin_adoptable | bool
+    - vmtool_nvme_thin_discards_change.rc | default(0) != 0
 
 - name: "Thin pool: read size and usage"
   ansible.builtin.command:
