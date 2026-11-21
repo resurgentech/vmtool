@@ -12,9 +12,9 @@ Otherwise it copies the image to `$VMTOOL_IMAGE_DIR`
 
 ```bash
 just generate ubuntu2604        # build + copy to image_dir (needs KVM, ~3 GB ISO download; no sudo)
-./run generate --template=ubuntu2604   # older script; still installs to the libvirt pool
+just update ubuntu2604 [host]   # smoke-boot a throwaway clone <host>/ubuntu2604-update (host defaults to this machine)
 just validate ubuntu2604        # offline packer validate, no build
-just check                      # bash -n run + validate every template
+just check                      # shape checks + validate every template
 ```
 
 See [CLAUDE.md](CLAUDE.md) for the pipeline, layout and variables.

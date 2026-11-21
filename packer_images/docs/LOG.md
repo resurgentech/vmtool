@@ -329,3 +329,17 @@ rewrites.
   other push failure fails the recipe; the image stays in `output/`.
 - Shape check `check_generate_store_push` in the image gate; red before the
   recipe change, green after. `./run generate` and `update` unchanged.
+
+## 2026-11-21 — F3 `run` removed; `update` clones into `host/vm`
+
+- The old entry script `packer_images/run` is deleted: the justfile has all
+  its commands, and its `generate` still copied into the libvirt pool.
+  `check` no longer runs `bash -n run`.
+- `just update <template> [host]` (host defaults to
+  `scripts/cert.sh --local-name`) deletes a leftover
+  `<host>/<template>-update`, then runs `vmtool create
+  <host>/<template>-update <template>.qcow2` as an ordinary clone (no
+  `--noclone`), and prints that it is a throwaway smoke boot and how to
+  delete it. No upgrade playbook is wired.
+- Shape checks `check_no_run_script` and `check_update_clone` in the image
+  gate; red before the change, green after.

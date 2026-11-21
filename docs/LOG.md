@@ -2016,3 +2016,21 @@ are appended, never edited in; a hook refuses rewrites.
 - Red: 8 commands against the templates' 9, mask task missing; green;
   `just check` and `VMTOOL_TEST_ANSIBLE_SYNTAX=1 just test ./scripts/` green.
 - Commits: the F2 commit on `clone-identity`.
+
+## 2026-11-21 — F3 Remove `packer_images/run`; `update` works from `image_dir`
+
+- `packer_images/run` deleted (the justfile has all its commands; its
+  `generate` still copied into the retired libvirt pool path). The justfile's
+  header, `check` (no more `bash -n run`), `packer_images/README.md` and
+  `packer_images/CLAUDE.md` no longer name it; `packer_images/docs/LOG.md`
+  has an appended entry.
+- `just update <template> [host]` (host from `scripts/cert.sh --local-name`)
+  deletes a leftover `<host>/<template>-update`, then runs the repo's
+  `./vmtool create <host>/<template>-update <template>.qcow2` as an ordinary
+  clone (no `--noclone`) and says it is a throwaway smoke boot and how to
+  delete it. No upgrade playbook (unchanged scope).
+- Shape checks `check_no_run_script` and `check_update_clone` in the image
+  gate. Red: six shape failures (run exists, three docs name it, update's
+  bare name and `--noclone`); green; `just -f packer_images/justfile check`
+  and `just check` green.
+- Commits: the F3 commit on `clone-identity`.
