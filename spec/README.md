@@ -422,14 +422,15 @@ the body and keeps the error.
 | `Start` / `Stop` / `Resume` / `Reboot` | `startVM` / `stopVM` / `resumeVM` / `rebootVM` | Method, then `Info`. Returns `VMInfo`. |
 | `Destroy` | `poweroffVM` | Same shape. |
 | `SetAutostart` | `setAutostart` | Same shape. |
-| `Info` | `getVM` | `VMInfo` carries every field of `vmtool.VMInfo`. |
-| `List` | `listVMs` | |
+| `SetComment(name, comment)` | `setVMComment` | New (2.6.0). `PUT vms/{name}/comment` with `{comment}`; method, then `Info`. A VM-changing operation (the daemon's report trigger set names it). See [Origin and comment](#origin-and-comment-api-260). |
+| `Info` | `getVM` | `VMInfo` carries every field of `vmtool.VMInfo`, `origin` and `comment` (2.6.0) included. |
+| `List` | `listVMs` | `origin` and `comment` filled from the domain XML (2.6.0); the other XML fields stay empty. |
 | `Delete(name, noclone)` | `deleteVMDefinition` | Raw. `deleteVM` is the workstation workflow: it also forgets `.machines/<host>/<vm>/` credentials. |
 | `MigrateDisk` | `migrateDisk` | Method, then `Info`. |
 | `AddDisk` | `addDisk` | Method, then `Info`; result carries `path` and `target` (`DiskDevice`). On a thin pool the volume is the thin LV `<vm>-N`; a pool with no room is 409 with the numbers (see [Thin pools and templates](#thin-pools-and-templates-api-240)). |
 | `ResizeDisk` | `resizeVMVolume` | New. libvirt, and a thin boot volume (extend, then `BlockResize` when running); a thick `logical` disk is refused. A thin pool with no room is 409 with the numbers. `resizeDisk` is the workstation workflow that also grows the guest. |
 | `WaitForIP` | `waitVMIP` | New. `timeout_seconds` 1..3600, default 120. |
-| `Define` | `defineVM` | New. `PUT vms/{name}/definition`; no `ssh_user`/`ssh_pass`. |
+| `Define` | `defineVM` | New. `PUT vms/{name}/definition`; no `ssh_user`/`ssh_pass`. `origin` and `comment` (2.6.0) are optional and written into the domain's metadata. |
 | `CreateVolume` | `createVolume` | New. Returns `{path}`. |
 | `CloneImage` | `cloneVolume` | New. `base_path` must be inside a pool. Optional `size_bytes` (2.2.0): a `logical` target gets an LV of max(image, size), converted to raw; dir pools ignore it. Optional `template` (2.4.0): the image name as asked, informational. When `target_pool` is a thin pool the clone is a thin snapshot of the template of the cached image (by file name and manifest SHA-256; built first if missing; 409 when the pool has no room); there `base_path` may also be a saved template's `/dev/<vg>/<lv>`. Returns `{path}`. |
 | `ResizeVolume` | `resizeVolume` | New. `path` must be inside a pool. |
@@ -668,3 +669,38 @@ the first generate. Update this line when known:
 | `getDocs` | `GET /{$}` — Swagger UI (not a catch-all) |
 | `getOpenAPISpec` | `GET /openapi.yaml` |
 | `getOpenAPIJSON` | `GET /openapi.json` |
+
+## Origin and comment (API 2.6.0)
+
+What a VM was made from, and a note a user keeps with it, live in the VM's own
+definition, in libvirt's `<metadata>`: one element in vmtool's namespace
+(`urn:vmtool:vm:1`, prefix `vmtool`) holding an `<origin .../>` and a
+`<comment>`. It survives daemon restarts, `just deploy` and host reboots, and
+goes with the VM. Nothing else about a VM is kept there.
+
+- `VMInfo.origin` (`VMOrigin`: `image`, `image_sha256`, `template`,
+  `template_lv`, `clone_kind` `thin|block|file|none`, `pool`, `created`) and
+  `VMInfo.comment`, from `getVM` and `listVMs`. A VM with no element (made
+  before 2.6.0 or outside vmtool) omits both.
+- `DefineVMRequest.origin` and `DefineVMRequest.comment`, optional: the
+  workstation's create fills them. A client older than 2.6.0 sends neither and
+  its VMs have none; a daemon older than 2.6.0 ignores both and create still
+  works (its VMs have none). A hypervisor's thin-pool manager refines a thin
+  origin (kind `thin`, the template and its LV, the template's digest) because
+  it knows the snapshot's template. `image_sha256` is the host's manifest
+  digest after the image sync, empty when the create did not know it
+  (a local libvirt host, a template-only host).
+- `CreateVMRequest.comment`, optional.
+- `PUT /v1/hosts/{host}/vms/{name}/comment` (`setVMComment`), body
+  `{"comment": "..."}`, answers the VM. The daemon applies it with libvirt's
+  metadata call to the persistent definition and, when the VM runs, to the
+  running domain, without redefining it; it works on a running and on a
+  shut-off VM. Empty clears. 404 for an unknown VM, 400 naming `comment` for a
+  bad one. A daemon older than 2.6.0 has no such route.
+- The comment is at most 512 bytes of UTF-8, one line, no control characters
+  (`vmtool.ValidateComment`), checked by the workstation's `internal/app` and
+  again by the daemon (`defineVM` and `setVMComment`: 400). It is not a secret:
+  it is stored in plain text in the domain definition.
+- Disk changes keep the element: `addDisk` and the resize routes do not edit
+  the domain's XML, and `migrateDisk` redefines from the domain's own XML
+  (`redefineDiskPath` swaps a path and nothing else).

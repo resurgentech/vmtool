@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/jaredeh/vmtool/pkg/vmtool"
 )
@@ -184,6 +185,9 @@ func (s *Service) CreateVM(ctx context.Context, m Manager, in CreateVMInput) (*v
 	if err := vmtool.CheckExtraVars(in.ExtraVars); err != nil {
 		return nil, invalid("create", err)
 	}
+	if err := vmtool.ValidateComment(in.Comment); err != nil {
+		return nil, invalid("create", err)
+	}
 	if in.NoWait && in.Playbook != "" {
 		return nil, invalid("create", fmt.Errorf("--no-wait cannot be combined with --playbook: a playbook needs a guest vmtool can reach"))
 	}
@@ -222,10 +226,12 @@ func (s *Service) CreateVM(ctx context.Context, m Manager, in CreateVMInput) (*v
 
 	// A host that caches images (a remote daemon) gets this machine's copy
 	// first; a local libvirt host already has its own pools.
+	imageSHA := ""
 	if st, ok := m.(ImageStore); ok {
 		if err := s.syncImage(ctx, st, in); err != nil {
 			return nil, err
 		}
+		imageSHA = hostImageSHA(st, in.Image)
 	}
 
 	diskPath, err := m.ImagePath(in.Image)
@@ -258,6 +264,7 @@ func (s *Service) CreateVM(ctx context.Context, m Manager, in CreateVMInput) (*v
 		cfg.SSHPass = in.SSHPass
 	}
 	cfg.Noclone = in.Noclone
+	cfg.Comment = in.Comment
 	if in.Firmware != "" {
 		cfg.Firmware = in.Firmware // else DefaultConfig's efi
 	}
@@ -341,6 +348,7 @@ func (s *Service) CreateVM(ctx context.Context, m Manager, in CreateVMInput) (*v
 		emit(in, "extra_disk", "done", fmt.Sprintf("extra disk %s → vdb", path), "")
 	}
 
+	cfg.Origin = originOf(in, pools, cfg.DiskPath, imageSHA, s.now())
 	emit(in, "start", "start", "defining and starting", "")
 	if err := m.Define(cfg); err != nil {
 		emit(in, "start", "error", err.Error(), "")
@@ -500,4 +508,50 @@ func cloneCacheDefault(pools []vmtool.PoolInfo, clonedPath string) string {
 		}
 	}
 	return vmtool.DiskCacheUnsafe
+}
+
+// hostImageSHA is the SHA-256 the host's manifest lists for image after the
+// sync: the digest of the bytes the clone is made from. Best effort: "" when
+// the host cannot say (no entry, a template-only host, an error).
+func hostImageSHA(st ImageStore, image string) string {
+	rem, err := st.ImageManifest(image)
+	if err != nil || rem.Foreign {
+		return ""
+	}
+	return rem.SHA256
+}
+
+// originOf is what a create records with the VM: the image, its digest when
+// known, how the disk was made and where, and when. kind and pool come from
+// the clone's path against the host's pool list when it was listed: a
+// directory that is a thin pool's path is a thin snapshot, one that is a
+// logical pool's (or any /dev path) a thick LV, anything else a file. A
+// hypervisor's thin Manager refines a thin origin with the template it knows
+// (hosts.ThinPools.Define). Without a clone (noclone) the image is booted in
+// place: kind none, no pool.
+func originOf(in CreateVMInput, pools []vmtool.PoolInfo, cloned, sha string, now time.Time) *vmtool.VMOrigin {
+	o := &vmtool.VMOrigin{Image: in.Image, ImageSHA256: sha, Created: now.UTC()}
+	if in.Noclone {
+		o.CloneKind = vmtool.CloneKindNone
+		return o
+	}
+	o.Pool = in.Pool
+	o.CloneKind = vmtool.CloneKindFile
+	if strings.HasPrefix(cloned, "/dev/") {
+		o.CloneKind = vmtool.CloneKindBlock
+	}
+	dir := filepath.Dir(filepath.Clean(cloned))
+	for _, p := range pools {
+		if p.Path == "" || filepath.Clean(p.Path) != dir {
+			continue
+		}
+		if p.Type == vmtool.PoolTypeThin {
+			o.CloneKind, o.Pool = vmtool.CloneKindThin, p.Name
+			break
+		}
+		if o.Pool == "" {
+			o.Pool = p.Name
+		}
+	}
+	return o
 }

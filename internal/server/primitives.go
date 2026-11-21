@@ -372,6 +372,14 @@ func vmConfigFromDefine(name string, b *api.DefineVMRequest) (vmtool.VMConfig, e
 			return zero, fmt.Errorf("firmware %q must be efi or bios", cfg.Firmware)
 		}
 	}
+	cfg.Comment = derefStr(b.Comment)
+	if err := vmtool.ValidateComment(cfg.Comment); err != nil {
+		return zero, err
+	}
+	cfg.Origin = originFromAPI(b.Origin)
+	if err := vmtool.ValidateOrigin(cfg.Origin); err != nil {
+		return zero, err
+	}
 	if b.DiskCache != nil {
 		// No default here: omitted is no cache attribute (the workstation's
 		// app resolved the default and sends it).

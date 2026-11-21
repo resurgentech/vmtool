@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: vmtool API
-  version: 2.5.0
+  version: 2.6.0
   description: >
     HTTP surface of `vmtool server`. Spec-first: models, stdlib ServerInterface,
     embedded spec, and a test client are generated from this file. Metal and
@@ -283,6 +283,37 @@ paths:
         content:
           application/json:
             schema: { $ref: '#/components/schemas/AutostartRequest' }
+      responses:
+        '200':
+          description: VM
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VMInfo' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+  /v1/hosts/{host}/vms/{name}/comment:
+    parameters:
+      - $ref: '#/components/parameters/HostName'
+      - $ref: '#/components/parameters/VMName'
+    put:
+      operationId: setVMComment
+      summary: Set or clear a VM's comment (API 2.6.0)
+      description: >
+        The comment is optional free text kept with the VM, in the domain's
+        own definition (libvirt domain metadata, in vmtool's namespace). It is
+        not a secret: it is stored in plain text. At most 512 bytes of UTF-8,
+        on one line, with no control characters; an empty string clears it.
+        The daemon writes it to the persistent definition and, when the VM
+        runs, to the running domain, without redefining the VM. A comment
+        that breaks a rule is 400, and the message names `comment`. Answers
+        the VM, whose `comment` is the stored value.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CommentRequest' }
       responses:
         '200':
           description: VM
@@ -1673,6 +1704,37 @@ components:
         uuid:
           type: string
           description: The libvirt domain UUID. Omitted when unknown or by a daemon that predates the field (API 2.3.0).
+        origin:
+          $ref: '#/components/schemas/VMOrigin'
+        comment:
+          type: string
+          description: The VM's comment (API 2.6.0), read from the domain's metadata. Omitted when there is none, for a VM vmtool did not give one, or by a daemon that predates the field.
+    VMOrigin:
+      type: object
+      description: >
+        What a VM was made from and how (API 2.6.0), recorded by vmtool when it
+        creates the VM and kept in the domain's metadata. Omitted for a VM made
+        before 2.6.0 or outside vmtool.
+      required: [clone_kind]
+      properties:
+        image: { type: string, description: The image name the create named. }
+        image_sha256: { type: string, description: "SHA-256 of the image (64 lowercase hex), when the create knew it." }
+        template: { type: string, description: The thin template the disk is a snapshot of (clone_kind thin). }
+        template_lv: { type: string, description: The template's logical volume name (clone_kind thin). }
+        clone_kind:
+          type: string
+          enum: [thin, block, file, none]
+          description: thin = snapshot of a template in a thin pool; block = copy to a logical volume; file = copy to a qcow2 file; none = booted in place (noclone).
+        pool: { type: string, description: The storage pool the disk was made in; empty is the host's default pool. }
+        created: { type: string, format: date-time, description: When vmtool created the VM (the workstation's clock). }
+    CommentRequest:
+      type: object
+      required: [comment]
+      properties:
+        comment:
+          type: string
+          maxLength: 512
+          description: At most 512 bytes of UTF-8, one line, no control characters. Empty clears.
     CreateVMRequest:
       type: object
       required: [name, image]
@@ -1756,6 +1818,13 @@ components:
             vmtool cannot see (static address, a DHCP server libvirt does not
             run, no guest agent), or a very slow boot. Refused with 400 when
             combined with playbook.
+        comment:
+          type: string
+          maxLength: 512
+          description: >
+            Optional comment kept with the VM (API 2.6.0): at most 512 bytes of
+            UTF-8, one line, no control characters, stored in plain text. 400
+            naming `comment` when it breaks a rule.
     MachineInfo:
       type: object
       required: [name, kind, host, state]
@@ -2170,6 +2239,19 @@ components:
             Cache mode written on every disk driver of the domain. Travels
             explicitly from the workstation, which resolved the default;
             omitted means no cache attribute (the daemon does not guess).
+        origin:
+          $ref: '#/components/schemas/VMOrigin'
+          description: >
+            What the VM was made from (API 2.6.0), written into the domain's
+            metadata. Optional: a client that omits it (older than 2.6.0)
+            makes a VM with no origin, and a daemon older than 2.6.0 ignores it.
+        comment:
+          type: string
+          maxLength: 512
+          description: >
+            The VM's comment (API 2.6.0), written into the domain's metadata
+            with the origin. At most 512 bytes of UTF-8, one line, no control
+            characters. 400 naming `comment` when it breaks a rule.
     WaitIPRequest:
       type: object
       properties:

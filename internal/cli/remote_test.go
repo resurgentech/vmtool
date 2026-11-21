@@ -42,6 +42,7 @@ func (c cliFake) WaitForIP(string, time.Duration) (string, error) {
 	return "", c.rec("WaitForIP")
 }
 func (c cliFake) SetAutostart(string, bool) error  { return c.rec("SetAutostart") }
+func (c cliFake) SetComment(string, string) error  { return c.rec("SetComment") }
 func (c cliFake) Reboot(string) error              { return c.rec("Reboot") }
 func (c cliFake) ResizeDisk(string, uint) error    { return c.rec("ResizeDisk") }
 func (c cliFake) MigrateDisk(string, string) error { return c.rec("MigrateDisk") }

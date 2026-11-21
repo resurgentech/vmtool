@@ -1732,3 +1732,28 @@ are appended, never edited in; a hook refuses rewrites.
   then (foreman) an outside-vmtool VM name refused the whole report; green;
   `just check` green.
 - Commits: the N3 commit on `clone-identity`.
+
+## 2026-11-21 — N4 Origin and comment kept with the VM
+
+- `spec/openapi/vmtool.yaml` 2.6.0: `VMOrigin`; `VMInfo.origin`/`comment`;
+  `CreateVMRequest.comment`; `DefineVMRequest.origin`/`comment`; new `PUT
+  /v1/hosts/{host}/vms/{name}/comment` (`setVMComment`); `internal/api`
+  regenerated; `spec/README.md` route rows and "Origin and comment".
+- `pkg/vmtool/metadata.go` (new): one `<metadata>` element in namespace
+  `urn:vmtool:vm:1` with `<origin/>` and `<comment>`; pure builder, parser,
+  `ReplaceComment`, `ValidateComment` (512 bytes, one line, no control
+  characters), `ValidateOrigin`; `Manager.SetComment` through libvirt's
+  metadata call (config, plus live when running), no redefine. `domainXML`
+  writes it; `Info` and `List` read it.
+- `internal/app`: create validates the comment first, records origin
+  (thin/block/file/none, image SHA-256 from the host manifest, pool, time
+  from `Service.Now`); `Service.SetComment`; `Manager.SetComment`.
+  `internal/hosts` refines a thin origin (template, LV). `internal/remote`,
+  `internal/server` (400 naming `comment` or `origin.<field>`),
+  `internal/cli` (`create --comment`, `comment host/vm TEXT|--clear`,
+  `info` shows origin and comment), `internal/tui` (detail line).
+- Tests in seven new files; fakes, version pins and the VM-command list
+  follow.
+- Red: build failures on the missing types and methods; green; `just check`
+  green.
+- Commits: the N4 commit on `clone-identity`.

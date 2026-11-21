@@ -1520,6 +1520,14 @@ func (m model) View() string {
 		}
 	}
 
+	// --- Selected VM's origin and comment ---
+	if m.cursor >= 0 && m.cursor < len(m.vms) {
+		if d := vmDetail(m.vms[m.cursor]); d != "" {
+			b.WriteString(statusStyle.Render(d))
+			b.WriteString("\n")
+		}
+	}
+
 	// --- Separator ---
 	sep := strings.Repeat("─", 70)
 	if m.termWidth > 4 {
@@ -1782,4 +1790,31 @@ func newModel(r *hosts.Resolver, tunnel vmtool.Tunnel, ipWait, sshWait time.Dura
 	m.tunnel = tunnel
 	m.ipTimeout, m.sshTimeout = ipWait, sshWait
 	return m
+}
+
+// vmDetail is the line under the list for the selected VM: what it was made
+// from and its comment. "" for an error row or a VM with neither.
+func vmDetail(vm vmRow) string {
+	if vm.Err != nil {
+		return ""
+	}
+	var parts []string
+	if o := vm.Origin; o != nil {
+		p := "origin: " + o.Image
+		if o.Image == "" {
+			p = "origin: -"
+		}
+		p += " (" + o.CloneKind
+		if o.Pool != "" {
+			p += ", pool " + o.Pool
+		}
+		parts = append(parts, p+")")
+	}
+	if vm.Comment != "" {
+		parts = append(parts, "comment: "+vm.Comment)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "  " + strings.Join(parts, "  ")
 }

@@ -142,6 +142,8 @@ func toAPI(info *vmtool.VMInfo) api.VMInfo {
 		fw := api.VMInfoFirmware(info.Firmware)
 		out.Firmware = &fw
 	}
+	out.Origin = originToAPI(info.Origin)
+	out.Comment = nonEmptyPtr(info.Comment)
 	return out
 }
 
@@ -251,6 +253,7 @@ func (h *handlers) CreateVM(ctx context.Context, req api.CreateVMRequestObject) 
 	in.Playbook = derefStr(b.Playbook)
 	in.Noclone = derefBool(b.Noclone)
 	in.NoWait = derefBool(b.NoWait)
+	in.Comment = derefStr(b.Comment)
 	if b.Firmware != nil {
 		in.Firmware = string(*b.Firmware)
 	}
@@ -384,6 +387,27 @@ func (h *handlers) SetAutostart(ctx context.Context, req api.SetAutostartRequest
 		return api.SetAutostart500JSONResponse(apiErr(err)), nil
 	}
 	return api.SetAutostart200JSONResponse(toAPI(v.(*vmtool.VMInfo))), nil
+}
+
+// SetVMComment sets or clears a VM's comment. A comment that breaks the rules
+// is 400 and the message names `comment`.
+func (h *handlers) SetVMComment(ctx context.Context, req api.SetVMCommentRequestObject) (api.SetVMCommentResponseObject, error) {
+	if req.Body == nil {
+		return api.SetVMComment400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: "request body required"}}, nil
+	}
+	v, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
+		return h.svc.SetComment(ctx, m, req.Name, req.Body.Comment)
+	})
+	if err != nil {
+		switch kindOf(err) {
+		case app.KindInvalid:
+			return api.SetVMComment400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
+		case app.KindNotFound:
+			return api.SetVMComment404JSONResponse(apiErr(err)), nil
+		}
+		return api.SetVMComment500JSONResponse(apiErr(err)), nil
+	}
+	return api.SetVMComment200JSONResponse(toAPI(v.(*vmtool.VMInfo))), nil
 }
 
 // stdinOf is an exec request's stdin text, "" when absent.

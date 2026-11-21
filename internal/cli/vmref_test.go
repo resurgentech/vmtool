@@ -23,6 +23,7 @@ var vmCommands = map[string][]string{
 	"exec":         {"true"},
 	"reboot":       nil,
 	"autostart":    {"on"},
+	"comment":      {"placeholder comment"},
 	"playbook":     {"x.yml"},
 	"migrate-disk": {"pool"},
 	"resize-disk":  {"10"},

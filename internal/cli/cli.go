@@ -268,6 +268,7 @@ it checks the bearer token of every request instead.`,
 		execCmd(e),
 		rebootCmd(e),
 		autostartCmd(e),
+		commentCmd(e),
 		interactiveCmd(e),
 		networksCmd(e),
 		bridgesCmd(e),
@@ -481,6 +482,7 @@ func createCmd(e *env) *cobra.Command {
 		extraVars       []string
 		firmware        string
 		diskCache       string
+		comment         string
 	)
 
 	cmd := &cobra.Command{
@@ -537,6 +539,12 @@ be combined with --playbook; with --disk-size the volume is still resized
 before boot, but the filesystem grow, which needs SSH, is skipped (cloud-init
 grows it at first boot on images built with it).
 
+--comment TEXT keeps a note with the VM (at most 512 bytes, one line, no
+control characters; stored in plain text in the VM's definition, so never put
+a secret in it). Change it later with 'vmtool comment'. create also records
+what the VM was made from (image, its SHA-256 when known, how it was cloned,
+the pool, the time); 'vmtool info' shows both.
+
 When create ends, success or failure, it prints one line of stage timings on
 stdout, such as 'timings: clone 0.3s, start 1.1s, wait_ip 2.0s, wait_ssh 7.0s,
 total 11.0s' (only the stages that ran). REST callers of createVM get none.
@@ -571,6 +579,7 @@ total 11.0s' (only the stages that ran). REST callers of createVM get none.
 				ExtraDiskSizeGB: extraDiskSizeGB,
 				ExtraDiskPool:   extraDiskPool,
 				ExtraVars:       extra,
+				Comment:         comment,
 				OnProgress: func(ev app.ProgressEvent) {
 					evs = append(evs, ev)
 					if uploadProgress(os.Stderr, ev) {
@@ -628,6 +637,7 @@ total 11.0s' (only the stages that ran). REST callers of createVM get none.
 	cmd.Flags().UintVar(&extraDiskSizeGB, "extra-disk-size", 0, "create a second empty virtio disk (vdb): <name>-2.qcow2 in a dir pool, LV <name>-2 in a logical pool. Refused on a thin pool: attach a thin extra disk with add-disk")
 	cmd.Flags().StringVar(&extraDiskPool, "extra-disk-pool", "", "storage pool for the extra disk (default: same as --pool)")
 	cmd.Flags().StringArrayVar(&extraVars, "extra-var", nil, "ansible extra-var key=value for --playbook (repeatable; name: letters, digits, _). Values go to ansible in its environment, not argv. deviceid defaults to the VM name")
+	cmd.Flags().StringVar(&comment, "comment", "", "a note kept with the VM: at most 512 bytes, one line, no control characters. Stored in plain text in the VM's definition; never put a secret in it")
 
 	return cmd
 }
@@ -754,6 +764,40 @@ func writeVMInfo(out io.Writer, info *vmtool.VMInfo) {
 	fmt.Fprintf(out, "Autostart: %s\n", autostart)
 	fmt.Fprintf(out, "IP:        %s\n", ip)
 	fmt.Fprintf(out, "UUID:      %s\n", uuid)
+	writeOrigin(out, info.Origin)
+	comment := info.Comment
+	if comment == "" {
+		comment = "-"
+	}
+	fmt.Fprintf(out, "Comment:   %s\n", comment)
+}
+
+// writeOrigin prints what the VM was made from: one line, then the digest and
+// the template when there are any. "-" for a VM with no origin (made before
+// 2.6.0 or outside vmtool).
+func writeOrigin(out io.Writer, o *vmtool.VMOrigin) {
+	if o == nil {
+		fmt.Fprintf(out, "Origin:    -\n")
+		return
+	}
+	image := o.Image
+	if image == "" {
+		image = "-"
+	}
+	line := fmt.Sprintf("%s, clone kind %s", image, o.CloneKind)
+	if o.Pool != "" {
+		line += ", pool " + o.Pool
+	}
+	if !o.Created.IsZero() {
+		line += ", created " + o.Created.UTC().Format(time.RFC3339)
+	}
+	fmt.Fprintf(out, "Origin:    %s\n", line)
+	if o.ImageSHA256 != "" {
+		fmt.Fprintf(out, "           sha256 %s\n", o.ImageSHA256)
+	}
+	if o.Template != "" || o.TemplateLV != "" {
+		fmt.Fprintf(out, "           template %s (%s)\n", o.Template, o.TemplateLV)
+	}
 }
 
 func sshCmd(e *env) *cobra.Command {
@@ -913,6 +957,46 @@ func autostartCmd(e *env) *cobra.Command {
 			return nil
 		}),
 	}
+}
+
+func commentCmd(e *env) *cobra.Command {
+	var clear bool
+	cmd := &cobra.Command{
+		Use:   "comment <host/name> [TEXT]",
+		Short: "Set or clear a VM's comment",
+		Long: `Set the comment kept with a VM, or clear it with --clear. The comment is at
+most 512 bytes of UTF-8 on one line with no control characters. It is stored
+in plain text in the VM's definition (and, when a store is configured, in its
+inventory): never put a secret in it. It is set on the running domain and on
+the persistent definition without redefining the VM, so it works on a running
+and on a shut-off VM; the host must be reachable. 'vmtool info' shows it.
+
+  vmtool comment hv1/web "build box for the nightly job"
+  vmtool comment hv1/web --clear`,
+		Args: cobra.RangeArgs(1, 2),
+		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
+			text := ""
+			switch {
+			case clear && len(args) == 2:
+				return fmt.Errorf("give TEXT or --clear, not both")
+			case !clear && len(args) < 2:
+				return fmt.Errorf("give the comment TEXT, or --clear to remove it")
+			case len(args) == 2:
+				text = args[1]
+			}
+			if _, err := e.service("").SetComment(cmd.Context(), m, ref.Name, text); err != nil {
+				return err
+			}
+			if text == "" {
+				fmt.Fprintf(cmd.OutOrStdout(), "Comment cleared for VM %q\n", args[0])
+			} else {
+				fmt.Fprintf(cmd.OutOrStdout(), "Comment set for VM %q\n", args[0])
+			}
+			return nil
+		}),
+	}
+	cmd.Flags().BoolVar(&clear, "clear", false, "remove the comment")
+	return cmd
 }
 
 func interactiveCmd(e *env) *cobra.Command {

@@ -82,6 +82,7 @@ func (f *rtMgr) WaitForIP(n string, d time.Duration) (string, error) {
 	return "192.0.2.44", nil
 }
 func (f *rtMgr) SetAutostart(n string, e bool) error { f.rec("SetAutostart %s %v", n, e); return nil }
+func (f *rtMgr) SetComment(n, c string) error        { f.rec("SetComment %s %s", n, c); return nil }
 func (f *rtMgr) Reboot(n string) error               { f.rec("Reboot %s", n); return nil }
 func (f *rtMgr) ResizeDisk(n string, gb uint) error  { f.rec("ResizeDisk %s %d", n, gb); return nil }
 func (f *rtMgr) MigrateDisk(n, p string) error       { f.rec("MigrateDisk %s %s", n, p); return nil }
@@ -141,9 +142,13 @@ func newRTMgr(t *testing.T) *rtMgr {
 	}
 	return &rtMgr{
 		pool: pool,
-		info: vmtool.VMInfo{State: vmtool.StateRunning, VCPUs: 3, Memory: 5, IP: "192.0.2.44", Autostart: true},
+		info: vmtool.VMInfo{State: vmtool.StateRunning, VCPUs: 3, Memory: 5, IP: "192.0.2.44", Autostart: true,
+			Comment: "placeholder comment",
+			Origin: &vmtool.VMOrigin{Image: "img1", ImageSHA256: strings.Repeat("a", 64), CloneKind: vmtool.CloneKindFile,
+				Pool: "vmtool", Created: time.Date(2026, 11, 21, 4, 5, 6, 0, time.UTC)}},
 		vms: []vmtool.VMInfo{
-			{Name: "a", State: vmtool.StateRunning, VCPUs: 2, Memory: 4, IP: "192.0.2.1", Autostart: true},
+			{Name: "a", State: vmtool.StateRunning, VCPUs: 2, Memory: 4, IP: "192.0.2.1", Autostart: true, Comment: "placeholder comment",
+				Origin: &vmtool.VMOrigin{Image: "img1", CloneKind: vmtool.CloneKindNone, Created: time.Date(2026, 11, 21, 4, 5, 6, 0, time.UTC)}},
 			{Name: "b", State: vmtool.StateShutoff, VCPUs: 1, Memory: 1},
 		},
 	}
@@ -247,6 +252,8 @@ func TestRemoteManagerEveryMethod(t *testing.T) {
 	check("Reboot", m.Reboot("web"), "Reboot web", "Info web")
 	check("SetAutostart", m.SetAutostart("web", true), "SetAutostart web true", "Info web")
 	check("SetAutostart off", m.SetAutostart("web", false), "SetAutostart web false", "Info web")
+	check("SetComment", m.SetComment("web", "placeholder comment"), "SetComment web placeholder comment", "Info web")
+	check("SetComment clear", m.SetComment("web", ""), "SetComment web ", "Info web")
 	check("Delete", m.Delete("web", false), "Delete web false")
 	check("Delete noclone", m.Delete("web", true), "Delete web true")
 	check("ResizeDisk", m.ResizeDisk("web", 40), "ResizeDisk web 40")
@@ -329,6 +336,9 @@ func TestRemoteManagerEveryMethod(t *testing.T) {
 		DiskCache:       "writeback",         // so does the disk cache
 		ExtraDiskSizeGB: 6, ExtraDiskPool: "fast",
 		ExtraDisks: []vmtool.DiskDevice{{Path: filepath.Join(fm.pool, "web-2.qcow2"), Target: "vdb"}},
+		Comment:    "placeholder comment",
+		Origin: &vmtool.VMOrigin{Image: "img1", ImageSHA256: strings.Repeat("a", 64), Template: "img1", TemplateLV: "vmtpl-aaaaaaaaaaaa",
+			CloneKind: vmtool.CloneKindThin, Pool: "default", Created: time.Date(2026, 11, 21, 4, 5, 6, 0, time.UTC)},
 	}
 	check("Define", m.Define(cfg), "Define web")
 	want := cfg
