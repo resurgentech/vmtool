@@ -2,6 +2,7 @@ package vmtool
 
 import (
 	"fmt"
+	"log/slog"
 	"net/netip"
 	"os"
 	"sort"
@@ -292,8 +293,12 @@ func startEventLoop() error {
 
 // WatchNetworkStarted calls fn with the name of each libvirt network that
 // starts (the bridge is made again, so a VXLAN device on it must be linked
-// again). It opens a connection of its own; stop deregisters and closes it. fn
-// runs on libvirt's event goroutine and must not block.
+// again). It opens a connection of its own with keepalive and a close
+// callback; when libvirtd goes away it reconnects with backoff (1 s doubling
+// to 30 s, only while disconnected), registers again, and calls fn("") once
+// (a network may have restarted while unwatched: every network is to be
+// linked again). It logs one line on loss and one on recovery. stop ends it
+// all. fn must not block.
 func WatchNetworkStarted(fn func(name string)) (stop func(), err error) {
 	// Refused under go test before the event loop touches the binding.
 	if err := refuseLibvirtInTest("qemu:///system"); err != nil {
@@ -302,24 +307,9 @@ func WatchNetworkStarted(fn func(name string)) (stop func(), err error) {
 	if err := startEventLoop(); err != nil {
 		return nil, fmt.Errorf("libvirt event loop: %w", err)
 	}
-	conn, err := connect("qemu:///system")
+	w, err := startNetWatch(realWatchConnector, realWatchClock{}, fn, slog.Default())
 	if err != nil {
-		return nil, fmt.Errorf("connecting to libvirt: %w", err)
+		return nil, err
 	}
-	id, err := conn.NetworkEventLifecycleRegister(nil, func(_ *libvirt.Connect, n *libvirt.Network, ev *libvirt.NetworkEventLifecycle) {
-		if ev.Event != libvirt.NETWORK_EVENT_STARTED {
-			return
-		}
-		if name, err := n.GetName(); err == nil {
-			fn(name)
-		}
-	})
-	if err != nil {
-		conn.Close()
-		return nil, fmt.Errorf("watching libvirt networks: %w", err)
-	}
-	return func() {
-		_ = conn.NetworkEventDeregister(id)
-		_, _ = conn.Close()
-	}, nil
+	return w.stop, nil
 }

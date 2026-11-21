@@ -2296,3 +2296,20 @@ are appended, never edited in; a hook refuses rewrites.
   two absence tests (no row yet; host token) passed before the code. Green;
   `just check` green.
 - Commits: the G3 commit on `clone-identity`.
+
+## 2026-11-21 — G4 The network watch survives a libvirtd restart
+
+- `pkg/vmtool/netwatch.go`: the network-started watch behind a small
+  connector interface; its connection has keepalive (5 s, 3 probes) and a
+  close callback. On close: one Warn line, reconnect with backoff 1 s
+  doubling to 30 s (timer only between failed attempts, nothing while
+  connected), register again, one Info line and `fn("")` once, which the
+  keeper turns into one re-link pass of every network. `stop` ends it,
+  also during backoff. The real connector opens through G1's `connect`.
+- Tests on a fake connector and fake clock (reconnect, exactly one re-link
+  pass, backoff sequence to 30 s, stop during backoff and while connected,
+  first-connect error); `-race` green.
+- Red: only the reconnect test, made red after the code by disabling the
+  recovery call (timed out waiting for the re-link pass); the others have
+  no recorded red. Green; `just check` green.
+- Commits: the G4 commit on `clone-identity`.
