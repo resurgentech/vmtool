@@ -119,6 +119,10 @@ func (m *Manager) FetchImage(ctx context.Context, name string, req api.FetchImag
 			if jerr := json.Unmarshal(line, &ev); jerr != nil {
 				return fail(app.KindBadGateway, fmt.Errorf("%s: fetchImage: a line of the stream is not JSON", m.name))
 			}
+			if ev.Error != nil {
+				// The caller sees the event too: clean its text first.
+				ev.Error = ptr(m.clean(*ev.Error))
+			}
 			if on != nil {
 				on(ev)
 			}
@@ -162,7 +166,7 @@ func (m *Manager) fetchStatusErr(status int, body []byte) error {
 		return fail(app.KindNotFound, &FetchError{Kind: FetchDaemonTooOld, Host: m.name,
 			Msg: "the daemon does not support fetchImage (it predates API 2.3.0)"})
 	case status == http.StatusConflict && !jsonErr && strings.HasPrefix(e.Error, NoStorePrefix):
-		return fail(app.KindConflict, &FetchError{Kind: FetchNoStore, Host: m.name, Msg: sanitize(e.Error)})
+		return fail(app.KindConflict, &FetchError{Kind: FetchNoStore, Host: m.name, Msg: m.clean(e.Error)})
 	}
 	return m.statusErr(status, body)
 }
@@ -179,7 +183,7 @@ func (m *Manager) fetchLineErr(ev api.FetchImageEvent) error {
 			k = FetchMismatch
 		}
 	}
-	return fail(app.KindBadGateway, &FetchError{Kind: k, Host: m.name, Msg: sanitize(derefString(ev.Error))})
+	return fail(app.KindBadGateway, &FetchError{Kind: k, Host: m.name, Msg: m.clean(derefString(ev.Error))})
 }
 
 func derefString(p *string) string {

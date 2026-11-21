@@ -73,7 +73,7 @@ func Dial(ctx context.Context, baseURL, host, vm, token string, tlsConfig *tls.C
 	}
 	if resp.StatusCode != http.StatusSwitchingProtocols {
 		defer resp.Body.Close()
-		return nil, statusError(host, vm, resp)
+		return nil, statusError(host, vm, token, resp)
 	}
 	if !strings.EqualFold(resp.Header.Get("Upgrade"), TunnelProtocol) {
 		resp.Body.Close()
@@ -87,8 +87,9 @@ func Dial(ctx context.Context, baseURL, host, vm, token string, tlsConfig *tls.C
 	return rwc, nil
 }
 
-// statusError reads the daemon's JSON error (bounded) into an error.
-func statusError(host, vm string, resp *http.Response) error {
+// statusError reads the daemon's JSON error (bounded) into an error, with the
+// client's token removed from its text.
+func statusError(host, vm, token string, resp *http.Response) error {
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrBody))
 	var e struct {
 		Error string `json:"error"`
@@ -97,15 +98,7 @@ func statusError(host, vm string, resp *http.Response) error {
 	if json.Unmarshal(body, &e) == nil {
 		msg = e.Error
 	}
-	msg = strings.Map(func(r rune) rune {
-		if r < 0x20 || r == 0x7f {
-			return ' '
-		}
-		return r
-	}, msg)
-	if len(msg) > 512 {
-		msg = msg[:512] + "..."
-	}
+	msg = cleanText(msg, token)
 	if msg == "" {
 		return fmt.Errorf("tunnel %s/%s: daemon answered %s", host, vm, resp.Status)
 	}

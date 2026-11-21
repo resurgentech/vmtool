@@ -52,7 +52,7 @@ func (m *Manager) Probe(ctx context.Context) app.HostStatus {
 		st.Err = fail(app.KindBadGateway, err)
 		return st
 	}
-	st.APIVersion = sanitize(v.ApiVersion)
+	st.APIVersion = m.clean(v.ApiVersion)
 	return st
 }
 

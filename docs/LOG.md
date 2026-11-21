@@ -1984,3 +1984,21 @@ are appended, never edited in; a hook refuses rewrites.
   cli, tui); green on the new store, db, app, cli, server, tui, storeclient
   and docs tests; `just check` green.
 - Commits: the N12 commit on `clone-identity`.
+
+## 2026-11-21 — F1 The client removes its own token from a server's error text
+
+- `internal/remote`: one cleaner `cleanText(s, token)` (`manager.go`)
+  replaces `sanitize`: every `Bearer <token>` (any case of `Bearer`, any
+  whitespace) and every bare occurrence of the client's token become
+  `[redacted]` before control characters are cleaned and the text truncated;
+  an empty token redacts nothing. Used by `statusErr`, the image manifest's
+  path, fetch's status error and NDJSON error (also the event the callback
+  sees), export's NDJSON error, the probe's version and the tunnel's
+  `statusError` (its own copy of the cleaning removed).
+- Tests: `internal/remote/redact_test.go` (one per path, fake daemons
+  echoing the placeholder token in four shapes; errors, events and captured
+  logs checked); `TestStoreErrorsQuoteNoBody` pins that the store client
+  quotes no body.
+- Red: assertion failures (the token in each error) against a stub cleaner;
+  green; `just check` green.
+- Commits: the F1 commit on `clone-identity`.

@@ -178,6 +178,40 @@ func TestTokenOnlyInAuthorizationHeader(t *testing.T) {
 	}
 }
 
+// F1: a store's error text is never quoted, so a store that echoes the
+// request's token (bare or as a Bearer header, JSON or plain text) leaves it
+// out of the error at every status.
+func TestStoreErrorsQuoteNoBody(t *testing.T) {
+	echo := "Authorization: Bearer " + tok + " bearer " + tok + " " + tok
+	for _, status := range []int{400, 401, 403, 404, 409, 500, 502} {
+		for _, plain := range []bool{false, true} {
+			f := newFake(t, func(w http.ResponseWriter, r *http.Request) {
+				if plain {
+					w.WriteHeader(status)
+					_, _ = io.WriteString(w, echo)
+					return
+				}
+				js(w, status, map[string]string{"error": echo})
+			})
+			c := f.client(t, tok)
+			ctx := context.Background()
+			_, e1 := c.Whoami(ctx)
+			_, e2 := c.GetVMCredential(ctx, "hv1", "web", uuid)
+			_, e3 := c.ListImages(ctx)
+			_, e4 := c.Version(ctx)
+			for i, err := range []error{e1, e2, e3, e4} {
+				if err == nil {
+					t.Errorf("status %d case %d: no error", status, i)
+					continue
+				}
+				if s := err.Error(); strings.Contains(s, tok) || strings.Contains(strings.ToLower(s), "bearer") {
+					t.Errorf("status %d plain=%v case %d: error quotes the body: %v", status, plain, i, err)
+				}
+			}
+		}
+	}
+}
+
 func TestVMCredentialRoundTrip(t *testing.T) {
 	var got storeapi.VMCredentialInput
 	f := newFake(t, func(w http.ResponseWriter, r *http.Request) {

@@ -92,7 +92,7 @@ func (m *Manager) ExportTemplate(ctx context.Context, name, pool string, hash bo
 				}
 				return out, nil
 			case api.ExportTemplateEventEventError:
-				return app.ExportedImage{}, fail(app.KindBadGateway, fmt.Errorf("%s: %s", m.name, sanitize(derefString(ev.Error))))
+				return app.ExportedImage{}, fail(app.KindBadGateway, fmt.Errorf("%s: %s", m.name, m.clean(derefString(ev.Error))))
 			}
 		}
 		if err != nil {

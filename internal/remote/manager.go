@@ -11,6 +11,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -186,7 +187,7 @@ func (m *Manager) statusErr(status int, body []byte) error {
 	var e api.Error
 	msg := ""
 	if json.Unmarshal(body, &e) == nil {
-		msg = sanitize(e.Error)
+		msg = m.clean(e.Error)
 	}
 	return fail(statusKind(status), &StatusError{Host: m.name, Status: status, Msg: msg})
 }
@@ -229,8 +230,20 @@ func isTimeout(err error) bool {
 	return errors.As(err, &te)
 }
 
-// sanitize strips control characters and bounds a daemon's message.
-func sanitize(s string) string {
+// redacted replaces the client's own token in text from a daemon.
+const redacted = "[redacted]"
+
+// cleanText is the one cleaning for text a daemon sent that goes into an
+// error, an event, a log line or a printed message. It first replaces every
+// occurrence of token, and of `Bearer <token>` in any letter case, with
+// [redacted] (so the truncation below cannot leave half a token), then strips
+// control characters and bounds the length. An empty token redacts nothing.
+func cleanText(s, token string) string {
+	if token != "" {
+		re := regexp.MustCompile(`(?i)bearer\s+` + regexp.QuoteMeta(token))
+		s = re.ReplaceAllLiteralString(s, redacted)
+		s = strings.ReplaceAll(s, token, redacted)
+	}
 	s = strings.Map(func(r rune) rune {
 		if r < 0x20 || r == 0x7f {
 			return ' '
@@ -242,6 +255,9 @@ func sanitize(s string) string {
 	}
 	return s
 }
+
+// clean is cleanText with this Manager's token.
+func (m *Manager) clean(s string) string { return cleanText(s, m.token) }
 
 // call runs one operation with timeout.
 func (m *Manager) call(op string, timeout time.Duration, out any, do func(ctx context.Context) (*http.Response, error)) error {
@@ -636,7 +652,7 @@ func (m *Manager) ImageManifest(name string) (app.RemoteImage, error) {
 		out.SHA256, out.Size = strings.ToLower(*v.Sha256), *v.Size
 	}
 	if v.Path != nil {
-		out.Path = sanitize(*v.Path)
+		out.Path = m.clean(*v.Path)
 	}
 	return out, nil
 }
