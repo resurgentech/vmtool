@@ -1909,3 +1909,33 @@ are appended, never edited in; a hook refuses rewrites.
   green.
 - Commits: the N10 commit on `clone-identity` (it also carries the N7 entry
   above).
+
+## 2026-11-21 — P1 Create timings computed in `internal/app`
+
+- `internal/app/timings.go`: `CreateTimings` (stages in order with ms,
+  `total_ms`) and the incremental `CreateTimer`; rules unchanged from T11
+  (first to last event per stage, only stages that ran, total is the last
+  stamp, stages so far on failure). The CLI's `timings:` line formats it,
+  byte for byte as before. No spec change.
+- Red: the app tests against a zero-value stub; green; the CLI golden test
+  pins one success and one failure line (a refactor: green before and
+  after). `just check` green.
+- Commits: `7fe8afb` on `clone-identity` (this entry rides with P2's commit).
+
+## 2026-11-21 — P2 createVM streams NDJSON when asked
+
+- `POST /v1/hosts/{host}/vms` with `Accept: application/x-ndjson` (q above
+  0; wildcards do not count) answers 200 `CreateVMEvent` lines, flushed per
+  line: `progress` (a `ProgressEvent` with `elapsed_ms`), then one `done`
+  (VMInfo, timings) or one `error` (message, kind, output, VMInfo when the
+  domain exists, timings so far). Refusals before the first event stay the
+  JSON statuses; without the header nothing changes. New schemas
+  `CreateTimings`, `CreateVMEvent`; API stays 2.6.0 (shared with tranche 12,
+  nothing deployed between).
+- `tunnelMux.CreateVM` only marks the request; the strict handler writes the
+  stream through the existing `ndjsonStream` and app.CreateTimer, so the
+  hypervisor 403, store session and body decoding are unchanged. No line is
+  logged. spec/README: route notes and a Python example.
+- Red: the stream tests got one JSON 201 body (deadline, wrong shape); green;
+  `just check` green.
+- Commits: the P2 commit on `clone-identity`.

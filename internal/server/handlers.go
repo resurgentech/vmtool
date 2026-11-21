@@ -275,6 +275,10 @@ func (h *handlers) CreateVM(ctx context.Context, req api.CreateVMRequestObject) 
 		in.ExtraVars = map[string]string(*b.ExtraVars)
 	}
 
+	cs := createStreamOf(ctx)
+	if cs != nil {
+		in.OnProgress = cs.progress
+	}
 	v, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
 		info, e := h.guestSvc(ctx).CreateVM(ctx, m, in)
 		if e != nil {
@@ -283,6 +287,18 @@ func (h *handlers) CreateVM(ctx context.Context, req api.CreateVMRequestObject) 
 		return info, nil
 	})
 	info, _ := v.(*vmtool.VMInfo)
+	if cs != nil {
+		// The stream started with the first event: from then on the answer is
+		// its last line. Before that, a refusal is the plain JSON status.
+		switch {
+		case err == nil:
+			cs.done(info)
+			return streamed{}, nil
+		case cs.started():
+			cs.fail(err, info)
+			return streamed{}, nil
+		}
+	}
 	if err != nil {
 		switch kindOf(err) {
 		case app.KindInvalid:

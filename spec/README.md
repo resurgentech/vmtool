@@ -664,12 +664,75 @@ is refused on every pool. `virsh vol-list nvme` lists these volumes: they are
 vmtool's. An old client pulling an export whose digest is not yet known gets
 "did not send a SHA-256 digest".
 
-**What the API does not carry.** `createVM` is one synchronous JSON call and
-streams no progress; its timings are the CLI's closing line (`timings: clone
-0.3s, ...`), stamped from the clock of the process that runs the workflow.
-The `ProgressEvent` schema (with `elapsed_ms`) documents the event shape for a
-client that relays or records them; no route references it, so no REST caller
-receives timings.
+## Streamed create (API 2.6.0)
+
+`createVM` (`POST /v1/hosts/{host}/vms`) is a synchronous JSON call, as it
+always was, and streams when asked: a request whose `Accept` header names
+`application/x-ndjson` gets progress as the workflow emits it. Without that
+value the answers are unchanged (201 `VMInfo`, 400/404/409, 500 with the VM in
+the body). A wildcard (`*/*`) or `application/x-ndjson;q=0` does not ask.
+
+- **Route.** The same route and body, still in the spec and served by the
+  strict handler: `tunnelMux.CreateVM` (`internal/server/createstream.go`) only
+  marks a request that asks for the stream and hands every request to the
+  strict adapter, so the exclusion register stays empty. A hypervisor answers
+  403 before the body is read, as before.
+- **Refusals before any work** (a bad request, a name that is taken, an unknown
+  host, an image that is not found) are the same JSON statuses as without the
+  header. The 200 starts with the first progress event.
+- **Lines.** `200 application/x-ndjson`, one `CreateVMEvent` per line, each
+  flushed as written, `event` being `progress`, `done` or `error`:
+
+```
+{"event":"progress","progress":{"stage":"clone","status":"start","detail":"cloning image","elapsed_ms":4}}
+{"event":"progress","progress":{"stage":"clone","status":"done","detail":"cloned → web.qcow2","elapsed_ms":1630}}
+{"event":"done","vm":{"name":"web","state":"running","ip":"192.0.2.10",...},"timings":{"stages":[{"stage":"clone","ms":1626},...],"total_ms":41200}}
+{"event":"error","error":"...got no address within 120s...","kind":"internal","vm":{...},"timings":{"stages":[...],"total_ms":125000}}
+```
+
+  `progress` carries a `ProgressEvent` (`stage`, `status`, `detail`, `sent` and
+  `total` for an upload, `output` on a failed or finished step, and
+  `elapsed_ms`). A run ends with exactly one `done` (the `VMInfo` and the
+  `timings`) or one `error` (`error`, `kind` of `invalid`, `not_found`,
+  `conflict` or `internal`, `output` when a tool's output was captured, the
+  `vm` when the domain exists, and the `timings` so far). The status is 200
+  either way: read the last line. A stream with no `done` and no `error` was
+  cut off.
+- **Timings** are milliseconds on the workstation's clock, from the start of
+  the workflow: `elapsed_ms` stamps each event, `timings.stages` has the
+  stages that ran with the time from each one's first event to its last, and
+  `total_ms` is the last stamp. They are the numbers the CLI's closing
+  `timings:` line prints (`app.CreateTimings`).
+- **Cancel.** A dropped connection ends the call as it does for the JSON
+  response (the request's context). No event line is logged, like no request
+  body.
+
+```python
+import json, os
+import requests
+
+BASE = "https://127.0.0.1:9473"
+headers = {
+    "Authorization": "Bearer " + os.environ["VMTOOL_TOKEN"],
+    "Accept": "application/x-ndjson",
+}
+body = {"name": "vm1", "image": "img1"}
+with requests.post(f"{BASE}/v1/hosts/hv1/vms", headers=headers, json=body,
+                   stream=True, timeout=(10, 600), verify=os.environ.get("VMTOOL_CA", True)) as r:
+    if r.status_code != 200:            # a refusal before any work: plain JSON
+        raise SystemExit(f"{r.status_code}: {r.json()['error']}")
+    for line in r.iter_lines():         # one JSON object per line, as it is written
+        if not line:
+            continue
+        ev = json.loads(line)
+        if ev["event"] == "progress":
+            p = ev["progress"]
+            print(f"{p['elapsed_ms']:>7} ms  {p['stage']} {p['status']}  {p.get('detail', '')}")
+        elif ev["event"] == "done":
+            print("created", ev["vm"]["name"], ev["vm"]["ip"], ev["timings"]["total_ms"], "ms")
+        else:
+            raise SystemExit(f"{ev['kind']}: {ev['error']}")
+```
 
 ## GET / pattern
 

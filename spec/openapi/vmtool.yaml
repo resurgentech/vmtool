@@ -134,6 +134,23 @@ paths:
         exists is 500. 400 if `no_wait` is combined with `playbook`. 409 if
         the name is registered as a metal or alien machine.
         Served by the workstation only: on a server whose config.yml role is hypervisor this operation answers 403 "served by the workstation" before reading the body.
+
+        **Streamed create.** A request whose `Accept` header names
+        `application/x-ndjson` gets the progress as it happens instead of one
+        body at the end. Everything that is refused before any work (a bad
+        request, a name that is taken, an unknown host, an image that is not
+        found) is the same JSON status as without the header. Otherwise the
+        answer is 200 `application/x-ndjson`, started with the first progress
+        event, one `CreateVMEvent` per line, each flushed as written: `progress`
+        lines in the order the workflow emits them (each with `elapsed_ms`), then
+        exactly one `done` (the `VMInfo` and the `timings`) or one `error` (the
+        message, a `kind` of `invalid`, `not_found`, `conflict` or `internal`,
+        the `VMInfo` when the domain exists, and the `timings` so far). The
+        status is 200 whatever the outcome; the last line says how it ended. A
+        stream that ends with no `done` and no `error` line was cut off (the
+        connection dropped, or the daemon stopped). A dropped connection ends the
+        workflow as it does for the JSON call. Without the header the answers
+        are unchanged (API 2.6.0).
       requestBody:
         required: true
         content:
@@ -146,6 +163,13 @@ paths:
               memory: 2
               net_type: nat
       responses:
+        '200':
+          description: >
+            Only for a request whose `Accept` names `application/x-ndjson`:
+            progress lines, ending in one `done` or one `error` line
+          content:
+            application/x-ndjson:
+              schema: { $ref: '#/components/schemas/CreateVMEvent' }
         '201':
           description: created
           content:
@@ -2216,9 +2240,8 @@ components:
       type: object
       description: >
         One progress event of a workstation workflow (create today), as the CLI
-        and TUI receive it. createVM itself stays a synchronous JSON call and
-        streams none; this is the documented shape of the event so a client
-        that relays or records them keeps the names.
+        and TUI receive it. createVM streams them, wrapped in a `CreateVMEvent`,
+        to a request that asks for `application/x-ndjson` (API 2.6.0).
       required: [stage, status]
       properties:
         stage: { type: string, description: "clone, resize, extra_disk, start, write_inventory, wait_ip, wait_ssh, grow_disk, playbook, reboot, upload, credentials" }
@@ -2234,6 +2257,41 @@ components:
             Milliseconds since the operation started, read from the clock of the
             process running the workflow, so a stage's time is the difference of
             two stamps (API 2.4.0). Omitted by a producer that predates the field.
+    CreateTimings:
+      type: object
+      description: >
+        A create's timings (API 2.6.0), in milliseconds on the workstation's
+        clock. `stages` are the stages that ran, in the order they began, each
+        with the time from its first event to its last; `total_ms` is the stamp
+        of the last event. A failed create has the stages so far.
+      required: [stages, total_ms]
+      properties:
+        stages:
+          type: array
+          items:
+            type: object
+            required: [stage, ms]
+            properties:
+              stage: { type: string }
+              ms: { type: integer, format: int64 }
+        total_ms: { type: integer, format: int64 }
+    CreateVMEvent:
+      type: object
+      description: >
+        One line of createVM's NDJSON stream (API 2.6.0). Exactly one `done` or
+        one `error` ends it.
+      required: [event]
+      properties:
+        event: { type: string, enum: [progress, done, error] }
+        progress: { $ref: '#/components/schemas/ProgressEvent' }
+        vm: { $ref: '#/components/schemas/VMInfo' }
+        timings: { $ref: '#/components/schemas/CreateTimings' }
+        error: { type: string, description: "error: what failed" }
+        kind:
+          type: string
+          enum: [invalid, not_found, conflict, internal]
+          description: "error: the kind of failure; the JSON call's 400, 404, 409 and 500"
+        output: { type: string, description: "error: captured tool output (a playbook's), as the 500 body carries it" }
     FetchImageEvent:
       type: object
       description: One line of fetchImage's NDJSON stream.
