@@ -1939,3 +1939,16 @@ are appended, never edited in; a hook refuses rewrites.
 - Red: the stream tests got one JSON 201 body (deadline, wrong shape); green;
   `just check` green.
 - Commits: the P2 commit on `clone-identity`.
+
+## 2026-11-21 — P3 Docs for tranche 15
+
+- `README.md`: a "Streamed create over REST (API 2.6.0)" section: how to ask
+  (`Accept: application/x-ndjson`; wildcards and q=0 do not), the plain JSON
+  call unchanged, refusals before work stay JSON, a `curl -N` example with
+  placeholders, what each line holds, read the last line, the timings'
+  meaning (milliseconds from the start of the workflow, workstation's clock),
+  `output` can hold a playbook's output and is never logged.
+- `spec/README.md`: the `output` bullet P2 left out.
+- `scripts/stream_docs_test.go`: `TestStreamedCreateDocsKeywords`. Red on 20
+  missing phrases; green; `just check` green.
+- Commits: the P3 commit on `clone-identity`.

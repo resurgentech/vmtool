@@ -703,6 +703,8 @@ the body). A wildcard (`*/*`) or `application/x-ndjson;q=0` does not ask.
   stages that ran with the time from each one's first event to its last, and
   `total_ms` is the last stamp. They are the numbers the CLI's closing
   `timings:` line prints (`app.CreateTimings`).
+- **Output.** `output` (on a progress line or on `error`) can hold a
+  playbook's output, so it may be sensitive; it is never logged.
 - **Cancel.** A dropped connection ends the call as it does for the JSON
   response (the request's context). No event line is logged, like no request
   body.

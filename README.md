@@ -757,6 +757,54 @@ anything is cloned). With `--disk-size` the volume is still resized before boot,
 but the filesystem grow, which needs SSH, is skipped; cloud-init grows it at
 first boot on images built since C3.
 
+### Streamed create over REST (API 2.6.0)
+
+`POST /v1/hosts/{host}/vms` returns one JSON answer when the create is over.
+A client that wants to see the stages as they happen (clone, boot, address,
+SSH, playbook) asks for a stream with `Accept: application/x-ndjson`; the
+body of the request is the same. Only that value asks: a wildcard such as
+`*/*`, or `application/x-ndjson;q=0`, does not. Without that header the call
+is unchanged: 201 with the VM, or 400, 404, 409 or 500 as before. A request
+refused before any work starts (a bad body, a name that is taken, an unknown
+host, an image that is not found) also gets its plain JSON status, with or
+without the header. The stream is workstation only, like any create: a
+hypervisor answers 403.
+
+```bash
+curl -N -H 'Accept: application/x-ndjson' \
+     -H "Authorization: Bearer $VMTOOL_TOKEN" \
+     -H 'Content-Type: application/json' \
+     -d '{"name":"vm1","image":"img1"}' \
+     https://127.0.0.1:9473/v1/hosts/hv1/vms
+```
+
+The answer is 200 `application/x-ndjson`: one JSON object per line, each sent
+as it is written, each with an `event`:
+
+```
+{"event":"progress","progress":{"stage":"clone","status":"start","detail":"cloning image","elapsed_ms":4}}
+{"event":"done","vm":{"name":"vm1","state":"running",...},"timings":{"stages":[{"stage":"clone","ms":1626},...],"total_ms":41200}}
+```
+
+- `progress` holds a progress record: `stage`, `status`, `detail`, `sent` and
+  `total` for an upload, `output` on a step that failed or finished, and
+  `elapsed_ms`.
+- A run ends with exactly one `done` (the VM and the `timings`) or one
+  `error` (`error`, a `kind` of `invalid`, `not_found`, `conflict` or
+  `internal`, `output` when a tool's output was captured, the `vm` when the
+  domain exists, and the `timings` so far).
+- The status is 200 either way, so read the last line to learn the outcome.
+  A stream with no `done` and no `error` was cut off.
+- `timings` are milliseconds from the start of the workflow, on the
+  workstation's clock. `elapsed_ms` stamps each event; `stages` lists the
+  stages that ran, in the order they began, with the time from the first to
+  the last event of each; `total_ms` is the stamp of the last event. These are
+  the numbers the CLI prints on its closing `timings:` line.
+- `output` can hold a playbook's output, so treat it as possibly sensitive. It
+  is never logged, and neither is any event line.
+- A dropped connection ends the create as it does for the plain JSON call. A
+  VM that was already defined stays, as described under Waits at create.
+
 ### VM identity at create
 
 Every new VM gets a random UUID and an SMBIOS serial
