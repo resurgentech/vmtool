@@ -3,6 +3,8 @@
 # the VM off. These are the same commands, in the same order, as the last
 # provisioner of the packer_images templates (ubuntu2604_btrfs/template.pkr.hcl),
 # so a template made by hand and an image made by Packer end the same way.
+# That includes `systemctl mask tmp.mount`, which keeps /tmp on disk (26.04
+# mounts it as a tmpfs otherwise).
 #
 # Run it by hand, as the LAST thing done on the build VM:
 #
@@ -43,6 +45,16 @@
       ansible.builtin.shell: |
         if ! test -e /boot/efi/EFI/BOOT/BOOTX64.EFI; then grub-install --target=x86_64-efi --efi-directory=/boot/efi --removable --no-nvram; fi
       changed_when: true
+
+    # 26.04's systemd mounts /tmp as a tmpfs (tmp.mount); masking shadows that
+    # unit with /dev/null (a harmless symlink on 24.04). No --now: stopping it
+    # would unmount /tmp under the running play. Masking twice changes nothing,
+    # so a run that finds it already masked reports ok.
+    - name: Keep /tmp on disk (mask tmp.mount)
+      ansible.builtin.shell: |
+        systemctl mask tmp.mount
+      register: mask_tmp
+      changed_when: "'Created symlink' in mask_tmp.stderr or 'Created symlink' in mask_tmp.stdout"
 
     - name: Clean the apt cache
       ansible.builtin.command: apt-get clean

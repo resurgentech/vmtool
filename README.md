@@ -1277,8 +1277,9 @@ alone; it breaks when the VM is customised.
 author's shortcut for step 3, and vmtool never runs it itself. It runs the
 same commands as the last provisioner of the `packer_images` templates
 (`cloud-init status --wait`, the GRUB command-line cleanup and `update-grub`,
-`grub-install --removable` when the loader is missing, `apt-get clean`, root's
-history, the `127.0.1.1` line, `cloud-init clean --machine-id --logs`) and
+`grub-install --removable` when the loader is missing, `systemctl mask
+tmp.mount` to keep `/tmp` on disk (26.04 mounts it as a tmpfs otherwise;
+harmless on 24.04), `apt-get clean`, root's history, the `127.0.1.1` line, `cloud-init clean --machine-id --logs`) and
 then powers the VM off a moment after it returns. Run it by hand as the last
 thing on the build VM: `vmtool playbook hv1/build1
 ansible/playbooks/image_reset.yml`; wait until `vmtool info hv1/build1` shows

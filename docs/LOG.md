@@ -2002,3 +2002,17 @@ are appended, never edited in; a hook refuses rewrites.
 - Red: assertion failures (the token in each error) against a stub cleaner;
   green; `just check` green.
 - Commits: the F1 commit on `clone-identity`.
+
+## 2026-11-21 — F2 The reset playbook keeps /tmp on disk
+
+- `ansible/playbooks/image_reset.yml`: task "Keep /tmp on disk (mask
+  tmp.mount)" runs `systemctl mask tmp.mount` (no `--now`, as in Packer)
+  after the removable loader and before `apt-get clean`; changed only when
+  systemd prints "Created symlink". The header names it; README's reset
+  paragraph lists it (harmless on 24.04).
+- `scripts/image_reset_test.go`: `TestImageResetMatchesEveryTemplate` reads
+  the last provisioner of all seven templates and compares it line by line;
+  `TestImageResetMaskTmpMountPlace` pins its place.
+- Red: 8 commands against the templates' 9, mask task missing; green;
+  `just check` and `VMTOOL_TEST_ANSIBLE_SYNTAX=1 just test ./scripts/` green.
+- Commits: the F2 commit on `clone-identity`.

@@ -3,6 +3,7 @@ package scripts_test
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -39,6 +40,67 @@ func packerGrubSed(t *testing.T) string {
 	}
 	t.Fatalf("no GRUB_CMDLINE_LINUX_DEFAULT sed in %s", packerResetHCL)
 	return ""
+}
+
+// packerResetCommands returns the commands of a template's final provisioner
+// (from "cloud-init status --wait" to "cloud-init clean"), HCL quoting undone,
+// "sudo " dropped (the playbook uses become), comment lines skipped.
+func packerResetCommands(t *testing.T, path string) []string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	in := false
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		if !in {
+			if strings.HasPrefix(line, `"sudo cloud-init status --wait`) {
+				in = true
+			} else {
+				continue
+			}
+		}
+		if !strings.HasPrefix(line, `"`) {
+			continue
+		}
+		line = strings.TrimSuffix(strings.TrimPrefix(line, `"`), `",`)
+		line = strings.NewReplacer(`\\`, `\`, `\"`, `"`).Replace(line)
+		out = append(out, strings.ReplaceAll(line, "sudo ", ""))
+		if strings.Contains(line, "cloud-init clean") {
+			return out
+		}
+	}
+	t.Fatalf("no final provisioner in %s", path)
+	return nil
+}
+
+// TestImageResetMatchesEveryTemplate: the playbook's commands (all tasks but
+// the shutdown) are the template provisioner's, line by line, in every
+// packer_images template.
+func TestImageResetMatchesEveryTemplate(t *testing.T) {
+	tasks := imageResetTasks(t)
+	var got []string
+	for _, tk := range tasks[:len(tasks)-1] {
+		got = append(got, cmdText(tk))
+	}
+	files, err := filepath.Glob("../packer_images/qemu_images/*/template.pkr.hcl")
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no templates found: %v", err)
+	}
+	for _, f := range files {
+		want := packerResetCommands(t, f)
+		if len(got) != len(want) {
+			t.Errorf("%s: playbook has %d commands, template %d", f, len(got), len(want))
+			continue
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("%s command %d:\n playbook %s\n template %s", f, i, got[i], want[i])
+			}
+		}
+	}
 }
 
 // imageResetTasks returns the tasks of the playbook's single play.
@@ -88,6 +150,7 @@ func TestImageResetCommandsInOrder(t *testing.T) {
 		packerGrubSed(t),
 		"update-grub",
 		"if ! test -e /boot/efi/EFI/BOOT/BOOTX64.EFI; then grub-install --target=x86_64-efi --efi-directory=/boot/efi --removable --no-nvram; fi",
+		"systemctl mask tmp.mount",
 		"apt-get clean",
 		"rm -f /root/.bash_history",
 		"sed -i '/^127[.]0[.]1[.]1[[:space:]]/d' /etc/hosts",
@@ -100,6 +163,33 @@ func TestImageResetCommandsInOrder(t *testing.T) {
 		if got := cmdText(tasks[i]); got != w {
 			t.Errorf("task %d (%q):\n got  %s\n want %s", i, tasks[i].name, got, w)
 		}
+	}
+}
+
+// The mask task sits after the removable loader and before the apt cache,
+// is named for what it does, and is idempotent (not changed_when: true).
+func TestImageResetMaskTmpMountPlace(t *testing.T) {
+	tasks := imageResetTasks(t)
+	idx := func(sub string) int {
+		for i, tk := range tasks {
+			if strings.Contains(cmdText(tk), sub) {
+				return i
+			}
+		}
+		return -1
+	}
+	m, l, a := idx("systemctl mask tmp.mount"), idx("grub-install"), idx("apt-get clean")
+	if m < 0 || l < 0 || a < 0 || !(l < m && m == l+1 && m+1 == a) {
+		t.Fatalf("mask task at %d, loader at %d, apt clean at %d: want loader, mask, apt clean in a row", m, l, a)
+	}
+	if tasks[m].name != "Keep /tmp on disk (mask tmp.mount)" {
+		t.Errorf("mask task name = %q", tasks[m].name)
+	}
+	if strings.Contains(cmdText(tasks[m]), "--now") {
+		t.Error("mask must not use --now (it would unmount /tmp)")
+	}
+	if tasks[m].body["changed_when"] == true {
+		t.Error("mask task must not be changed_when: true; derive it from the output")
 	}
 }
 
