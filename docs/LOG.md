@@ -1655,3 +1655,19 @@ are appended, never edited in; a hook refuses rewrites.
 - Red: 8 tests failing; green; `just check` green;
   `VMTOOL_TEST_ANSIBLE_SYNTAX=1 just test ./scripts/` green.
 - Commits: the D2 commit on `clone-identity`.
+
+## 2026-11-20 — D3 Docs for tranche 14
+
+- README: new "Old data and discard" under the NVMe thin pool text (the
+  helper's discard on removal, `issue_discards` for thick volumes, the
+  one-time scratch discard at pool creation and `--discards passdown`; a
+  failed discard keeps the volume, with the helper's retry line; the two
+  assumptions; the manual drive check on a scratch volume only; the manual
+  one-time discard for a pool made before this); "never removes anything"
+  sentences corrected; a Thin pools bullet linking to it.
+- `nvme_stripe.yml` header comment: the scratch volume is the only volume
+  the file removes; `issue_discards`.
+- `scripts/discard_docs_test.go` `TestDiscardDocsKeywords`.
+- Red: 15 README keywords and 3 header keywords missing; green; `just
+  check` green.
+- Commits: the D3 commit on `clone-identity`. Tranche 14 is built.

@@ -12,11 +12,16 @@
 #
 #   just prereqs veritech02 -e '{"vmtool_nvme_drives":["/dev/disk/by-id/nvme-A","/dev/disk/by-id/nvme-B"]}'
 #
-# The only commands here that write storage are the md array create, pvcreate
-# and vgcreate (guarded by vmtool_nvme_create). The probes are read-only. No
-# volume, volume group, physical volume or array is ever removed, stopped or
-# wiped by this file. The pool is defined without pool-build, because on a
-# logical pool that would run pvcreate/vgcreate itself.
+# The commands here that write storage are the md array create, pvcreate and
+# vgcreate (guarded by vmtool_nvme_create), the thin pool's lvcreate, and, only
+# when the thin pool does not exist yet, one scratch volume
+# (vmtool-discard-scratch, tagged vmtool_scratch) over the free space, which is
+# discarded and removed so old data on the drives is not handed to a new VM.
+# That scratch volume is the only volume this file removes; no volume group,
+# physical volume or array is ever removed, stopped or wiped by it. The play
+# also sets issue_discards = 1 in lvm.conf. The probes are read-only. The pool
+# is defined without pool-build, because on a logical pool that would run
+# pvcreate/vgcreate itself.
 #
 # Variables (defaults in setup_host.yml): vmtool_nvme_drives, vmtool_nvme_vg,
 # vmtool_nvme_md (array name, /dev/md/<name>), vmtool_nvme_pool.

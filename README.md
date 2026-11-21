@@ -85,7 +85,8 @@ just prereqs veritech02 -e '{"vmtool_nvme_drives":["/dev/disk/by-id/nvme-A","/de
 The other variables are `vmtool_nvme_vg` (`vmtool-nvme`), `vmtool_nvme_md`
 (`vmtool-nvme`, the array `/dev/md/<name>`) and `vmtool_nvme_pool` (`nvme`).
 Logical volumes that vmtool did not create are yours; the play never removes
-anything.
+any of them. The only volume it removes is its own tagged scratch volume (see
+[Old data and discard](#old-data-and-discard)).
 
 **Thin pool (opt-in, `vmtool_nvme_thin`).** The same play can also add an LVM
 thin pool to that volume group, for [thin clones](#thin-pools-clones-from-templates).
@@ -116,8 +117,85 @@ A pool of that name that already exists with the tag is adopted (zeroing and
 profile corrected if they differ). **One that exists without the tag, or that
 is not a thin pool, makes the play fail, naming it, and changes nothing**: a
 trial pool made by hand has to be removed by hand, or the pool named
-differently with `vmtool_nvme_thin_pool`. The play never removes, reduces or
-wipes anything.
+differently with `vmtool_nvme_thin_pool`. The play never removes or reduces a
+pool, a volume group or a volume of yours, and wipes nothing. It does discard
+once, when it makes a pool, and it sets LVM's `issue_discards`; see
+[Old data and discard](#old-data-and-discard).
+
+##### Old data and discard
+
+The pool is made with zeroing off, so a block it hands out keeps what its last
+owner left on it. vmtool keeps one VM from reading another's deleted data by
+**discarding** (telling the drives a block is free) instead of wiping:
+
+- **Thin and export volumes:** the root helper's `remove` runs `blkdiscard`
+  on the volume's whole device, and only then `lvremove`. A volume LVM
+  reports as open is refused; an inactive one is activated with `lvchange -ay
+  -K` first. dm-thin frees, and passes down to the drives, only blocks no other
+  volume shares, so removing a clone, or a template that has clones, never
+  touches the others' data.
+- **Thick volumes** (pool `nvme`, and export volumes): host setup sets
+  `issue_discards = 1` in the `devices` section of `/etc/lvm/lvm.conf` and
+  checks it with `lvmconfig devices/issue_discards`. It is LVM-wide, so it
+  covers libvirt's `vol-delete` too. It does not apply to thin volumes (the
+  helper does those). Thick disks removed before `issue_discards` was set are
+  not covered.
+- **Once, when the pool is made:** the drives hold old data, so before `lvcreate
+  --type thin-pool` the play makes a scratch volume `vmtool-discard-scratch`
+  (tagged `vmtool_scratch`) over all of the volume group's free space,
+  discards it and removes it. This runs only when the pool does not exist yet,
+  never against an existing pool. An untagged volume of that name fails the
+  play; a tagged leftover is reused. If its discard fails, the play stops and
+  leaves it: remove it with `lvremove` once nothing has it open. Pools are made
+  with `--discards passdown`, and an adopted pool is set to it (a pool at
+  `ignore` must be inactive to change).
+
+**A failed discard keeps the volume.** Nothing un-discarded goes back to the
+pool. The helper says:
+
+```
+vmtool-thin: discard of VG/NAME failed (<reason>); volume kept so its data does not return to the pool; retry: sudo -n /usr/local/libexec/vmtool-thin remove VG NAME
+```
+
+Run that retry line on the host once the cause is gone (an open volume,
+usually). A half-made export volume whose discard fails stays, tagged, and the
+24-hour expiry retries it; leftover building volumes are retried when the
+daemon starts.
+
+**Two assumptions.** Each drive is assumed to be one that returns zeros after
+a discard; this is not tested at setup, and there is no automatic fallback to
+wiping (the manual check below tests one drive set). And only removals that go through vmtool and libvirt are covered:
+a volume removed by hand (outside vmtool and libvirt) is not.
+
+**Check a drive by hand**, on a scratch volume only, never on a VM disk or a
+pool. With a small free volume (placeholders `vg-test`, `scratch1`):
+
+```bash
+sudo lvcreate -L 1G -n scratch1 --zero n --wipesignatures n vg-test
+sudo dd if=/dev/urandom of=/dev/vg-test/scratch1 bs=1M count=64 oflag=direct
+sudo blkdiscard /dev/vg-test/scratch1
+sudo cmp -n 67108864 /dev/vg-test/scratch1 /dev/zero && echo "reads zeros"
+sudo lvremove vg-test/scratch1
+```
+
+`cmp` printing a difference means the drive returned old data after a discard:
+the assumption does not hold for it, so tell the people who run the host.
+
+**A pool made before vmtool discarded at pool creation** (before 2026-11-20)
+was not discarded when it was made,
+so old data can sit in the volume group's free space (which autoextend takes).
+Discard that free space once, through a scratch volume only, never the pool or
+a VM disk. Run it while the pool has headroom, since autoextend may need that
+space meanwhile, or use a smaller `-L` size than `100%FREE` and repeat:
+
+```bash
+sudo lvcreate -l 100%FREE -n vmtool-discard-scratch --zero n --wipesignatures n --addtag vmtool_scratch vg-test
+sudo blkdiscard /dev/vg-test/vmtool-discard-scratch
+sudo lvremove vg-test/vmtool-discard-scratch
+```
+
+These commands destroy the data on the volume they name, which here is the
+scratch volume and nothing else.
 
 Then put the daemon on it, from the workstation:
 
@@ -739,6 +817,12 @@ vmtool resize-disk hv1/vm1 60                              # grows at once, gues
 vmtool delete hv1/vm1                                      # removes vm1 and vm1-2; templates stay
 ```
 
+- **Removing a volume discards it first.** The helper discards a thin or
+  export volume's blocks before removing it, so a later VM does not read its
+  data; if the discard fails the volume is kept and the error gives the retry
+  command. What this covers and does not (removals outside vmtool and libvirt,
+  drives assumed to return zeros), and the manual checks:
+  [Old data and discard](#old-data-and-discard).
 - **A thin pool is a vmtool pool, not a libvirt one.** The daemon finds the
   pools by the tag `vmtool_thinpool` and lists each as a pool named after its
   thin-pool LV (`nvme-thin` by default), `type: thin`, path `/dev/<vg>`. A name
