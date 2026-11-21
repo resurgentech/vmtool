@@ -83,6 +83,37 @@ var migrations = []string{
 		credentials BLOB NOT NULL,
 		updated     TEXT NOT NULL
 	);`,
+	// 2: the VM inventory. No secret column; times are RFC3339Nano UTC text.
+	`CREATE TABLE hosts (
+		name           TEXT PRIMARY KEY,
+		last_report    TEXT NOT NULL,
+		generated_at   TEXT NOT NULL,
+		daemon_version TEXT NOT NULL
+	);
+	CREATE TABLE vms (
+		host            TEXT NOT NULL,
+		uuid            TEXT NOT NULL,
+		name            TEXT NOT NULL,
+		state           TEXT NOT NULL,
+		vcpus           INTEGER NOT NULL,
+		memory_gib      INTEGER NOT NULL,
+		ip              TEXT NOT NULL,
+		autostart       INTEGER NOT NULL,
+		firmware        TEXT NOT NULL,
+		disks           TEXT NOT NULL,
+		origin_image    TEXT NOT NULL,
+		origin_sha256   TEXT NOT NULL,
+		origin_template TEXT NOT NULL,
+		origin_clone    TEXT NOT NULL,
+		origin_pool     TEXT NOT NULL,
+		created         TEXT NOT NULL,
+		comment         TEXT NOT NULL,
+		first_seen      TEXT NOT NULL,
+		last_seen       TEXT NOT NULL,
+		gone_since      TEXT,
+		PRIMARY KEY (host, uuid)
+	);
+	CREATE INDEX vms_host_name ON vms(host, name);`,
 }
 
 // DB is an open store database. It is safe for concurrent use.
@@ -362,6 +393,10 @@ func (d *DB) Snapshot(ctx context.Context, path string) error {
 	}
 	return nil
 }
+
+// SetClock replaces the clock the database reads for stamps and for the
+// inventory rules (the store passes its Deps.Now). Call it before use.
+func (d *DB) SetClock(now func() time.Time) { d.now = now }
 
 func (d *DB) stamp() string { return d.now().UTC().Format(time.RFC3339Nano) }
 

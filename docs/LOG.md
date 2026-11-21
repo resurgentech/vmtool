@@ -1671,3 +1671,21 @@ are appended, never edited in; a hook refuses rewrites.
 - Red: 15 README keywords and 3 header keywords missing; green; `just
   check` green.
 - Commits: the D3 commit on `clone-identity`. Tranche 14 is built.
+
+## 2026-11-21 — N1 Inventory tables and their rules in the store's database
+
+- `internal/store/db/db.go`: migration 2 (`hosts`, `vms` keyed (host,
+  uuid), index on (host, name); no secret column; migration 1 untouched);
+  `DB.SetClock` so the store can pass its `Deps.Now`.
+- `internal/store/db/inventory.go` (new): `ApplyReport` (one transaction;
+  stale `generated_at` ignored, relist, omitted live rows gone, orphan
+  credential records get a gone row, comment nil keeps / "" clears),
+  `Delist`, `DeleteVMRow`, `ListInventory` (with `has_credentials`),
+  `Sweep` (gone 7 days or more; credential removed only on matching UUID;
+  never reads `last_seen` or `last_report`); `GracePeriod` = 7 days.
+- `internal/store/db/inventory_test.go`: 16 tests, including the version-1
+  upgrade, the empty report, 6 d 23 h kept / 7 d removed, the newer
+  same-name credential, and a year-old host keeping its rows.
+- Red: build failed on the missing methods and types; green; `just check`
+  green.
+- Commits: the N1 commit on `clone-identity`.
