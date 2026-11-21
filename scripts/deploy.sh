@@ -104,6 +104,8 @@ libexec="${LIBEXEC_DIR:-/usr/local/libexec}"
 sudoers_dir="${SUDOERS_DIR:-/etc/sudoers.d}"
 thin_src="$here/../deploy/vmtool-thin"
 sudoers_src="$here/../deploy/vmtool-thin.sudoers"
+net_src="$here/../deploy/vmtool-net"
+net_sudoers_src="$here/../deploy/vmtool-net.sudoers"
 gobin="${GO_BIN_DIR:-/usr/local/go/bin}"
 export VMTOOL_ROOT="$root" VMTOOL_DOMAIN="$domain" VMTOOL_BIN="$vmtool_bin"
 
@@ -139,6 +141,7 @@ fi
 [[ -x $vmtool_bin ]] || die "$vmtool_bin not found; run 'just build' first."
 [[ -f $template ]] || die "$template not found."
 [[ -f $thin_src && -f $sudoers_src ]] || die "deploy/vmtool-thin or deploy/vmtool-thin.sudoers not found."
+[[ -f $net_src && -f $net_sudoers_src ]] || die "deploy/vmtool-net or deploy/vmtool-net.sudoers not found."
 fqdn="$host.$domain"
 
 # This machine? The same test as cert.sh, which keeps tls/ here for it.
@@ -283,6 +286,9 @@ thin="$(<"$thin_src")"
 thin="${thin//@POOL_DIR@/$pool_dir}"
 printf '%s\n' "$thin" | run "cat > \"$base/stage/vmtool-thin\""
 run "cat > \"$base/stage/vmtool-thin.sudoers\"" <"$sudoers_src"
+# The link helper takes no rendering: staged as it is, with its own rule.
+run "cat > \"$base/stage/vmtool-net\"" <"$net_src"
+run "cat > \"$base/stage/vmtool-net.sudoers\"" <"$net_sudoers_src"
 
 # Run as root by `sh -c`, with the staging dir as $1. No single quotes inside.
 # (a) refuse a port that anything but our daemon listens on, before any
@@ -303,6 +309,10 @@ script+="; install -o root -g root -m 0755 \"\$1/vmtool-thin\" $libexec/vmtool-t
 script+="; install -o root -g root -m 0440 \"\$1/vmtool-thin.sudoers\" $sudoers_dir/vmtool-thin.tmp"
 script+="; visudo -cf $sudoers_dir/vmtool-thin.tmp >/dev/null || { rm -f $sudoers_dir/vmtool-thin.tmp; echo \"the sudoers rule failed visudo; it was not installed and the daemon was not updated\" >&2; exit 1; }"
 script+="; mv $sudoers_dir/vmtool-thin.tmp $sudoers_dir/vmtool-thin"
+script+="; install -o root -g root -m 0755 \"\$1/vmtool-net\" $libexec/vmtool-net"
+script+="; install -o root -g root -m 0440 \"\$1/vmtool-net.sudoers\" $sudoers_dir/vmtool-net.tmp"
+script+="; visudo -cf $sudoers_dir/vmtool-net.tmp >/dev/null || { rm -f $sudoers_dir/vmtool-net.tmp; echo \"the vmtool-net sudoers rule failed visudo; it was not installed and the daemon was not updated\" >&2; exit 1; }"
+script+="; mv $sudoers_dir/vmtool-net.tmp $sudoers_dir/vmtool-net"
 script+="; install -d -o vmtool -g vmtool -m 0700 $hv/tls"
 script+="; $own -m 0755 \"\$1/vmtool\" $hv/vmtool"
 script+="; $own -m 0600 \"\$1/config.yml\" $hv/config.yml"

@@ -2107,3 +2107,23 @@ are appended, never edited in; a hook refuses rewrites.
 - Red: assertion failures (db, store), stub panics (storeclient, app);
   green; `just check` green.
 - Commits: the V3 (partial) commit on `clone-identity`.
+
+## 2026-11-21 — V4 The link helper `vmtool-net`
+
+- `deploy/vmtool-net` (root helper, `/usr/local/libexec/vmtool-net`):
+  `link VNI BRIDGE LOCAL_IP DEV PEER...` deletes and re-makes `vx<VNI>`
+  (`ip link add … type vxlan id VNI dstport 4789 local LOCAL dev DEV`),
+  masters it to the bridge, one `bridge fdb append 00:00:00:00:00:00 …
+  dst PEER` per distinct peer, up; a failure after the add deletes the
+  device. `unlink VNI` (absent: success). `report` prints `ip -j` and
+  `bridge -j` JSON. Checks: VNI 1..16777215; bridge `vmt-%06x` of the VNI
+  and a bridge in sysfs; DEV by name rule, not `lo`/`vmt-*`/`vx*`/`virbr*`/
+  `vnet*`, existing; IPv4 unicast only, a peer never LOCAL.
+- `deploy/vmtool-net.sudoers`; `scripts/deploy.sh` stages and installs it
+  root:root 0755 beside `vmtool-thin`, sudoers 0440 after `visudo -cf`.
+- `pkg/vmtool/netlink.go`: client `NetHelper` (`Link`, `Unlink`, `Report`,
+  `ParseNetReport`) through `command()` with `sudo -n`; not yet wired.
+- Tests: `scripts/vmtool_net_test.go` (stub `ip`/`bridge`, argv per verb, 49
+  refusals), deploy tests, `pkg/vmtool/netlink_test.go`. Red: a skeleton
+  helper (assertion failures); green; `just check` green.
+- Commits: the V4 commit on `clone-identity`.

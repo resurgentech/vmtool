@@ -224,6 +224,8 @@ func TestDeployFlow(t *testing.T) {
 		findCall(t, calls, `cat > `+stage+`/vmtool-daemon.service"`),
 		findCall(t, calls, `cat > `+stage+`/vmtool-thin"`),
 		findCall(t, calls, `cat > `+stage+`/vmtool-thin.sudoers"`),
+		findCall(t, calls, `cat > `+stage+`/vmtool-net"`),
+		findCall(t, calls, `cat > `+stage+`/vmtool-net.sudoers"`),
 		findCall(t, calls, "sudo sh -c"),
 	}
 	for i := 1; i < len(order); i++ {
@@ -234,7 +236,7 @@ func TestDeployFlow(t *testing.T) {
 	if len(calls) != len(order) {
 		t.Errorf("want %d ssh calls, got %d: %+v", len(order), len(calls), calls)
 	}
-	copyCall, cfg, unit, inst := calls[order[2]], calls[order[5]], calls[order[6]], calls[order[9]]
+	copyCall, cfg, unit, inst := calls[order[2]], calls[order[5]], calls[order[6]], calls[order[11]]
 	for _, w := range []string{"umask 077", `mkdir -p "$HOME/.cache/vmtool-deploy/src" ` + stage + `/tls"`, `tar -xzf - -C "$HOME/.cache/vmtool-deploy/src"`} {
 		if !strings.Contains(copyCall.argv, w) {
 			t.Errorf("copy call lacks %q: %q", w, copyCall.argv)
@@ -290,6 +292,10 @@ func TestDeployFlow(t *testing.T) {
 		"install -o root -g root -m 0440 \"$1/vmtool-thin.sudoers\" /etc/sudoers.d/vmtool-thin.tmp",
 		"visudo -cf /etc/sudoers.d/vmtool-thin.tmp",
 		"mv /etc/sudoers.d/vmtool-thin.tmp /etc/sudoers.d/vmtool-thin",
+		"install -o root -g root -m 0755 \"$1/vmtool-net\" /usr/local/libexec/vmtool-net",
+		"install -o root -g root -m 0440 \"$1/vmtool-net.sudoers\" /etc/sudoers.d/vmtool-net.tmp",
+		"visudo -cf /etc/sudoers.d/vmtool-net.tmp",
+		"mv /etc/sudoers.d/vmtool-net.tmp /etc/sudoers.d/vmtool-net",
 		`rm -f "$s/config.yml" "$s/tls/veritech01.labtwo.key"`,
 		"systemctl daemon-reload; systemctl enable --now vmtool-daemon; systemctl restart vmtool-daemon",
 	} {
@@ -607,6 +613,7 @@ func TestDeployRemoteCommandsRun(t *testing.T) {
 	}
 	list := readOr(t, filepath.Join(e.stub, "installed.list"))
 	want := e.get("LIBEXEC_DIR") + "/vmtool-thin 0755\n" + e.get("SUDOERS_DIR") + "/vmtool-thin.tmp 0440\n" +
+		e.get("LIBEXEC_DIR") + "/vmtool-net 0755\n" + e.get("SUDOERS_DIR") + "/vmtool-net.tmp 0440\n" +
 		hv + "/vmtool 0755\n" + hv + "/config.yml 0600\n" +
 		hv + "/tls/veritech01.labtwo.crt 0644\n" + hv + "/tls/veritech01.labtwo.key 0600\n" +
 		ud + "/vmtool-daemon.service 0644\n"
@@ -832,6 +839,7 @@ func TestDeployLocalNoSSHOneSudo(t *testing.T) {
 		t.Errorf("ss argv %q", ss)
 	}
 	want := e.get("LIBEXEC_DIR") + "/vmtool-thin 0755\n" + e.get("SUDOERS_DIR") + "/vmtool-thin.tmp 0440\n" +
+		e.get("LIBEXEC_DIR") + "/vmtool-net 0755\n" + e.get("SUDOERS_DIR") + "/vmtool-net.tmp 0440\n" +
 		hv + "/vmtool 0755\n" + hv + "/config.yml 0600\n" +
 		hv + "/tls/PLACEHOLDER-HOST.labtwo.crt 0644\n" + hv + "/tls/PLACEHOLDER-HOST.labtwo.key 0600\n" +
 		ud + "/vmtool-daemon.service 0644\n"
@@ -1163,10 +1171,10 @@ func TestDeployInstallsThinHelperAndSudoers(t *testing.T) {
 		t.Error("pool directory not rendered into the helper")
 	}
 	// The sudoers rule: checked on the temp name, final file in place, temp gone.
-	if seq := readOr(t, filepath.Join(e.stub, "seq")); seq != "visudo "+sd+"/vmtool-thin.tmp final=no\n" {
+	if seq := readOr(t, filepath.Join(e.stub, "seq")); !strings.HasPrefix(seq, "visudo "+sd+"/vmtool-thin.tmp final=no\n") {
 		t.Errorf("visudo calls %q", seq)
 	}
-	if v := readOr(t, filepath.Join(e.stub, "visudo.argv")); v != "-cf "+sd+"/vmtool-thin.tmp\n" {
+	if v := readOr(t, filepath.Join(e.stub, "visudo.argv")); !strings.HasPrefix(v, "-cf "+sd+"/vmtool-thin.tmp\n") {
 		t.Errorf("visudo argv %q", v)
 	}
 	if got := readOr(t, filepath.Join(sd, "vmtool-thin")); got != thinSudoersLine {
@@ -1196,6 +1204,57 @@ func TestDeployInstallsThinHelperAndSudoers(t *testing.T) {
 	}
 	if strings.Contains(sudo, "-o vmtool") && strings.Contains(sudo, "-o vmtool -g vmtool -m 0755 \"$1/vmtool-thin\"") {
 		t.Error("the helper is installed owned by vmtool")
+	}
+}
+
+const netSudoersLine = "vmtool ALL=(root) NOPASSWD: /usr/local/libexec/vmtool-net\n"
+
+// The link helper's sudoers rule is exactly one line, for that one file.
+func TestNetSudoersText(t *testing.T) {
+	if got := readOr(t, "../deploy/vmtool-net.sudoers"); got != netSudoersLine {
+		t.Errorf("deploy/vmtool-net.sudoers = %q, want %q", got, netSudoersLine)
+	}
+}
+
+// deploy installs vmtool-net as it installs vmtool-thin: root:root 0755, the
+// file as it is in the repository (nothing rendered), its rule 0440 under a
+// dotted name checked by visudo and then moved; the rule lands after the
+// thin rule and before the daemon's files.
+func TestDeployInstallsNetHelperAndSudoers(t *testing.T) {
+	e, _, hv := newRemoteEnv(t)
+	lx, sd := e.get("LIBEXEC_DIR"), e.get("SUDOERS_DIR")
+	r := e.deploy(t, nil, "PLACEHOLDER-HOST")
+	if r.code != 0 {
+		t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
+	}
+	if errs := readOr(t, filepath.Join(e.stub, "errors")); errs != "" {
+		t.Error(errs)
+	}
+	list := readOr(t, filepath.Join(e.stub, "installed.list"))
+	if !strings.Contains(list, lx+"/vmtool-thin 0755\n"+sd+"/vmtool-thin.tmp 0440\n"+lx+"/vmtool-net 0755\n"+sd+"/vmtool-net.tmp 0440\n"+hv+"/vmtool 0755\n") {
+		t.Errorf("installed.list:\n%s", list)
+	}
+	if got, want := readOr(t, filepath.Join(e.stub, "installed", "vmtool-net")), readOr(t, "../deploy/vmtool-net"); got != want || got == "" {
+		t.Error("installed vmtool-net differs from deploy/vmtool-net")
+	}
+	if seq := readOr(t, filepath.Join(e.stub, "seq")); seq != "visudo "+sd+"/vmtool-thin.tmp final=no\nvisudo "+sd+"/vmtool-net.tmp final=no\n" {
+		t.Errorf("visudo calls %q", seq)
+	}
+	if got := readOr(t, filepath.Join(sd, "vmtool-net")); got != netSudoersLine {
+		t.Errorf("sudoers file %q", got)
+	}
+	if m := fileMode(t, filepath.Join(sd, "vmtool-net")); m != 0o440 {
+		t.Errorf("sudoers mode %v", m)
+	}
+	if _, err := os.Stat(filepath.Join(sd, "vmtool-net.tmp")); err == nil {
+		t.Error("temporary sudoers file left behind")
+	}
+	sudo := readOr(t, filepath.Join(e.stub, "sudo.argv"))
+	if strings.Contains(sudo, "-o vmtool -g vmtool -m 0755 \"$1/vmtool-net\"") {
+		t.Error("the helper is installed owned by vmtool")
+	}
+	if strings.Index(sudo, "mv "+sd+"/vmtool-net.tmp") > strings.Index(sudo, hv+"/vmtool") {
+		t.Errorf("the daemon is installed before the net rule: %q", sudo)
 	}
 }
 

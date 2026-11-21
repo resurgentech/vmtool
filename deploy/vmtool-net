@@ -1,0 +1,127 @@
+#!/bin/bash
+# vmtool-net: the one root-owned helper through which the vmtool daemon makes
+# the VXLAN links between hosts' vmtool networks.
+#
+#   sudo -n /usr/local/libexec/vmtool-net <verb> <args>
+#
+# Installed by `just deploy` (scripts/deploy.sh) as root:root 0755, never
+# owned by the vmtool user, with a sudoers rule that lets user vmtool run
+# this one file as root. The daemon may be compromised, so every argument is
+# validated here and the helper acts only on devices it names itself:
+#   - the VXLAN device vx<VNI>, made, replaced and removed here and nowhere
+#     else; its master is a bridge vmt-<six hex digits> that exists and whose
+#     digits are the VNI (vmtool's rule: the bridge name carries the VNI);
+#   - flood entries on that device and no other;
+#   - report only reads.
+# It never passes a caller-supplied option to ip or bridge: every value is
+# checked against a fixed pattern before it is used, and none can start with
+# a dash. libvirt work (networks, bridges, cards) stays with the daemon as
+# user vmtool; this helper never runs virsh.
+#
+# Verbs (a refusal prints one line to stderr and exits non-zero):
+#   link VNI BRIDGE LOCAL_IP DEV PEER...   make or replace vx<VNI>, flood to
+#                                          exactly the PEERs, master it to
+#                                          BRIDGE, bring it up; idempotent
+#   unlink VNI                             remove vx<VNI> (none: success)
+#   report                                 {"links":<ip JSON>,"fdb":<bridge JSON>}
+#
+# VNI is 1..16777215, decimal, no leading zero. BRIDGE must be vmt- plus six
+# lowercase hex digits equal to the VNI, and exist as a bridge. LOCAL_IP and
+# each PEER are dotted-quad IPv4 addresses (no 0.x, 127.x or 224 and up; a
+# peer is never LOCAL_IP). DEV is an existing interface that is not lo,
+# vmt-*, vx*, virbr* or vnet*, at most 15 characters. Any number of PEERs,
+# none included; a repeated peer is added once. link replaces an existing
+# vx<VNI> (deleted, then made again), so its flood entries are exactly the
+# ones given; a step that fails after the device was made deletes it again.
+set -euo pipefail
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+export LC_ALL=C
+umask 022
+
+# Where interfaces are looked up (the one line a test rewrites).
+sysnet=/sys/class/net
+
+die() { echo "vmtool-net: $*" >&2; exit 1; }
+
+dev_re='^[A-Za-z0-9][A-Za-z0-9._-]{0,14}$'
+ipv4_re='^(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})$'
+
+# check_vni V: decimal 1..16777215, no leading zero.
+check_vni() {
+  [[ $1 =~ ^[1-9][0-9]{0,7}$ ]] && (( $1 <= 16777215 )) || die "invalid VNI"
+}
+
+# check_ipv4 WHAT ADDR: a usable unicast IPv4 address.
+check_ipv4() {
+  local what=$1 a=$2 i
+  [[ $a =~ $ipv4_re ]] || die "invalid $what"
+  local o=("${BASH_REMATCH[@]:1}")
+  for i in 0 1 2 3; do
+    (( o[i] <= 255 )) || die "invalid $what"
+  done
+  (( o[0] != 0 && o[0] != 127 && o[0] < 224 )) || die "invalid $what"
+}
+
+verb=${1:-}
+[[ -n $verb ]] || die "usage: link|unlink|report"
+shift
+nargs=$#
+
+case "$verb" in
+  link)
+    (( nargs >= 4 )) || die "link: wrong number of arguments"
+    vni=$1 bridge=$2 local_ip=$3 dev=$4
+    shift 4
+    check_vni "$vni"
+    [[ $bridge =~ ^vmt-[0-9a-f]{6}$ ]] || die "invalid bridge name"
+    printf -v want_bridge 'vmt-%06x' "$vni"
+    [[ $bridge == "$want_bridge" ]] || die "bridge does not match the VNI"
+    [[ -d $sysnet/$bridge/bridge ]] || die "bridge does not exist"
+    check_ipv4 "local address" "$local_ip"
+    [[ $dev =~ $dev_re ]] || die "invalid interface"
+    case "$dev" in
+      lo|vmt-*|vx*|virbr*|vnet*) die "interface not allowed" ;;
+    esac
+    [[ -e $sysnet/$dev ]] || die "interface does not exist"
+    peers=()
+    for p in "$@"; do
+      check_ipv4 "peer address" "$p"
+      [[ $p != "$local_ip" ]] || die "peer is the local address"
+      seen=
+      for q in "${peers[@]+"${peers[@]}"}"; do
+        [[ $q != "$p" ]] || seen=1
+      done
+      [[ -n $seen ]] || peers+=("$p")
+    done
+    vx="vx$vni"
+    if [[ -e $sysnet/$vx ]]; then
+      ip link del "$vx" || die "cannot remove the old device"
+    fi
+    ip link add "$vx" type vxlan id "$vni" dstport 4789 local "$local_ip" dev "$dev" \
+      || die "cannot make the device"
+    # From here a failure removes the device we made.
+    fail() { ip link del "$vx" >/dev/null 2>&1 || true; die "$1"; }
+    ip link set "$vx" master "$bridge" || fail "cannot attach the device to the bridge"
+    for p in "${peers[@]+"${peers[@]}"}"; do
+      bridge fdb append 00:00:00:00:00:00 dev "$vx" dst "$p" || fail "cannot add a flood entry"
+    done
+    ip link set "$vx" up || fail "cannot bring the device up"
+    ;;
+  unlink)
+    (( nargs == 1 )) || die "unlink: wrong number of arguments"
+    check_vni "$1"
+    if [[ -e $sysnet/vx$1 ]]; then
+      ip link del "vx$1" || die "cannot remove the device"
+    fi
+    ;;
+  report)
+    (( nargs == 0 )) || die "report: wrong number of arguments"
+    links=$(ip -j -d link show type vxlan) || die "cannot list the links"
+    fdb=$(bridge -j fdb show) || die "cannot list the flood entries"
+    printf '{"links":%s,"fdb":%s}\n' "$links" "$fdb"
+    ;;
+  *)
+    die "unknown verb"
+    ;;
+esac
