@@ -28,6 +28,12 @@ type Manager interface {
 	ImagePath(name string) (string, error)
 	ListNetworks() ([]string, error)
 	ListBridges() ([]string, error)
+	// CreateNetwork, Network and DeleteNetwork are named vmtool networks on
+	// one host; Service.CreateNetwork, Network and DeleteNetwork are the
+	// workflows over them.
+	CreateNetwork(name, subnet, domain string) (*vmtool.NetworkInfo, error)
+	Network(name string) (*vmtool.NetworkInfo, error)
+	DeleteNetwork(name string) error
 	ListImagesByPool() (map[string][]string, error)
 	DeleteImage(name, pool string) error
 	ListPools() ([]vmtool.PoolInfo, error)

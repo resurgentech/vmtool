@@ -79,6 +79,15 @@ func (f *fakeMgr) ImagePath(n string) (string, error) {
 }
 func (f *fakeMgr) ListNetworks() ([]string, error) { f.rec("ListNetworks"); return nil, f.err }
 func (f *fakeMgr) ListBridges() ([]string, error)  { f.rec("ListBridges"); return nil, f.err }
+func (f *fakeMgr) CreateNetwork(n, s, d string) (*vmtool.NetworkInfo, error) {
+	f.rec("CreateNetwork %s %s %s", n, s, d)
+	return &vmtool.NetworkInfo{Name: n}, f.err
+}
+func (f *fakeMgr) Network(n string) (*vmtool.NetworkInfo, error) {
+	f.rec("Network %s", n)
+	return &vmtool.NetworkInfo{Name: n}, f.err
+}
+func (f *fakeMgr) DeleteNetwork(n string) error { f.rec("DeleteNetwork %s", n); return f.err }
 func (f *fakeMgr) ListImagesByPool() (map[string][]string, error) {
 	f.rec("ListImagesByPool")
 	return nil, f.err

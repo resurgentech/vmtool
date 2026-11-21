@@ -273,6 +273,7 @@ it checks the bearer token of every request instead.`,
 		commentCmd(e),
 		interactiveCmd(e),
 		networksCmd(e),
+		netCmd(e),
 		bridgesCmd(e),
 		playbookCmd(e),
 		imagesCmd(e),
@@ -1040,16 +1041,20 @@ func interactiveCmd(e *env) *cobra.Command {
 func networksCmd(e *env) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "networks",
-		Short: "List available libvirt networks",
+		Short: "List available libvirt networks (vmtool's are marked)",
 	}
 	host := hostFlag(cmd)
 	cmd.RunE = withHost(e, host, func(m app.Manager, cmd *cobra.Command, args []string) error {
-		nets, err := e.service("").ListNetworks(cmd.Context(), m)
+		nets, err := e.service("").ListNetworkMarks(cmd.Context(), m)
 		if err != nil {
 			return err
 		}
 		for _, n := range nets {
-			fmt.Println(n)
+			if n.Vmtool {
+				fmt.Fprintf(cmd.OutOrStdout(), "%s (vmtool)\n", n.Name)
+			} else {
+				fmt.Fprintln(cmd.OutOrStdout(), n.Name)
+			}
 		}
 		return nil
 	})

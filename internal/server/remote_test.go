@@ -105,6 +105,45 @@ func (f *rtMgr) ListNetworks() ([]string, error) {
 	return []string{"default", "lab"}, nil
 }
 func (f *rtMgr) ListBridges() ([]string, error) { f.rec("ListBridges"); return []string{"br0"}, nil }
+
+// rtNet is the fully populated network the fake answers with.
+func rtNet(name string) *vmtool.NetworkInfo {
+	return &vmtool.NetworkInfo{Name: name, Bridge: "vmt-000001", VNI: 1, Vmtool: true, Forward: "nat", Subnet: "10.77.1.0/24",
+		Gateway: "10.77.1.1", Domain: name + ".test", MTU: 1450, DHCPStart: "10.77.1.100", DHCPEnd: "10.77.1.200",
+		Active: true, Autostart: true, VMs: []string{"vm1"}}
+}
+
+func (f *rtMgr) CreateNetwork(name, subnet, domain string) (*vmtool.NetworkInfo, error) {
+	f.rec("CreateNetwork %s %s %s", name, subnet, domain)
+	switch name {
+	case "taken":
+		return nil, fmt.Errorf("a libvirt network named %q already exists: %w", name, vmtool.ErrNetworkExists)
+	case "clash":
+		return nil, fmt.Errorf("subnet %s overlaps route 192.0.2.0/24: %w", subnet, vmtool.ErrSubnetOverlap)
+	}
+	return rtNet(name), nil
+}
+
+func (f *rtMgr) Network(name string) (*vmtool.NetworkInfo, error) {
+	f.rec("Network %s", name)
+	if name == "ghost" {
+		return nil, fmt.Errorf("network %q: %w", name, vmtool.ErrNotFound)
+	}
+	return rtNet(name), nil
+}
+
+func (f *rtMgr) DeleteNetwork(name string) error {
+	f.rec("DeleteNetwork %s", name)
+	switch name {
+	case "ghost":
+		return fmt.Errorf("network %q: %w", name, vmtool.ErrNotFound)
+	case "default":
+		return fmt.Errorf("network %q: %w", name, vmtool.ErrNetworkNotVmtool)
+	case "busy":
+		return fmt.Errorf("network %q has VMs attached: vm1, vm2: %w", name, vmtool.ErrNetworkInUse)
+	}
+	return nil
+}
 func (f *rtMgr) ListImagesByPool() (map[string][]string, error) {
 	f.rec("ListImagesByPool")
 	return map[string][]string{"default": {"a.qcow2", "b.qcow2"}, "fast": {"c.qcow2"}}, nil

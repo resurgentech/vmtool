@@ -56,6 +56,14 @@ func (c cliFake) ListNetworks() ([]string, error) {
 	c.rec("ListNetworks")
 	return []string{c.host + "-net"}, nil
 }
+
+// The network operations answer for real (and are not recorded in ops, so a
+// listing still reads as one ListNetworks); see network_test.go.
+func (c cliFake) CreateNetwork(name, subnet, domain string) (*vmtool.NetworkInfo, error) {
+	return c.f.netCreate(c.host, name, subnet, domain)
+}
+func (c cliFake) Network(name string) (*vmtool.NetworkInfo, error) { return c.f.netShow(c.host, name) }
+func (c cliFake) DeleteNetwork(name string) error                  { return c.f.netDelete(c.host, name) }
 func (c cliFake) ListBridges() ([]string, error) {
 	c.rec("ListBridges")
 	return []string{c.host + "-br"}, nil
@@ -92,6 +100,7 @@ type fakeHosts struct {
 	mu     sync.Mutex
 	ops    []string
 	tokens []string
+	netOps []string // network operations (network_test.go)
 }
 
 func installFakeHosts(t *testing.T) *fakeHosts {

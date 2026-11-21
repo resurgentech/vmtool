@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: vmtool API
-  version: 2.6.0
+  version: 2.7.0
   description: >
     HTTP surface of `vmtool server`. Spec-first: models, stdlib ServerInterface,
     embedded spec, and a test client are generated from this file. Metal and
@@ -691,6 +691,71 @@ paths:
               schema: { type: array, items: { type: string } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+    post:
+      operationId: createNetwork
+      summary: Create a named vmtool network on this host
+      description: >
+        Makes a libvirt network that is vmtool's: NAT, bridge `vmt-` plus six
+        lowercase hex digits, MTU 1450, a `localOnly` DNS domain, DHCP range
+        .100 to .200 of a /24, autostart, started. vmtool writes no metadata
+        of its own into the definition. `name` follows the VM name rule and
+        is never `default`. `subnet` is a /24 CIDR; omitted, it is the first
+        /24 of 10.77.0.0/16 that no libvirt network or route on the host
+        uses. A `subnet` that overlaps a libvirt network or route on the host
+        is 400, naming the overlap. A network of that name already on the
+        host is 409. `domain` omitted is `<name>.test`. Needs no store.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateNetworkRequest' }
+      responses:
+        '201':
+          description: network created and started
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NetworkInfo' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+  /v1/hosts/{host}/networks/{name}:
+    parameters:
+      - $ref: '#/components/parameters/HostName'
+      - name: name
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: getNetwork
+      summary: Show one libvirt network
+      description: >
+        Any libvirt network on the host, active or not. `vmtool` is true
+        exactly when the network's bridge is `vmt-` plus six lowercase hex
+        digits; those digits are its VNI.
+      responses:
+        '200':
+          description: the network
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NetworkInfo' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+    delete:
+      operationId: deleteNetwork
+      summary: Destroy and undefine a vmtool network
+      description: >
+        Refuses a network whose bridge is not `vmt-` plus six lowercase hex
+        digits (409, "not made by vmtool") and one with VMs attached (409,
+        naming them). Otherwise destroys (when active) and undefines it.
+      responses:
+        '204': { description: deleted }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
   /v1/hosts/{host}/bridges:
     parameters:
@@ -2383,6 +2448,34 @@ components:
       properties:
         path: { type: string, description: "volume path; must resolve inside a storage pool" }
         target: { type: string, description: "guest virtio device name (vdb, vdc, …)" }
+    CreateNetworkRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, description: "follows the VM name rule; never `default`" }
+        subnet: { type: string, description: "a /24 CIDR such as 10.77.1.0/24; omitted picks the first free /24 of 10.77.0.0/16" }
+        domain: { type: string, description: "DNS domain; omitted is <name>.test" }
+    NetworkInfo:
+      type: object
+      required: [name, vmtool, active, autostart, vms]
+      properties:
+        name: { type: string }
+        vmtool: { type: boolean, description: "true exactly when the bridge is vmt- plus six lowercase hex digits" }
+        bridge: { type: string }
+        vni: { type: integer, minimum: 0, description: "the bridge's six hex digits as a number; set only when vmtool is true" }
+        forward: { type: string, description: "forward mode (nat, route, bridge, …); omitted for an isolated network" }
+        subnet: { type: string, description: "CIDR of the network's IPv4 address, e.g. 10.77.1.0/24" }
+        gateway: { type: string }
+        domain: { type: string }
+        mtu: { type: integer }
+        dhcp_start: { type: string }
+        dhcp_end: { type: string }
+        active: { type: boolean }
+        autostart: { type: boolean }
+        vms:
+          type: array
+          description: "VMs with a card on this network"
+          items: { type: string }
     DefineVMRequest:
       type: object
       description: >

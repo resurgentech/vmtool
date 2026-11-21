@@ -2034,3 +2034,25 @@ are appended, never edited in; a hook refuses rewrites.
   bare name and `--noclone`); green; `just -f packer_images/justfile check`
   and `just check` green.
 - Commits: the F3 commit on `clone-identity`.
+
+## 2026-11-21 — V1 Named networks on one host
+
+- API 2.7.0: `POST /v1/hosts/{host}/networks`, `GET` and `DELETE
+  /v1/hosts/{host}/networks/{name}`, schemas `CreateNetworkRequest` and
+  `NetworkInfo`; `listNetworks` unchanged (names).
+- `pkg/vmtool/netdef.go` (pure): the home form of the network XML (NAT,
+  bridge `vmt-<6 hex>` stp off, MTU 1450, `localOnly` domain default
+  `<name>.test`, DHCP .100–.200, no `<metadata>`), its parser, the bridge
+  rule (`BridgeVNI`, `BridgeName`), the name rule (VM name rule, at most 63,
+  not `default`), `/proc/net/route` parsing, `PlanNetwork` (given subnet or
+  the first free /24 of 10.77.0.0/16 against libvirt networks and routes,
+  overlap 400; lowest free local bridge number 1–9999) and
+  `CheckNetworkDeletable` (409 not made by vmtool, 409 naming attached VMs).
+  `pkg/vmtool/netlibvirt.go`: define, autostart, start; destroy, undefine.
+- `internal/app` `CreateNetwork`, `Network`, `DeleteNetwork`,
+  `ListNetworkMarks`; server handlers; remote client; CLI `vmtool net
+  create|delete|show`, `networks` marks `name (vmtool)`; TUI read-only
+  network list on `N`; spec/README section. Local mode only; no store.
+- Red: assertion failures against stub `netdef.go` and stub app methods;
+  green; `just check` green.
+- Commits: the V1 commit on `clone-identity`.

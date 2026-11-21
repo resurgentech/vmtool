@@ -43,6 +43,7 @@ const (
 	modeTemplates
 	modeSaveTemplate
 	modeInventory
+	modeNetworks
 )
 
 type pane int
@@ -258,6 +259,10 @@ type model struct {
 	invData       *app.Inventory
 	invErr        error
 	invGone       bool
+	// network list (modeNetworks): this host's networks, vmtool's marked.
+	netMarks  []app.NetworkMark
+	netErr    error
+	netLoaded bool
 	// notes are the VMs' origin and comment, read from the store with each
 	// refresh (app.Service.AllNotes); nil when the store was not read.
 	notes map[app.VMRef]app.VMNotes
@@ -572,8 +577,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case networksMsg:
+		if m.mode == modeNetworks {
+			m.netMarks, m.netErr, m.netLoaded = msg.marks, msg.err, true
+		}
+		return m, nil
+
 	case tea.KeyMsg:
 		switch m.mode {
+		case modeNetworks:
+			return m.updateNetworks(msg)
 		case modeConfirm:
 			return m.updateConfirm(msg)
 		case modeOutput:
@@ -670,6 +683,10 @@ func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "I":
 		if m.focus == paneVMs {
 			return m.enterInventoryMode()
+		}
+	case "N":
+		if m.focus == paneVMs {
+			return m.enterNetworksMode()
 		}
 	case "W":
 		if vm, ok := m.selectedVM(); ok && m.focus == paneVMs {
@@ -1501,6 +1518,8 @@ func (m model) View() string {
 		return b.String() + m.viewSaveTemplate()
 	case modeInventory:
 		return b.String() + m.viewInventory()
+	case modeNetworks:
+		return b.String() + m.viewNetworks()
 	}
 
 	// --- VM list pane ---
@@ -1628,7 +1647,7 @@ func (m model) View() string {
 
 	b.WriteString("\n")
 	if m.focus == paneVMs {
-		b.WriteString(helpStyle.Render("c=create  m=add machine  s=start/stop  b=reboot  a=autostart  p=playbook  T=templates  I=inventory  W=save template  t=ssh  D=delete/forget  r=refresh  tab=log  q=quit"))
+		b.WriteString(helpStyle.Render("c=create  m=add machine  s=start/stop  b=reboot  a=autostart  p=playbook  T=templates  I=inventory  N=networks  W=save template  t=ssh  D=delete/forget  r=refresh  tab=log  q=quit"))
 	} else {
 		b.WriteString(helpStyle.Render("enter=view output  tab=vms  q=quit"))
 	}

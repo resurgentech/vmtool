@@ -737,6 +737,39 @@ with requests.post(f"{BASE}/v1/hosts/hv1/vms", headers=headers, json=body,
             raise SystemExit(f"{ev['kind']}: {ev['error']}")
 ```
 
+## Named networks on one host (API 2.7.0)
+
+`POST /v1/hosts/{host}/networks` (`createNetwork`), `GET` and `DELETE
+/v1/hosts/{host}/networks/{name}` (`getNetwork`, `deleteNetwork`). They need no
+store and no ssh: the host's own libvirt does the work. `GET
+/v1/hosts/{host}/networks` (`listNetworks`) is unchanged, a list of names; the
+CLI's `vmtool networks` marks vmtool's by asking `getNetwork` for each name.
+
+- **What a vmtool network is.** A libvirt network whose bridge is `vmt-` plus
+  six lowercase hex digits; those digits are its VNI (`NetworkInfo.vni`, set
+  when `vmtool` is true). vmtool writes no annotation and no `<metadata>` into
+  the definition, so a network is vmtool's by its bridge name and by nothing
+  else. A network without such a bridge, `default` included, is never touched
+  by delete.
+- **Create** makes the home form: `<forward mode='nat'/>`, `<bridge
+  name='vmt-NNNNNN' stp='off'/>`, `<mtu size='1450'/>`, `<domain
+  name='<domain>' localOnly='yes'/>`, an `<ip>` of .1 of the /24 with DHCP over
+  .100 to .200, set to autostart and started. `name` follows the VM name rule
+  (letters, digits, `.`, `_`, `-`, at most 63) and is never `default`; `domain`
+  defaults to `<name>.test`; `subnet` is an IPv4 /24 written as its network
+  address, or omitted for the first /24 of 10.77.0.0/16 that no libvirt network
+  and no route on the host uses. With no store the bridge number is the lowest
+  free one from 1 (the registry of a later step hands out 10000 and up, so the
+  two never collide). Answers: `201` with the `NetworkInfo`; `400` for a bad
+  name, subnet or domain and for a subnet that overlaps a libvirt network or a
+  route (the message names it); `409` for a name a libvirt network already has
+  and for no free /24; `404` for an unknown host.
+- **Delete** answers `204`; `409` for a network that is not vmtool's ("not made
+  by vmtool") and for one with VMs attached (the message names them); `404` for
+  a network the host does not have.
+- **VMs are not changed.** `create`'s `--net-type` behaviour is as before; a
+  VM keeps its own NAT card first, and nothing here attaches a card.
+
 ## GET / pattern
 
 PR1 records the exact std-http pattern oapi-codegen emits for the root after

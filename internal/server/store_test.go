@@ -257,7 +257,7 @@ func TestSpecDocumentsWarningsHeader(t *testing.T) {
 	if !strings.Contains(doc.Info.Description, warnHeader) {
 		t.Errorf("info.description does not document %s", warnHeader)
 	}
-	if doc.Info.Version != "2.6.0" {
-		t.Errorf("API version %s: want 2.6.0", doc.Info.Version)
+	if doc.Info.Version != "2.7.0" {
+		t.Errorf("API version %s: want 2.7.0", doc.Info.Version)
 	}
 }
