@@ -362,32 +362,17 @@ func (r *InventoryReporter) build(add bool) (storeclient.HostReport, error) {
 	return storeclient.HostReport{GeneratedAt: r.c.Now(), DaemonVersion: r.c.Version, Vms: out}, nil
 }
 
+// reportVM is one VM of the report: what its host knows. It carries no
+// origin and no comment: those are the VM's notes, which only the
+// workstation writes to the store.
 func reportVM(v vmtool.VMInfo, disks []InventoryDisk) storeclient.ReportVM {
-	comment := v.Comment // always sent: "" clears the store's copy
 	rv := storeclient.ReportVM{
 		Name: v.Name, Uuid: v.UUID, State: string(v.State), Vcpus: int(v.VCPUs), Memory: int(v.Memory),
-		Ip: v.IP, Autostart: v.Autostart, Firmware: v.Firmware, Comment: &comment,
+		Ip: v.IP, Autostart: v.Autostart, Firmware: v.Firmware,
 		Disks: make([]storeapi.Disk, 0, len(disks)),
 	}
 	for _, d := range disks {
 		rv.Disks = append(rv.Disks, storeapi.Disk{Target: d.Target, Pool: d.Pool, Kind: storeapi.DiskKind(d.Kind), CapacityBytes: d.CapacityBytes})
-	}
-	if o := v.Origin; o != nil {
-		so := &storeapi.VMOrigin{}
-		set := func(dst **string, s string) {
-			if s != "" {
-				*dst = &s
-			}
-		}
-		set(&so.Image, o.Image)
-		set(&so.ImageSha256, o.ImageSHA256)
-		set(&so.Template, o.Template)
-		set(&so.Clone, o.CloneKind)
-		set(&so.Pool, o.Pool)
-		if !o.Created.IsZero() {
-			set(&so.Created, o.Created.UTC().Format(time.RFC3339))
-		}
-		rv.Origin = so
 	}
 	return rv
 }

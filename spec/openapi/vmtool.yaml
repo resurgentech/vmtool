@@ -181,6 +181,11 @@ paths:
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '503':
+          description: A comment was given and no store is in use (comments are kept in the store); nothing was created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
   /v1/hosts/{host}/vms/{name}:
     parameters:
       - $ref: '#/components/parameters/HostName'
@@ -323,16 +328,22 @@ paths:
       - $ref: '#/components/parameters/VMName'
     put:
       operationId: setVMComment
+      x-vmtool-workstation-only: true
       summary: Set or clear a VM's comment (API 2.6.0)
       description: >
-        The comment is optional free text kept with the VM, in the domain's
-        own definition (libvirt domain metadata, in vmtool's namespace). It is
-        not a secret: it is stored in plain text. At most 512 bytes of UTF-8,
-        on one line, with no control characters; an empty string clears it.
-        The daemon writes it to the persistent definition and, when the VM
-        runs, to the running domain, without redefining the VM. A comment
-        that breaks a rule is 400, and the message names `comment`. Answers
-        the VM, whose `comment` is the stored value.
+        The comment is optional free text about a VM, kept in the store only,
+        in the VM's notes (vmtool writes nothing of its own into a VM's
+        libvirt definition). It is not a secret: it is stored in plain text.
+        At most 512 bytes of UTF-8, on one line, with no control characters;
+        an empty string clears it. The workstation writes it to its
+        configured store; the VM's host is not asked, so this works while the
+        host sleeps. The store needs a live inventory row of (host, name): 404
+        when it has no row for that VM, 409 when the row is gone. A comment
+        that breaks a rule is 400, and the message names `comment`. With no
+        store configured, or one that does not answer, the answer is 503.
+        Answers the VM's notes as the store keeps them. Read origin and
+        comment through `GET /v1/inventory`.
+        Served by the workstation only: on a server whose config.yml role is hypervisor this operation answers 403 "served by the workstation" before reading the body.
       requestBody:
         required: true
         content:
@@ -340,14 +351,21 @@ paths:
             schema: { $ref: '#/components/schemas/CommentRequest' }
       responses:
         '200':
-          description: VM
+          description: the VM's notes
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/VMInfo' }
+              schema: { $ref: '#/components/schemas/VMNotes' }
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/WorkstationOnly' }
         '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '503':
+          description: No store is configured, or the store did not answer.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
   /v1/hosts/{host}/vms/{name}/exec:
     parameters:
       - $ref: '#/components/parameters/HostName'
@@ -1771,29 +1789,20 @@ components:
         uuid:
           type: string
           description: The libvirt domain UUID. Omitted when unknown or by a daemon that predates the field (API 2.3.0).
-        origin:
-          $ref: '#/components/schemas/VMOrigin'
-        comment:
-          type: string
-          description: The VM's comment (API 2.6.0), read from the domain's metadata. Omitted when there is none, for a VM vmtool did not give one, or by a daemon that predates the field.
-    VMOrigin:
+    VMNotes:
       type: object
       description: >
-        What a VM was made from and how (API 2.6.0), recorded by vmtool when it
-        creates the VM and kept in the domain's metadata. Omitted for a VM made
-        before 2.6.0 or outside vmtool.
-      required: [clone_kind]
+        What the store keeps about a VM besides what its host reports (API
+        2.6.0): its origin, recorded once by the workstation's create when a
+        store is in use, and its comment. Kept in the store only, in plain
+        text.
+      required: [host, name, uuid, comment]
       properties:
-        image: { type: string, description: The image name the create named. }
-        image_sha256: { type: string, description: "SHA-256 of the image (64 lowercase hex), when the create knew it." }
-        template: { type: string, description: The thin template the disk is a snapshot of (clone_kind thin). }
-        template_lv: { type: string, description: The template's logical volume name (clone_kind thin). }
-        clone_kind:
-          type: string
-          enum: [thin, block, file, none]
-          description: thin = snapshot of a template in a thin pool; block = copy to a logical volume; file = copy to a qcow2 file; none = booted in place (noclone).
-        pool: { type: string, description: The storage pool the disk was made in; empty is the host's default pool. }
-        created: { type: string, format: date-time, description: When vmtool created the VM (the workstation's clock). }
+        host: { type: string }
+        name: { type: string }
+        uuid: { type: string }
+        origin: { $ref: '#/components/schemas/InventoryOrigin' }
+        comment: { type: string, description: Empty when there is none. }
     InventoryHost:
       type: object
       required: [name, last_report, daemon_version, live, gone]
@@ -1813,14 +1822,17 @@ components:
         kind: { type: string, enum: [file, block, thin] }
     InventoryOrigin:
       type: object
-      description: What a VM was made from, as its daemon reported it. Omitted for a VM vmtool did not create.
+      description: >
+        What a VM was made from, recorded in the store once, by the
+        workstation's create, when a store is in use. Omitted for a VM vmtool
+        did not create, or created with no store in use.
       properties:
-        image: { type: string }
-        image_sha256: { type: string }
-        template: { type: string }
-        clone: { type: string }
-        pool: { type: string }
-        created: { type: string, description: Creation time as the daemon wrote it. }
+        image: { type: string, description: The image name the create named. }
+        image_sha256: { type: string, description: "SHA-256 of the image (64 lowercase hex), when the create knew it." }
+        template: { type: string, description: The thin template the disk is a snapshot of (clone thin). }
+        clone: { type: string, description: "thin = snapshot of a template in a thin pool; block = copy to a logical volume; file = copy to a qcow2 file; none = booted in place (noclone)." }
+        pool: { type: string, description: The storage pool the disk was made in. }
+        created: { type: string, description: When vmtool created the VM (RFC 3339, the workstation's clock). }
     InventoryVM:
       type: object
       required: [host, name, uuid, state, vcpus, memory, ip, autostart, firmware, disks, comment, first_seen, last_seen, has_credentials]
@@ -1951,9 +1963,15 @@ components:
           type: string
           maxLength: 512
           description: >
-            Optional comment kept with the VM (API 2.6.0): at most 512 bytes of
-            UTF-8, one line, no control characters, stored in plain text. 400
-            naming `comment` when it breaks a rule.
+            Optional comment (API 2.6.0), kept in the store only, in the VM's
+            notes, with its origin: at most 512 bytes of UTF-8, one line, no
+            control characters, stored in plain text. 400 naming `comment`
+            when it breaks a rule; 503 before anything is created when no
+            store is in use (comments are kept in the store). With a store in
+            use, the create records the VM's origin in the store whether or
+            not a comment is given; if the store fails after the VM is
+            defined, the create still succeeds and says the notes were not
+            saved.
     MachineInfo:
       type: object
       required: [name, kind, host, state]
@@ -2402,19 +2420,6 @@ components:
             Cache mode written on every disk driver of the domain. Travels
             explicitly from the workstation, which resolved the default;
             omitted means no cache attribute (the daemon does not guess).
-        origin:
-          $ref: '#/components/schemas/VMOrigin'
-          description: >
-            What the VM was made from (API 2.6.0), written into the domain's
-            metadata. Optional: a client that omits it (older than 2.6.0)
-            makes a VM with no origin, and a daemon older than 2.6.0 ignores it.
-        comment:
-          type: string
-          maxLength: 512
-          description: >
-            The VM's comment (API 2.6.0), written into the domain's metadata
-            with the origin. At most 512 bytes of UTF-8, one line, no control
-            characters. 400 naming `comment` when it breaks a rule.
     WaitIPRequest:
       type: object
       properties:

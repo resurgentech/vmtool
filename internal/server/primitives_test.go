@@ -62,10 +62,6 @@ func (f *fakeMgr) SetAutostart(n string, e bool) error {
 	f.rec("SetAutostart %s %v", n, e)
 	return f.err
 }
-func (f *fakeMgr) SetComment(n, c string) error {
-	f.rec("SetComment %s %s", n, c)
-	return f.err
-}
 func (f *fakeMgr) Reboot(n string) error              { f.rec("Reboot %s", n); return f.err }
 func (f *fakeMgr) ResizeDisk(n string, gb uint) error { f.rec("ResizeDisk %s %d", n, gb); return f.err }
 func (f *fakeMgr) MigrateDisk(n, p string) error      { f.rec("MigrateDisk %s %s", n, p); return f.err }
@@ -458,7 +454,7 @@ func TestWorkstationOnlySet(t *testing.T) {
 		"addMachine", "createVM", "execMachine", "execVM", "getInventory", "getMachine",
 		"listMachines", "listPlaybooks", "openMachineConsole", "openVMConsole",
 		"rebootMachine", "removeMachine", "resizeDisk", "runMachinePlaybook",
-		"runPlaybook",
+		"runPlaybook", "setVMComment",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("workstation-only operations\n got %v\nwant %v", got, want)

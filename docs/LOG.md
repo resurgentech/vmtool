@@ -1952,3 +1952,35 @@ are appended, never edited in; a hook refuses rewrites.
 - `scripts/stream_docs_test.go`: `TestStreamedCreateDocsKeywords`. Red on 20
   missing phrases; green; `just check` green.
 - Commits: the P3 commit on `clone-identity`.
+
+## 2026-11-21 — N12 vmtool's own notes about a VM (origin and comment) live in the store only
+
+- vmtool writes nothing of its own into a libvirt definition: `pkg/vmtool`
+  loses `metadata.go` (the `urn:vmtool:vm:1` element, `SetComment`) and the
+  origin/comment fields of `VMConfig` and `VMInfo`; `domainXML` writes no
+  `<metadata>`; a domain still carrying the old element defines, lists and
+  reports without error. Removed from the API (no version bump, nothing
+  deployed): `DefineVMRequest.origin`/`.comment`, `VMInfo.origin`/`.comment`,
+  `VMOrigin`, the daemon's `setVMComment`, the report's origin/comment; from
+  `internal/remote`, `internal/server` (`origin.go`), `internal/hosts`
+  (`thinOrigin`) and the reporter.
+- Store: migration 4 adds `vm_notes` keyed (host, uuid), copies the `vms`
+  origin and comment columns over and drops them; the inventory listing joins
+  it; one new user-token route `PUT /v1/inventory/{host}/{name}/notes`
+  (origin once, same again 200, different 409; comment 512 bytes one line,
+  empty clears, 409 on a gone row; with `uuid` before the first report); no
+  report touches notes; explicit delete and the sweep remove them; orphan
+  notes swept 7 days after their last write; host tokens 401.
+- Workstation: `setVMComment` is workstation-only and writes the store (also
+  while the host sleeps; 503 with no store). Create writes origin (template
+  found through the host's templates for thin clones) and the comment after
+  define; local mode records nothing and refuses `--comment` before any
+  Manager call; a store failure after define prints one line and create
+  succeeds. `vmtool info` and the TUI show notes from the store. New package
+  `internal/vmnotes` (comment rule, clone kinds, `Origin`).
+- Docs: README's and spec/README's "a VM's notes in the store";
+  `scripts/notes_docs_test.go` pins it.
+- Red: compile failures on the missing symbols (store, db, vmnotes, app,
+  cli, tui); green on the new store, db, app, cli, server, tui, storeclient
+  and docs tests; `just check` green.
+- Commits: the N12 commit on `clone-identity`.

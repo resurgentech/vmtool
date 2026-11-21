@@ -117,8 +117,10 @@ type InventoryHost struct {
 
 // InventoryVM defines model for InventoryVM.
 type InventoryVM struct {
-	Autostart bool   `json:"autostart"`
-	Comment   string `json:"comment"`
+	Autostart bool `json:"autostart"`
+
+	// Comment From the VM's notes; empty when there is none.
+	Comment string `json:"comment"`
 
 	// CredentialsKeptUntil On a gone VM, when the sweep removes the row and its login.
 	CredentialsKeptUntil *time.Time `json:"credentials_kept_until,omitempty"`
@@ -140,7 +142,7 @@ type InventoryVM struct {
 	Memory int    `json:"memory"`
 	Name   string `json:"name"`
 
-	// Origin What a VM was made from; known only when vmtool created it.
+	// Origin What a VM was made from; known only when vmtool created it with a store in use. Each field at most 512 bytes on one line.
 	Origin *VMOrigin `json:"origin,omitempty"`
 	State  string    `json:"state"`
 	Uuid   string    `json:"uuid"`
@@ -202,11 +204,8 @@ type ReportResult struct {
 
 // ReportVM defines model for ReportVM.
 type ReportVM struct {
-	Autostart bool `json:"autostart"`
-
-	// Comment At most 512 bytes of UTF-8 on one line, no control characters. Absent keeps the stored comment; empty clears it. Not a secret: stored in plain text.
-	Comment *string `json:"comment,omitempty"`
-	Disks   []Disk  `json:"disks"`
+	Autostart bool   `json:"autostart"`
+	Disks     []Disk `json:"disks"`
 
 	// DisksUnreadable True when the daemon could not read this VM's disks (other than the VM having just vanished). `disks` is then empty and ignored: the store keeps its last known disks for the VM and marks it. Absent or false means the disks were read.
 	DisksUnreadable *bool  `json:"disks_unreadable,omitempty"`
@@ -217,13 +216,10 @@ type ReportVM struct {
 	Memory int `json:"memory"`
 
 	// Name The libvirt name: any name libvirt allows, at most 128 bytes of UTF-8 on one line, no control character and no '/'. Not limited to the names vmtool gives, so a VM made outside vmtool does not cost its host the whole report.
-	Name string `json:"name"`
-
-	// Origin What a VM was made from; known only when vmtool created it.
-	Origin *VMOrigin `json:"origin,omitempty"`
-	State  string    `json:"state"`
-	Uuid   string    `json:"uuid"`
-	Vcpus  int       `json:"vcpus"`
+	Name  string `json:"name"`
+	State string `json:"state"`
+	Uuid  string `json:"uuid"`
+	Vcpus int    `json:"vcpus"`
 }
 
 // Ticket defines model for Ticket.
@@ -266,11 +262,35 @@ type VMCredentialRef struct {
 	Uuid    string    `json:"uuid"`
 }
 
-// VMOrigin What a VM was made from; known only when vmtool created it.
+// VMNotes defines model for VMNotes.
+type VMNotes struct {
+	Comment string `json:"comment"`
+	Host    string `json:"host"`
+	Name    string `json:"name"`
+
+	// Origin What a VM was made from; known only when vmtool created it with a store in use. Each field at most 512 bytes on one line.
+	Origin *VMOrigin `json:"origin,omitempty"`
+	Uuid   string    `json:"uuid"`
+}
+
+// VMNotesInput defines model for VMNotesInput.
+type VMNotesInput struct {
+	// Comment At most 512 bytes of UTF-8 on one line, no control characters. Empty clears it; absent leaves it. Not a secret: stored in plain text.
+	Comment *string `json:"comment,omitempty"`
+
+	// Origin What a VM was made from; known only when vmtool created it with a store in use. Each field at most 512 bytes on one line.
+	Origin *VMOrigin `json:"origin,omitempty"`
+
+	// Uuid The libvirt domain UUID. Given by create, which knows it before the host's first report; without it a live row of (host, name) is needed.
+	Uuid *string `json:"uuid,omitempty"`
+}
+
+// VMOrigin What a VM was made from; known only when vmtool created it with a store in use. Each field at most 512 bytes on one line.
 type VMOrigin struct {
+	// Clone thin, block, file or none.
 	Clone *string `json:"clone,omitempty"`
 
-	// Created Creation time as the daemon wrote it.
+	// Created Creation time (RFC 3339) as the workstation's create wrote it.
 	Created     *string `json:"created,omitempty"`
 	Image       *string `json:"image,omitempty"`
 	ImageSha256 *string `json:"image_sha256,omitempty"`
@@ -355,6 +375,9 @@ type PutVMCredentialJSONRequestBody = VMCredentialInput
 
 // PutHostInventoryJSONRequestBody defines body for PutHostInventory for application/json ContentType.
 type PutHostInventoryJSONRequestBody = HostReport
+
+// PutVMNotesJSONRequestBody defines body for PutVMNotes for application/json ContentType.
+type PutVMNotesJSONRequestBody = VMNotesInput
 
 // RequestEditorFn  is the function signature for the RequestEditor callback function
 type RequestEditorFn func(ctx context.Context, req *http.Request) error
@@ -485,6 +508,11 @@ type ClientInterface interface {
 
 	// DelistVM request
 	DelistVM(ctx context.Context, host Host, name Name, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PutVMNotesWithBody request with any body
+	PutVMNotesWithBody(ctx context.Context, host Host, name Name, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	PutVMNotes(ctx context.Context, host Host, name Name, body PutVMNotesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// Whoami request
 	Whoami(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -723,6 +751,30 @@ func (c *Client) DeleteInventoryRow(ctx context.Context, host Host, name Name, p
 
 func (c *Client) DelistVM(ctx context.Context, host Host, name Name, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDelistVMRequest(c.Server, host, name)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PutVMNotesWithBody(ctx context.Context, host Host, name Name, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutVMNotesRequestWithBody(c.Server, host, name, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PutVMNotes(ctx context.Context, host Host, name Name, body PutVMNotesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutVMNotesRequest(c.Server, host, name, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1488,6 +1540,60 @@ func NewDelistVMRequest(server string, host Host, name Name) (*http.Request, err
 	return req, nil
 }
 
+// NewPutVMNotesRequest calls the generic PutVMNotes builder with application/json body
+func NewPutVMNotesRequest(server string, host Host, name Name, body PutVMNotesJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPutVMNotesRequestWithBody(server, host, name, "application/json", bodyReader)
+}
+
+// NewPutVMNotesRequestWithBody generates requests for PutVMNotes with any type of body
+func NewPutVMNotesRequestWithBody(server string, host Host, name Name, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "host", runtime.ParamLocationPath, host)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "name", runtime.ParamLocationPath, name)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/inventory/%s/%s/notes", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PUT", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewWhoamiRequest generates requests for Whoami
 func NewWhoamiRequest(server string) (*http.Request, error) {
 	var err error
@@ -1641,6 +1747,11 @@ type ClientWithResponsesInterface interface {
 
 	// DelistVMWithResponse request
 	DelistVMWithResponse(ctx context.Context, host Host, name Name, reqEditors ...RequestEditorFn) (*DelistVMResponse, error)
+
+	// PutVMNotesWithBodyWithResponse request with any body
+	PutVMNotesWithBodyWithResponse(ctx context.Context, host Host, name Name, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutVMNotesResponse, error)
+
+	PutVMNotesWithResponse(ctx context.Context, host Host, name Name, body PutVMNotesJSONRequestBody, reqEditors ...RequestEditorFn) (*PutVMNotesResponse, error)
 
 	// WhoamiWithResponse request
 	WhoamiWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*WhoamiResponse, error)
@@ -2085,6 +2196,33 @@ func (r DelistVMResponse) StatusCode() int {
 	return 0
 }
 
+type PutVMNotesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *VMNotes
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON404      *NotFound
+	JSON409      *Error
+	JSON500      *InternalError
+}
+
+// Status returns HTTPResponse.Status
+func (r PutVMNotesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PutVMNotesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type WhoamiResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -2305,6 +2443,23 @@ func (c *ClientWithResponses) DelistVMWithResponse(ctx context.Context, host Hos
 		return nil, err
 	}
 	return ParseDelistVMResponse(rsp)
+}
+
+// PutVMNotesWithBodyWithResponse request with arbitrary body returning *PutVMNotesResponse
+func (c *ClientWithResponses) PutVMNotesWithBodyWithResponse(ctx context.Context, host Host, name Name, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutVMNotesResponse, error) {
+	rsp, err := c.PutVMNotesWithBody(ctx, host, name, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutVMNotesResponse(rsp)
+}
+
+func (c *ClientWithResponses) PutVMNotesWithResponse(ctx context.Context, host Host, name Name, body PutVMNotesJSONRequestBody, reqEditors ...RequestEditorFn) (*PutVMNotesResponse, error) {
+	rsp, err := c.PutVMNotes(ctx, host, name, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutVMNotesResponse(rsp)
 }
 
 // WhoamiWithResponse request returning *WhoamiResponse
@@ -3201,6 +3356,67 @@ func ParseDelistVMResponse(rsp *http.Response) (*DelistVMResponse, error) {
 	return response, nil
 }
 
+// ParsePutVMNotesResponse parses an HTTP response from a PutVMNotesWithResponse call
+func ParsePutVMNotesResponse(rsp *http.Response) (*PutVMNotesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PutVMNotesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest VMNotes
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseWhoamiResponse parses an HTTP response from a WhoamiWithResponse call
 func ParseWhoamiResponse(rsp *http.Response) (*WhoamiResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -3313,6 +3529,9 @@ type ServerInterface interface {
 	// Mark a VM's live row gone
 	// (POST /v1/inventory/{host}/{name}/delist)
 	DelistVM(w http.ResponseWriter, r *http.Request, host Host, name Name)
+	// Record a VM's origin, or set or clear its comment
+	// (PUT /v1/inventory/{host}/{name}/notes)
+	PutVMNotes(w http.ResponseWriter, r *http.Request, host Host, name Name)
 	// The name of the calling token
 	// (GET /v1/whoami)
 	Whoami(w http.ResponseWriter, r *http.Request)
@@ -3975,6 +4194,46 @@ func (siw *ServerInterfaceWrapper) DelistVM(w http.ResponseWriter, r *http.Reque
 	handler.ServeHTTP(w, r)
 }
 
+// PutVMNotes operation middleware
+func (siw *ServerInterfaceWrapper) PutVMNotes(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "host" -------------
+	var host Host
+
+	err = runtime.BindStyledParameterWithOptions("simple", "host", r.PathValue("host"), &host, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "host", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "name" -------------
+	var name Name
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutVMNotes(w, r, host, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // Whoami operation middleware
 func (siw *ServerInterfaceWrapper) Whoami(w http.ResponseWriter, r *http.Request) {
 
@@ -4146,6 +4405,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("GET "+options.BaseURL+"/v1/inventory", wrapper.GetInventory)
 	m.HandleFunc("DELETE "+options.BaseURL+"/v1/inventory/{host}/{name}", wrapper.DeleteInventoryRow)
 	m.HandleFunc("POST "+options.BaseURL+"/v1/inventory/{host}/{name}/delist", wrapper.DelistVM)
+	m.HandleFunc("PUT "+options.BaseURL+"/v1/inventory/{host}/{name}/notes", wrapper.PutVMNotes)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/whoami", wrapper.Whoami)
 	m.HandleFunc("GET "+options.BaseURL+"/version", wrapper.GetVersion)
 
@@ -5078,6 +5338,70 @@ func (response DelistVM500JSONResponse) VisitDelistVMResponse(w http.ResponseWri
 	return json.NewEncoder(w).Encode(response)
 }
 
+type PutVMNotesRequestObject struct {
+	Host Host `json:"host"`
+	Name Name `json:"name"`
+	Body *PutVMNotesJSONRequestBody
+}
+
+type PutVMNotesResponseObject interface {
+	VisitPutVMNotesResponse(w http.ResponseWriter) error
+}
+
+type PutVMNotes200JSONResponse VMNotes
+
+func (response PutVMNotes200JSONResponse) VisitPutVMNotesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutVMNotes400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PutVMNotes400JSONResponse) VisitPutVMNotesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutVMNotes401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PutVMNotes401JSONResponse) VisitPutVMNotesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutVMNotes404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response PutVMNotes404JSONResponse) VisitPutVMNotesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutVMNotes409JSONResponse Error
+
+func (response PutVMNotes409JSONResponse) VisitPutVMNotesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutVMNotes500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response PutVMNotes500JSONResponse) VisitPutVMNotesResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
 type WhoamiRequestObject struct {
 }
 
@@ -5172,6 +5496,9 @@ type StrictServerInterface interface {
 	// Mark a VM's live row gone
 	// (POST /v1/inventory/{host}/{name}/delist)
 	DelistVM(ctx context.Context, request DelistVMRequestObject) (DelistVMResponseObject, error)
+	// Record a VM's origin, or set or clear its comment
+	// (PUT /v1/inventory/{host}/{name}/notes)
+	PutVMNotes(ctx context.Context, request PutVMNotesRequestObject) (PutVMNotesResponseObject, error)
 	// The name of the calling token
 	// (GET /v1/whoami)
 	Whoami(ctx context.Context, request WhoamiRequestObject) (WhoamiResponseObject, error)
@@ -5678,6 +6005,40 @@ func (sh *strictHandler) DelistVM(w http.ResponseWriter, r *http.Request, host H
 	}
 }
 
+// PutVMNotes operation middleware
+func (sh *strictHandler) PutVMNotes(w http.ResponseWriter, r *http.Request, host Host, name Name) {
+	var request PutVMNotesRequestObject
+
+	request.Host = host
+	request.Name = name
+
+	var body PutVMNotesJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PutVMNotes(ctx, request.(PutVMNotesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PutVMNotes")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PutVMNotesResponseObject); ok {
+		if err := validResponse.VisitPutVMNotesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // Whoami operation middleware
 func (sh *strictHandler) Whoami(w http.ResponseWriter, r *http.Request) {
 	var request WhoamiRequestObject
@@ -5729,93 +6090,103 @@ func (sh *strictHandler) GetVersion(w http.ResponseWriter, r *http.Request) {
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"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",
-	"rU2ZHCf75LP/dwD+EQQ3s18AAA==",
+	"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",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

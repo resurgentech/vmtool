@@ -2,127 +2,76 @@ package server
 
 import (
 	"encoding/json"
-	"fmt"
-	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/jaredeh/vmtool/internal/config"
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/jaredeh/vmtool/internal/api"
 )
 
-// PUT .../comment sets the comment with one metadata call and answers the VM;
-// it never redefines. Empty clears. On a hypervisor and a workstation alike.
-func TestSetVMCommentRoute(t *testing.T) {
-	for _, role := range []string{config.RoleHypervisor, config.RoleWorkstation} {
-		fm := &fakeMgr{}
-		h := primServer(t, fm, role)
-		rec := do(h, "PUT", "/v1/hosts/box/vms/vm1/comment", `{"comment":"placeholder comment"}`)
-		if rec.Code != 200 {
-			t.Fatalf("%s: %d %s", role, rec.Code, rec.Body)
-		}
-		if want := []string{"SetComment vm1 placeholder comment", "Info vm1"}; !reflect.DeepEqual(fm.calls, want) {
-			t.Errorf("%s: calls %q, want %q", role, fm.calls, want)
-		}
-		fm.calls = nil
-		if rec = do(h, "PUT", "/v1/hosts/box/vms/vm1/comment", `{"comment":""}`); rec.Code != 200 {
-			t.Fatalf("clear: %d %s", rec.Code, rec.Body)
-		}
-		if want := []string{"SetComment vm1 ", "Info vm1"}; !reflect.DeepEqual(fm.calls, want) {
-			t.Errorf("clear calls %q", fm.calls)
-		}
+// N12: PUT /v1/hosts/{host}/vms/{name}/comment is workstation-only and writes
+// the store (the VM's notes); the host is not asked. A hypervisor refuses it
+// with 403 (TestWorkstationOnlyRefusedByHypervisor covers every such route).
+
+func TestSetVMCommentWritesTheStore(t *testing.T) {
+	s := newSrvStore(t)
+	m := &vmMgr{}
+	h := delistHandler(t, s, m, true)
+	rec := do(h, "PUT", "/v1/hosts/hv1/vms/vm1/comment", `{"comment":"placeholder comment"}`)
+	if rec.Code != 200 {
+		t.Fatalf("status %d %s", rec.Code, rec.Body)
+	}
+	var n api.VMNotes
+	if err := json.Unmarshal(rec.Body.Bytes(), &n); err != nil {
+		t.Fatal(err)
+	}
+	if n.Host != "hv1" || n.Name != "vm1" || n.Comment != "placeholder comment" || n.Origin == nil || *n.Origin.Image != "img1" {
+		t.Errorf("notes %+v", n)
+	}
+	if s.notes.Load() != 1 {
+		t.Errorf("store notes writes %d", s.notes.Load())
+	}
+	if strings.Contains(rec.Body.String(), srvStoreTok) {
+		t.Error("the store token is in the response")
+	}
+	// The store has the row but it is gone: 409.
+	if rec := do(h, "PUT", "/v1/hosts/hv1/vms/vm1/comment", `{"comment":"gone"}`); rec.Code != 409 {
+		t.Errorf("gone row: %d %s", rec.Code, rec.Body)
+	}
+	// A bad comment: 400 naming the field, the store not asked.
+	before := s.notes.Load()
+	if rec := do(h, "PUT", "/v1/hosts/hv1/vms/vm1/comment", `{"comment":"a\nb"}`); rec.Code != 400 || !strings.Contains(rec.Body.String(), "comment") {
+		t.Errorf("bad comment: %d %s", rec.Code, rec.Body)
+	}
+	if s.notes.Load() != before {
+		t.Error("a bad comment reached the store")
 	}
 }
 
-func TestSetVMCommentRefusals(t *testing.T) {
-	long := strings.Repeat("a", 513)
-	for name, body := range map[string]string{
-		"too long": `{"comment":"` + long + `"}`,
-		"newline":  `{"comment":"a\nb"}`,
-		"control":  `{"comment":"a\u0001b"}`,
-	} {
-		fm := &fakeMgr{}
-		h := primServer(t, fm, config.RoleHypervisor)
-		rec := do(h, "PUT", "/v1/hosts/box/vms/vm1/comment", body)
-		if rec.Code != 400 || !strings.Contains(rec.Body.String(), "comment") {
-			t.Errorf("%s: %d %s, want 400 naming comment", name, rec.Code, rec.Body)
-		}
-		if len(fm.calls) != 0 {
-			t.Errorf("%s: libvirt was called: %q", name, fm.calls)
-		}
-	}
-	fm := &fakeMgr{}
-	h := primServer(t, fm, config.RoleHypervisor)
-	if rec := do(h, "PUT", "/v1/hosts/box/vms/vm1/comment", ""); rec.Code != 400 {
-		t.Errorf("no body: %d", rec.Code)
-	}
-	fm = &fakeMgr{err: fmt.Errorf("looking up domain: %w", vmtool.ErrNotFound)}
-	h = primServer(t, fm, config.RoleHypervisor)
-	if rec := do(h, "PUT", "/v1/hosts/box/vms/ghost/comment", `{"comment":"x"}`); rec.Code != 404 {
-		t.Errorf("unknown VM: %d", rec.Code)
+// createVM with a comment and no store in use: 503 before anything is made
+// (vmMgr's embedded nil Manager would panic on any call).
+func TestCreateVMCommentNeedsStore(t *testing.T) {
+	s := newSrvStore(t)
+	rec := do(delistHandler(t, s, &vmMgr{}, false), "POST", "/v1/hosts/hv1/vms",
+		`{"name":"vm1","image":"img1","comment":"placeholder comment"}`)
+	if rec.Code != 503 || !strings.Contains(rec.Body.String(), "comments are kept in the store") {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
 	}
 }
 
-// defineVM takes the origin and comment into the config; an older client that
-// sends neither still defines (no origin, no comment); bad ones are 400.
-func TestDefineVMOriginAndComment(t *testing.T) {
-	fm, pool := poolFixture(t)
-	h := primServer(t, fm, config.RoleHypervisor)
-	disk := filepath.Join(pool, "vm1.qcow2")
-	def := func(extra string) string {
-		return `{"vcpus":1,"memory_gib":1,"disk_path":"` + disk + `","network":{"type":"nat"}` + extra + `}`
+// No store configured, or one that does not answer: 503 saying comments are
+// kept in the store.
+func TestSetVMCommentNeedsStore(t *testing.T) {
+	s := newSrvStore(t)
+	rec := do(delistHandler(t, s, &vmMgr{}, false), "PUT", "/v1/hosts/hv1/vms/vm1/comment", `{"comment":"x"}`)
+	if rec.Code != 503 || !strings.Contains(rec.Body.String(), "comments are kept in the store") {
+		t.Fatalf("no store: %d %s", rec.Code, rec.Body)
 	}
-	sha := strings.Repeat("a", 64)
-	rec := do(h, "PUT", "/v1/hosts/box/vms/vm1/definition", def(`,"comment":"placeholder comment","origin":{"image":"img1","image_sha256":"`+sha+`","template":"img1","template_lv":"vmtpl-aaaaaaaaaaaa","clone_kind":"thin","pool":"nvme-thin","created":"2026-11-21T04:05:06Z"}`))
-	if rec.Code != 204 {
-		t.Fatalf("define: %d %s", rec.Code, rec.Body)
+	s.down.Store(true)
+	rec = do(delistHandler(t, s, &vmMgr{}, true), "PUT", "/v1/hosts/hv1/vms/vm1/comment", `{"comment":"x"}`)
+	if rec.Code != 503 || !strings.Contains(rec.Body.String(), "no store is in use") {
+		t.Fatalf("store down: %d %s", rec.Code, rec.Body)
 	}
-	want := &vmtool.VMOrigin{Image: "img1", ImageSHA256: sha, Template: "img1", TemplateLV: "vmtpl-aaaaaaaaaaaa",
-		CloneKind: vmtool.CloneKindThin, Pool: "nvme-thin", Created: time.Date(2026, 11, 21, 4, 5, 6, 0, time.UTC)}
-	if !reflect.DeepEqual(fm.defined.Origin, want) || fm.defined.Comment != "placeholder comment" {
-		t.Errorf("Define got origin %+v comment %q", fm.defined.Origin, fm.defined.Comment)
-	}
-
-	fm.defined = vmtool.VMConfig{}
-	if rec = do(h, "PUT", "/v1/hosts/box/vms/vm1/definition", def("")); rec.Code != 204 {
-		t.Fatalf("older client define: %d %s", rec.Code, rec.Body)
-	}
-	if fm.defined.Origin != nil || fm.defined.Comment != "" {
-		t.Errorf("no field sent but Define got origin %+v comment %q", fm.defined.Origin, fm.defined.Comment)
-	}
-
-	for field, extra := range map[string]string{
-		"comment":           `,"comment":"a\nb"`,
-		"origin.clone_kind": `,"origin":{"clone_kind":"copy"}`,
-		"origin.image":      `,"origin":{"clone_kind":"file","image":"a\u0001b"}`,
-	} {
-		fm.calls = nil
-		rec := do(h, "PUT", "/v1/hosts/box/vms/vm1/definition", def(extra))
-		if rec.Code != 400 || !strings.Contains(rec.Body.String(), field) {
-			t.Errorf("%s: %d %s, want 400 naming %s", field, rec.Code, rec.Body, field)
-		}
-		for _, c := range fm.calls {
-			if strings.HasPrefix(c, "Define") {
-				t.Errorf("%s: Define ran", field)
-			}
-		}
-	}
-}
-
-// getVM and listVMs carry origin and comment; a VM with none omits both.
-func TestVMInfoJSONOriginComment(t *testing.T) {
-	with := toAPI(&vmtool.VMInfo{Name: "vm1", Comment: "placeholder comment", Origin: &vmtool.VMOrigin{
-		Image: "img1", CloneKind: vmtool.CloneKindFile, Created: time.Date(2026, 11, 21, 4, 5, 6, 0, time.UTC)}})
-	b, _ := json.Marshal(with)
-	for _, want := range []string{`"comment":"placeholder comment"`, `"origin":{`, `"clone_kind":"file"`, `"created":"2026-11-21T04:05:06Z"`} {
-		if !strings.Contains(string(b), want) {
-			t.Errorf("JSON lacks %s: %s", want, b)
-		}
-	}
-	b, _ = json.Marshal(toAPI(&vmtool.VMInfo{Name: "vm1"}))
-	if strings.Contains(string(b), "origin") || strings.Contains(string(b), "comment") {
-		t.Errorf("a VM with neither sent them: %s", b)
+	if got := rec.Header().Values(warnHeader); len(got) != 0 {
+		t.Errorf("warnings %v", got)
 	}
 }

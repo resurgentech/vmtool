@@ -461,7 +461,7 @@ a VM's disks cannot be read, it is still listed.
 
 **Who reports.** Each hypervisor's daemon sends its full VM list to the store
 when it starts and after each change made through vmtool (create, delete,
-start, stop, disk changes, comment). A new VM's address arrives with one
+start, stop, disk changes). A new VM's address arrives with one
 follow-up report once it appears, for up to `ip_wait_seconds` after the VM
 starts. The store orders a host's reports by its own clock, so a host with a
 wrong clock is not silenced.
@@ -480,15 +480,32 @@ are fixed at the next report (a daemon start, or a change made through
 vmtool) or on touch: when a command names `host/vm`, the host says it has no
 such VM and the store had it, the store delists it and the error says so, with
 the date its login is kept until (a store that is down adds nothing). A host
-that is off is not touched, so its VMs stay listed. Origin (the image, how the
-VM was cloned, the time) is known only for VMs vmtool created from this
-version on; older VMs and VMs made outside vmtool show none.
+that is off is not touched, so its VMs stay listed.
 
-**Comments.** `vmtool create --comment TEXT` or `vmtool comment hv1/web
-TEXT` (`--clear` removes it) keeps a note of at most 512 bytes on one line
-with a VM. It is stored in plain text, in the VM's libvirt definition and in
-the store's inventory; never put a secret in it. `vmtool info` shows it, with
-the origin.
+**A VM's notes in the store: origin and comment.** vmtool writes nothing of
+its own into a VM's libvirt definition. What it records about a VM besides
+what the host reports lives in the store only, in plain text, keyed by host
+and libvirt UUID, and no report touches it:
+
+- **Origin** (the image and its SHA-256 when known, how the disk was cloned:
+  `thin`, `block`, `file` or `none`, the thin template, the pool, the
+  creation time) is recorded once, by `vmtool create`, right after the VM is
+  defined, and only with a store in use. It is never edited. VMs created with
+  no store in use, before this version, or outside vmtool have none. If the
+  store fails at that moment, the create still succeeds and one line says the
+  notes were not saved.
+- **Comment**: `vmtool create --comment TEXT` or `vmtool comment hv1/web TEXT`
+  (`--clear` removes it) sets a note of at most 512 bytes on one line. It
+  needs a store: with none in use, `--comment` is refused before anything is
+  created and `vmtool comment` fails (REST: 503). The host is not asked, so
+  the comment can be set or cleared while the host sleeps; the store must list
+  the VM (its host has reported it, and it is not gone). Never put a secret in
+  it.
+
+`vmtool info` shows origin and comment from the store (nothing with no store
+in use, or when the store does not answer); `vmtool inventory`, the TUI and
+REST `GET /v1/inventory` show them too. Notes go with their inventory row
+(`vmtool delete`, the sweep).
 
 **Host tokens.** A daemon reports with a *host token*, one per hypervisor,
 accepted by the store on its own report route and `whoami` and nowhere else

@@ -27,6 +27,8 @@ type srvStore struct {
 	// reqs counts every request that reached the store (whoami included);
 	// delists counts POST .../delist.
 	reqs, delists atomic.Int32
+	// notes counts PUT .../notes.
+	notes atomic.Int32
 	// invQuery is the last GET /v1/inventory request URI; invs counts them.
 	invQuery atomic.Value
 	invs     atomic.Int32
@@ -70,6 +72,20 @@ func newSrvStore(t *testing.T) *srvStore {
 				},
 				"machines": []any{map[string]any{"name": "nuc1", "kind": "metal"}},
 			})
+			return
+		}
+		if r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/notes") {
+			s.notes.Add(1)
+			var in map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			if in["comment"] == "gone" {
+				w.WriteHeader(409)
+				_ = json.NewEncoder(w).Encode(map[string]string{"error": "the VM is gone from the inventory"})
+				return
+			}
+			c, _ := in["comment"].(string)
+			_ = json.NewEncoder(w).Encode(map[string]any{"host": "hv1", "name": "vm1", "uuid": "00000000-0000-4000-8000-000000000001",
+				"comment": c, "origin": map[string]any{"image": "img1", "clone": "thin"}})
 			return
 		}
 		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/delist") {

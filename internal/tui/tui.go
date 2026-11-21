@@ -258,6 +258,9 @@ type model struct {
 	invData       *app.Inventory
 	invErr        error
 	invGone       bool
+	// notes are the VMs' origin and comment, read from the store with each
+	// refresh (app.Service.AllNotes); nil when the store was not read.
+	notes map[app.VMRef]app.VMNotes
 	// save-as-template prompt (modeSaveTemplate): the VM, the name typed so far
 	// and whether it replaces a saved template of that name.
 	saveRef     app.VMRef
@@ -310,6 +313,7 @@ type refreshMsg struct {
 	err        error
 	machines   []app.MachineInfo
 	machineErr error
+	notes      map[app.VMRef]app.VMNotes
 }
 
 type cmdDoneMsg struct {
@@ -347,8 +351,16 @@ func (m model) refreshCmd() tea.Cmd {
 			msg.machines, msg.machineErr = svc.ListMachines(context.Background())
 			close(done)
 		}()
+		notesDone := make(chan struct{})
+		go func() {
+			// One store read for every VM's origin and comment; nil (nothing
+			// shown) with no store in use or a store that does not answer.
+			msg.notes = svc.AllNotes(context.Background())
+			close(notesDone)
+		}()
 		msg.vms = m.fetchRows()
 		<-done
+		<-notesDone
 		return msg
 	}
 }
@@ -490,6 +502,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = msg.err
 		m.machines = msg.machines
 		m.machineErr = msg.machineErr
+		m.notes = msg.notes
 		m.clampCursor()
 		return m, nil
 
@@ -1544,7 +1557,7 @@ func (m model) View() string {
 
 	// --- Selected VM's origin and comment ---
 	if m.cursor >= 0 && m.cursor < len(m.vms) {
-		if d := vmDetail(m.vms[m.cursor]); d != "" {
+		if d := m.vmDetail(m.vms[m.cursor]); d != "" {
 			b.WriteString(statusStyle.Render(d))
 			b.WriteString("\n")
 		}
@@ -1815,13 +1828,19 @@ func newModel(r *hosts.Resolver, tunnel vmtool.Tunnel, ipWait, sshWait time.Dura
 }
 
 // vmDetail is the line under the list for the selected VM: what it was made
-// from and its comment. "" for an error row or a VM with neither.
-func vmDetail(vm vmRow) string {
+// from and its comment, from the store's notes. "" for an error row, a VM
+// with neither, notes of another VM that had the name (another UUID), or no
+// store read.
+func (m model) vmDetail(vm vmRow) string {
 	if vm.Err != nil {
 		return ""
 	}
+	n, ok := m.notes[m.vmRef(vm)]
+	if !ok || (vm.UUID != "" && n.UUID != "" && !strings.EqualFold(vm.UUID, n.UUID)) {
+		return ""
+	}
 	var parts []string
-	if o := vm.Origin; o != nil {
+	if o := n.Origin; o != nil {
 		p := "origin: " + o.Image
 		if o.Image == "" {
 			p = "origin: -"
@@ -1832,8 +1851,8 @@ func vmDetail(vm vmRow) string {
 		}
 		parts = append(parts, p+")")
 	}
-	if vm.Comment != "" {
-		parts = append(parts, "comment: "+vm.Comment)
+	if n.Comment != "" {
+		parts = append(parts, "comment: "+n.Comment)
 	}
 	if len(parts) == 0 {
 		return ""

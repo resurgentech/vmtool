@@ -394,12 +394,13 @@ paths:
       description: >
         Only a host token for this very `{host}` may call it (another host's
         token and every user token get 403). The body is the host's whole VM
-        list, never a diff: JSON only, at most 1 MiB (413) and 4096 VMs, a
-        comment at most 512 bytes on one line. Each listed (host, uuid) is
-        inserted or updated and, if it was gone, listed again; each live row
-        of the host that the list omits is marked gone; a login of the host
-        that matches no row gets a gone row. A `comment` that is absent
-        leaves the stored comment; an empty one clears it. A VM with
+        list, never a diff: JSON only, at most 1 MiB (413) and 4096 VMs. Each
+        listed (host, uuid) is inserted or updated and, if it was gone, listed
+        again; each live row of the host that the list omits is marked gone; a
+        login of the host that matches no row gets a gone row. A report
+        carries no origin and no comment: a VM's notes are written only
+        through `PUT /v1/inventory/{host}/{name}/notes`, and no report
+        touches them. A VM with
         `disks_unreadable` true keeps the disks the store last had for it
         (the report's `disks` for it is ignored) and is marked; the next
         report that reads its disks clears the mark. Reports are ordered by
@@ -502,8 +503,10 @@ paths:
       summary: Remove a VM's inventory row at once
       description: >
         User tokens only. An explicit delete: the row of (host, name, uuid)
-        goes immediately, live or gone. It leaves the credential record
-        alone (`vmtool delete` removes that itself). 404 when no such row.
+        goes immediately, live or gone, and the VM's notes (origin and
+        comment) with it. It leaves the credential record alone (`vmtool
+        delete` removes that itself). 404 when there is neither such a row
+        nor notes for (host, uuid).
       parameters:
         - name: uuid
           in: query
@@ -520,6 +523,58 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/inventory/{host}/{name}/notes:
+    parameters:
+      - $ref: "#/components/parameters/Host"
+      - $ref: "#/components/parameters/Name"
+    put:
+      operationId: putVMNotes
+      summary: Record a VM's origin, or set or clear its comment
+      description: >
+        User tokens only (a host token gets 401). A VM's notes are what
+        vmtool records about it besides what its host reports: its origin
+        and its comment, kept in the store only (never in the VM's libvirt
+        definition), in plain text, keyed (host, uuid). No report touches
+        them; they go with their inventory row (explicit delete, sweep), and
+        notes whose row never appears are removed by the sweep 7 days after
+        they were last written. With `uuid` (the create's case) the notes
+        are stored even before the host's first report has made the row;
+        without it the route needs a live row of (host, name) and takes its
+        UUID (404 when there is no row at all). A row that is gone takes no
+        notes (409). `origin` is written once, at create: accepted only while
+        (host, uuid) has none; the same origin again is 200 and changes
+        nothing, a different one is 409. `comment` replaces the stored
+        comment; empty clears it; absent leaves it. At least one of the two
+        is required. Answers the notes as stored.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VMNotesInput"
+      responses:
+        "200":
+          description: The notes as stored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VMNotes"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: >
+            The row is gone, or a different origin is already recorded
+            (origin is recorded once, at create). The body is fixed text.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "500":
           $ref: "#/components/responses/InternalError"
 components:
@@ -795,7 +850,9 @@ components:
           enum: [file, block, thin]
     VMOrigin:
       type: object
-      description: What a VM was made from; known only when vmtool created it.
+      description: >
+        What a VM was made from; known only when vmtool created it with a
+        store in use. Each field at most 512 bytes on one line.
       properties:
         image:
           type: string
@@ -805,11 +862,43 @@ components:
           type: string
         clone:
           type: string
+          description: thin, block, file or none.
         pool:
           type: string
         created:
           type: string
-          description: Creation time as the daemon wrote it.
+          description: Creation time (RFC 3339) as the workstation's create wrote it.
+    VMNotesInput:
+      type: object
+      properties:
+        uuid:
+          type: string
+          description: >
+            The libvirt domain UUID. Given by create, which knows it before the
+            host's first report; without it a live row of (host, name) is needed.
+        origin:
+          $ref: "#/components/schemas/VMOrigin"
+        comment:
+          type: string
+          maxLength: 512
+          description: >
+            At most 512 bytes of UTF-8 on one line, no control characters.
+            Empty clears it; absent leaves it. Not a secret: stored in plain
+            text.
+    VMNotes:
+      type: object
+      required: [host, name, uuid, comment]
+      properties:
+        host:
+          type: string
+        name:
+          type: string
+        uuid:
+          type: string
+        origin:
+          $ref: "#/components/schemas/VMOrigin"
+        comment:
+          type: string
     ReportVM:
       type: object
       required: [name, uuid, state, vcpus, memory, ip, autostart, firmware, disks]
@@ -847,15 +936,6 @@ components:
             the VM having just vanished). `disks` is then empty and ignored:
             the store keeps its last known disks for the VM and marks it.
             Absent or false means the disks were read.
-        origin:
-          $ref: "#/components/schemas/VMOrigin"
-        comment:
-          type: string
-          maxLength: 512
-          description: >
-            At most 512 bytes of UTF-8 on one line, no control characters.
-            Absent keeps the stored comment; empty clears it. Not a secret:
-            stored in plain text.
     HostReport:
       type: object
       required: [generated_at, daemon_version, vms]
@@ -934,6 +1014,7 @@ components:
           $ref: "#/components/schemas/VMOrigin"
         comment:
           type: string
+          description: From the VM's notes; empty when there is none.
         first_seen:
           type: string
           format: date-time

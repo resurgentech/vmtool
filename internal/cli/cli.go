@@ -20,6 +20,7 @@ import (
 	"github.com/jaredeh/vmtool/internal/server"
 	"github.com/jaredeh/vmtool/internal/storeclient"
 	"github.com/jaredeh/vmtool/internal/tui"
+	"github.com/jaredeh/vmtool/internal/vmnotes"
 	"github.com/jaredeh/vmtool/pkg/vmtool"
 	"github.com/spf13/cobra"
 )
@@ -540,12 +541,16 @@ be combined with --playbook; with --disk-size the volume is still resized
 before boot, but the filesystem grow, which needs SSH, is skipped (cloud-init
 grows it at first boot on images built with it).
 
---comment TEXT keeps a note with the VM (at most 512 bytes, one line, no
-control characters; stored in plain text in the VM's definition, so never put
-a secret in it). Change it later with 'vmtool comment'. create also records
-what the VM was made from (image, its SHA-256 when known, how it was cloned,
-the pool, the time), known only for VMs created from this version on;
-'vmtool info' shows both.
+With a store in use, create records in the store what the VM was made from
+(its origin: image, its SHA-256 when known, how it was cloned, the template,
+the pool, the time), once, right after the VM is defined. vmtool writes
+nothing of its own into the VM's libvirt definition. --comment TEXT adds a
+note to the same store record (at most 512 bytes, one line, no control
+characters; stored in plain text, so never put a secret in it); change it
+later with 'vmtool comment'. With no store in use no origin is recorded and
+--comment is refused before anything is created. If the store fails after
+the VM is defined, create still succeeds and says the notes were not saved.
+'vmtool info' and 'vmtool inventory' show origin and comment from the store.
 
 When create ends, success or failure, it prints one line of stage timings on
 stdout, such as 'timings: clone 0.3s, start 1.1s, wait_ip 2.0s, wait_ssh 7.0s,
@@ -639,7 +644,7 @@ total 11.0s' (only the stages that ran). REST callers of createVM get none.
 	cmd.Flags().UintVar(&extraDiskSizeGB, "extra-disk-size", 0, "create a second empty virtio disk (vdb): <name>-2.qcow2 in a dir pool, LV <name>-2 in a logical pool. Refused on a thin pool: attach a thin extra disk with add-disk")
 	cmd.Flags().StringVar(&extraDiskPool, "extra-disk-pool", "", "storage pool for the extra disk (default: same as --pool)")
 	cmd.Flags().StringArrayVar(&extraVars, "extra-var", nil, "ansible extra-var key=value for --playbook (repeatable; name: letters, digits, _). Values go to ansible in its environment, not argv. deviceid defaults to the VM name")
-	cmd.Flags().StringVar(&comment, "comment", "", "a note kept with the VM: at most 512 bytes, one line, no control characters. Stored in plain text in the VM's definition; never put a secret in it")
+	cmd.Flags().StringVar(&comment, "comment", "", "a note about the VM, kept in the store only (needs a store): at most 512 bytes, one line, no control characters. Stored in plain text; never put a secret in it")
 
 	return cmd
 }
@@ -734,19 +739,21 @@ func infoCmd(e *env) *cobra.Command {
 		Short: "Show details of a VM",
 		Args:  cobra.ExactArgs(1),
 		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
-			info, err := e.service("").GetVM(cmd.Context(), m, ref.Name)
+			svc := e.service("")
+			info, err := svc.GetVM(cmd.Context(), m, ref.Name)
 			if err != nil {
 				return err
 			}
-			writeVMInfo(os.Stdout, info)
+			writeVMInfo(cmd.OutOrStdout(), info, svc.Notes(cmd.Context(), ref, info.UUID))
 			return nil
 		}),
 	}
 }
 
 // writeVMInfo prints `vmtool info`; an unknown UUID (a daemon older than API
-// 2.3.0) shows as "unknown".
-func writeVMInfo(out io.Writer, info *vmtool.VMInfo) {
+// 2.3.0) shows as "unknown". notes are the VM's origin and comment from the
+// store; nil (no store in use, or it did not answer) prints neither line.
+func writeVMInfo(out io.Writer, info *vmtool.VMInfo, notes *app.VMNotes) {
 	ip := info.IP
 	if ip == "" {
 		ip = "-"
@@ -766,8 +773,11 @@ func writeVMInfo(out io.Writer, info *vmtool.VMInfo) {
 	fmt.Fprintf(out, "Autostart: %s\n", autostart)
 	fmt.Fprintf(out, "IP:        %s\n", ip)
 	fmt.Fprintf(out, "UUID:      %s\n", uuid)
-	writeOrigin(out, info.Origin)
-	comment := info.Comment
+	if notes == nil {
+		return
+	}
+	writeOrigin(out, notes.Origin)
+	comment := notes.Comment
 	if comment == "" {
 		comment = "-"
 	}
@@ -775,9 +785,9 @@ func writeVMInfo(out io.Writer, info *vmtool.VMInfo) {
 }
 
 // writeOrigin prints what the VM was made from: one line, then the digest and
-// the template when there are any. "-" for a VM with no origin (made before
-// 2.6.0 or outside vmtool).
-func writeOrigin(out io.Writer, o *vmtool.VMOrigin) {
+// the template when there are any. "-" for a VM with no origin (made outside
+// vmtool, or with no store in use).
+func writeOrigin(out io.Writer, o *vmnotes.Origin) {
 	if o == nil {
 		fmt.Fprintf(out, "Origin:    -\n")
 		return
@@ -797,8 +807,8 @@ func writeOrigin(out io.Writer, o *vmtool.VMOrigin) {
 	if o.ImageSHA256 != "" {
 		fmt.Fprintf(out, "           sha256 %s\n", o.ImageSHA256)
 	}
-	if o.Template != "" || o.TemplateLV != "" {
-		fmt.Fprintf(out, "           template %s (%s)\n", o.Template, o.TemplateLV)
+	if o.Template != "" {
+		fmt.Fprintf(out, "           template %s\n", o.Template)
 	}
 }
 
@@ -966,17 +976,19 @@ func commentCmd(e *env) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "comment <host/name> [TEXT]",
 		Short: "Set or clear a VM's comment",
-		Long: `Set the comment kept with a VM, or clear it with --clear. The comment is at
-most 512 bytes of UTF-8 on one line with no control characters. It is stored
-in plain text in the VM's definition (and, when a store is configured, in its
-inventory): never put a secret in it. It is set on the running domain and on
-the persistent definition without redefining the VM, so it works on a running
-and on a shut-off VM; the host must be reachable. 'vmtool info' shows it.
+		Long: `Set a VM's comment, or clear it with --clear. The comment is kept in the
+store only (the VM's notes, beside its origin), never in the VM's libvirt
+definition, so it needs a store: with none in use the command fails. It is at
+most 512 bytes of UTF-8 on one line with no control characters, stored in
+plain text: never put a secret in it. The VM's host is not asked, so this
+works while the host sleeps; the store must list the VM in its inventory (its
+host has reported it, and it is not gone). 'vmtool info' and 'vmtool
+inventory' show it.
 
   vmtool comment hv1/web "build box for the nightly job"
   vmtool comment hv1/web --clear`,
 		Args: cobra.RangeArgs(1, 2),
-		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			text := ""
 			switch {
 			case clear && len(args) == 2:
@@ -986,16 +998,25 @@ and on a shut-off VM; the host must be reachable. 'vmtool info' shows it.
 			case len(args) == 2:
 				text = args[1]
 			}
-			if _, err := e.service("").SetComment(cmd.Context(), m, ref, text); err != nil {
+			// The host is checked, never opened: the comment is a store write.
+			r := e.resolver()
+			ref, err := r.ParseVM(args[0])
+			if err != nil {
+				return err
+			}
+			if err := r.Check(ref.Host); err != nil {
+				return err
+			}
+			if _, err := e.service("").SetComment(cmd.Context(), ref, text); err != nil {
 				return err
 			}
 			if text == "" {
-				fmt.Fprintf(cmd.OutOrStdout(), "Comment cleared for VM %q\n", args[0])
+				fmt.Fprintf(cmd.OutOrStdout(), "Comment cleared for VM %q\n", ref.String())
 			} else {
-				fmt.Fprintf(cmd.OutOrStdout(), "Comment set for VM %q\n", args[0])
+				fmt.Fprintf(cmd.OutOrStdout(), "Comment set for VM %q\n", ref.String())
 			}
 			return nil
-		}),
+		},
 	}
 	cmd.Flags().BoolVar(&clear, "clear", false, "remove the comment")
 	return cmd

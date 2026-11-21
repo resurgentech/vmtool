@@ -306,58 +306,6 @@ func fromAPI(v api.VMInfo) vmtool.VMInfo {
 	if v.Uuid != nil {
 		out.UUID = *v.Uuid
 	}
-	if v.Comment != nil {
-		out.Comment = *v.Comment
-	}
-	out.Origin = originFromAPI(v.Origin)
-	return out
-}
-
-// originFromAPI is the origin of a daemon's VM; nil when it sent none (a VM
-// without one, or a daemon that predates the field).
-func originFromAPI(o *api.VMOrigin) *vmtool.VMOrigin {
-	if o == nil {
-		return nil
-	}
-	out := &vmtool.VMOrigin{CloneKind: string(o.CloneKind)}
-	if o.Image != nil {
-		out.Image = *o.Image
-	}
-	if o.ImageSha256 != nil {
-		out.ImageSHA256 = *o.ImageSha256
-	}
-	if o.Template != nil {
-		out.Template = *o.Template
-	}
-	if o.TemplateLv != nil {
-		out.TemplateLV = *o.TemplateLv
-	}
-	if o.Pool != nil {
-		out.Pool = *o.Pool
-	}
-	if o.Created != nil {
-		out.Created = o.Created.UTC()
-	}
-	return out
-}
-
-// originToAPI is the origin a defineVM request carries; nil for none.
-func originToAPI(o *vmtool.VMOrigin) *api.VMOrigin {
-	if o == nil {
-		return nil
-	}
-	out := &api.VMOrigin{
-		CloneKind:   api.VMOriginCloneKind(o.CloneKind),
-		Image:       nonEmpty(o.Image),
-		ImageSha256: nonEmpty(o.ImageSHA256),
-		Template:    nonEmpty(o.Template),
-		TemplateLv:  nonEmpty(o.TemplateLV),
-		Pool:        nonEmpty(o.Pool),
-	}
-	if !o.Created.IsZero() {
-		c := o.Created.UTC()
-		out.Created = &c
-	}
 	return out
 }
 
@@ -426,14 +374,6 @@ func (m *Manager) Reboot(name string) error {
 func (m *Manager) SetAutostart(name string, enabled bool) error {
 	return m.lifecycle("setAutostart", func(ctx context.Context) (*http.Response, error) {
 		return m.client.SetAutostart(ctx, m.name, name, api.AutostartRequest{Enabled: enabled})
-	})
-}
-
-// SetComment is setVMComment; the client keeps only the error. A daemon older
-// than 2.6.0 has no such route and answers 404.
-func (m *Manager) SetComment(name, comment string) error {
-	return m.lifecycle("setVMComment", func(ctx context.Context) (*http.Response, error) {
-		return m.client.SetVMComment(ctx, m.name, name, api.CommentRequest{Comment: comment})
 	})
 }
 
@@ -652,10 +592,6 @@ func (m *Manager) Define(cfg vmtool.VMConfig) error {
 	if cfg.Noclone {
 		body.Noclone = ptr(true)
 	}
-	// Sent only when there is something to send: a daemon older than 2.6.0
-	// ignores both, and a config with neither makes the body a 2.5.0 client's.
-	body.Origin = originToAPI(cfg.Origin)
-	body.Comment = nonEmpty(cfg.Comment)
 	if len(cfg.ExtraDisks) > 0 {
 		disks := make([]api.DiskDevice, len(cfg.ExtraDisks))
 		for i, d := range cfg.ExtraDisks {

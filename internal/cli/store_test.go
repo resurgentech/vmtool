@@ -49,6 +49,19 @@ type cliStore struct {
 	// invQuery is the last GET /v1/inventory request URI; inv is the body.
 	invQuery atomic.Value
 	inv      map[string]any
+	// notes are the notes writes (PUT /v1/inventory/{host}/{name}/notes).
+	notes []notesWrite
+}
+
+type notesWrite struct {
+	path string
+	body map[string]any
+}
+
+func (s *cliStore) notesWrites() []notesWrite {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]notesWrite(nil), s.notes...)
 }
 
 // newCLIStore starts a store and points the CLI's store client at its test
@@ -100,6 +113,21 @@ func newCLIStore(t *testing.T) *cliStore {
 			}
 			if r.URL.Path == "/v1/images" || strings.HasPrefix(r.URL.Path, "/v1/images/") {
 				s.serveImages(w, r, out)
+				return
+			}
+			if strings.HasPrefix(r.URL.Path, "/v1/inventory/") && strings.HasSuffix(r.URL.Path, "/notes") && r.Method == http.MethodPut {
+				if r.Header.Get("Authorization") != "Bearer "+storeTok {
+					out(401, map[string]string{"error": "unauthorized"})
+					return
+				}
+				var in map[string]any
+				_ = json.NewDecoder(r.Body).Decode(&in)
+				s.mu.Lock()
+				s.notes = append(s.notes, notesWrite{path: r.URL.Path, body: in})
+				s.mu.Unlock()
+				parts := strings.Split(r.URL.Path, "/")
+				c, _ := in["comment"].(string)
+				out(200, map[string]any{"host": parts[3], "name": parts[4], "uuid": "00000000-0000-4000-8000-000000000001", "comment": c})
 				return
 			}
 			out(404, map[string]string{"error": "not found"})

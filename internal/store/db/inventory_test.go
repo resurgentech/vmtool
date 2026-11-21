@@ -291,8 +291,8 @@ func TestMigration3UpgradesVersion2Database(t *testing.T) {
 		t.Fatalf("upgrade: %v", err)
 	}
 	defer d.Close()
-	if v, _ := d.version(ctx); v != 3 {
-		t.Fatalf("version %d want 3", v)
+	if v, _ := d.version(ctx); v != len(migrations) {
+		t.Fatalf("version %d want %d", v, len(migrations))
 	}
 	v, ok := vmByUUID(t, d, "hv1", uuid1, false)
 	if !ok || v.DisksUnreadable || v.Name != "vm1" || len(v.Disks) < 10 {
@@ -347,45 +347,6 @@ func TestApplyReportOrphanCredentialsGetGoneRow(t *testing.T) {
 	cnt, _ = d.ApplyReport(ctx, "hv1", t0.Add(time.Second), "v", []VMRow{row(uuid1, "vm1")})
 	if cnt.NewlyGone != 0 {
 		t.Fatalf("counts %+v", cnt)
-	}
-}
-
-func TestApplyReportCommentRule(t *testing.T) {
-	ctx := context.Background()
-	d, _ := invDB(t)
-	r := row(uuid1, "vm1")
-	r.Comment = str("placeholder comment")
-	d.ApplyReport(ctx, "hv1", t0, "v", []VMRow{r})
-	v, _ := vmByUUID(t, d, "hv1", uuid1, false)
-	if v.Comment != "placeholder comment" {
-		t.Fatalf("set: %q", v.Comment)
-	}
-	r.Comment = nil // field absent: keep
-	d.ApplyReport(ctx, "hv1", t0.Add(time.Second), "v", []VMRow{r})
-	v, _ = vmByUUID(t, d, "hv1", uuid1, false)
-	if v.Comment != "placeholder comment" {
-		t.Fatalf("absent erased it: %q", v.Comment)
-	}
-	r.Comment = str("") // present and empty: clear
-	d.ApplyReport(ctx, "hv1", t0.Add(2*time.Second), "v", []VMRow{r})
-	v, _ = vmByUUID(t, d, "hv1", uuid1, false)
-	if v.Comment != "" {
-		t.Fatalf("clear: %q", v.Comment)
-	}
-}
-
-func TestApplyReportOrigin(t *testing.T) {
-	ctx := context.Background()
-	d, _ := invDB(t)
-	r := row(uuid1, "vm1")
-	r.OriginImage, r.OriginSHA256, r.OriginClone, r.OriginPool = "img1", hash, "thin", "p1"
-	r.OriginTemplate = "tmpl1"
-	r.Created = "2026-10-31T00:00:00Z"
-	d.ApplyReport(ctx, "hv1", t0, "v", []VMRow{r})
-	v, _ := vmByUUID(t, d, "hv1", uuid1, false)
-	if v.OriginImage != "img1" || v.OriginSHA256 != hash || v.OriginClone != "thin" ||
-		v.OriginPool != "p1" || v.OriginTemplate != "tmpl1" || v.Created != "2026-10-31T00:00:00Z" {
-		t.Fatalf("origin %+v", v)
 	}
 }
 

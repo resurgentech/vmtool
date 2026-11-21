@@ -39,6 +39,9 @@ var (
 	ErrForbidden = errors.New("store refused this token for that operation")
 	// ErrConflict is a 409: another push or delete of this image is running.
 	ErrConflict = errors.New("store: conflicting operation in progress")
+	// ErrNotesRefused is a 409 of the notes route: the VM's inventory row is
+	// gone, or a different origin is already recorded.
+	ErrNotesRefused = errors.New("store refused the notes: the VM is gone from its inventory, or a different origin is already recorded")
 )
 
 // Types of the store API, so callers need not import internal/storeapi.
@@ -59,6 +62,9 @@ type (
 	Inventory         = storeapi.Inventory
 	InventoryVM       = storeapi.InventoryVM
 	Delisted          = storeapi.Delisted
+	VMOrigin          = storeapi.VMOrigin
+	VMNotes           = storeapi.VMNotes
+	VMNotesInput      = storeapi.VMNotesInput
 )
 
 // Option configures a Client.
@@ -413,4 +419,22 @@ func (c *Client) DeleteInventoryRow(ctx context.Context, host, name, uuid string
 		return statusErr("delete inventory row", r.StatusCode())
 	}
 	return nil
+}
+
+// PutVMNotes writes a VM's notes (origin and/or comment) and returns them as
+// stored (PUT /v1/inventory/{host}/{name}/notes). ErrNotFound: the store has
+// no row of (host, name) and no UUID was given (or the UUID's row has another
+// name); ErrNotesRefused: the row is gone, or another origin is recorded.
+func (c *Client) PutVMNotes(ctx context.Context, host, name string, in VMNotesInput) (*VMNotes, error) {
+	r, err := c.api.PutVMNotesWithResponse(ctx, host, name, in)
+	if err != nil {
+		return nil, transportErr("put notes", err)
+	}
+	switch {
+	case r.StatusCode() == http.StatusOK && r.JSON200 != nil:
+		return r.JSON200, nil
+	case r.StatusCode() == http.StatusConflict:
+		return nil, fmt.Errorf("store put notes: %w", ErrNotesRefused)
+	}
+	return nil, statusErr("put notes", r.StatusCode())
 }

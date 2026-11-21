@@ -57,11 +57,6 @@ type VMConfig struct {
 	ExtraDiskSizeGB uint         // 0 means no second disk
 	ExtraDiskPool   string       // empty uses Pool
 	ExtraDisks      []DiskDevice // extra disks included in domain XML
-	// Origin is what the VM was made from, written into the domain's
-	// metadata by Define; nil writes none. Comment is the user's comment,
-	// kept in the same element (see ValidateComment).
-	Origin  *VMOrigin
-	Comment string
 }
 
 // Storage pools. An empty pool name anywhere (VMConfig.Pool, CloneImage,
@@ -124,8 +119,4 @@ type VMInfo struct {
 	// UUID is the libvirt domain UUID, filled by Info and List; empty when
 	// unknown (a daemon that predates the field).
 	UUID string `json:"uuid,omitempty"`
-	// Origin and Comment are read from the domain's metadata by Info and List;
-	// nil and empty for a VM made before they existed or outside vmtool.
-	Origin  *VMOrigin `json:"origin,omitempty"`
-	Comment string    `json:"comment,omitempty"`
 }

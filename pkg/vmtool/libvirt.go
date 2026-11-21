@@ -301,11 +301,13 @@ func osXML(cfg VMConfig) string {
 	return b.String()
 }
 
-// domainXML builds a full libvirt domain XML from a VMConfig.
+// domainXML builds a full libvirt domain XML from a VMConfig. It writes no
+// <metadata>: vmtool keeps nothing of its own in a domain's definition (what
+// it records about a VM, its origin and comment, is in the store only).
 func domainXML(cfg VMConfig) string {
 	return fmt.Sprintf(`<domain type='kvm'>
   <name>%s</name>
-%s%s  <memory unit='GiB'>%d</memory>
+%s  <memory unit='GiB'>%d</memory>
   <vcpu>%d</vcpu>
 %s%s  <features>
     <acpi/>
@@ -335,7 +337,7 @@ func domainXML(cfg VMConfig) string {
       <backend model='random'>/dev/urandom</backend>
     </rng>
   </devices>
-</domain>`, xmlEscape(cfg.Name), identityXML(cfg), metadataBlock(cfg.Origin, cfg.Comment), cfg.Memory, cfg.VCPUs, iothreadsXML(cfg), osXML(cfg), disksXML(cfg), networkXML(cfg.Network))
+</domain>`, xmlEscape(cfg.Name), identityXML(cfg), cfg.Memory, cfg.VCPUs, iothreadsXML(cfg), osXML(cfg), disksXML(cfg), networkXML(cfg.Network))
 }
 
 // prepareDefine fills a missing UUID and returns the domain XML with the
@@ -707,7 +709,6 @@ func (m *Manager) Info(name string) (*VMInfo, error) {
 		vi.Firmware = domainFirmware(xmlDesc)
 		vi.DiskCache = diskCacheOf(xmlDesc, "vda")
 		vi.DiskBacking = diskBackingOf(xmlDesc, "vda")
-		vi.Origin, vi.Comment = ParseMetadata(xmlDesc)
 	}
 
 	return vi, nil
@@ -749,14 +750,13 @@ func (m *Manager) List() ([]VMInfo, error) {
 		if state == libvirt.DOMAIN_RUNNING {
 			vi.IP, _ = m.getIP(&dom)
 		}
-		// The UUID is on the domain object and the XML is read anyway for
-		// the metadata, so the inventory report needs no second call per VM.
+		// The UUID is on the domain object, so the inventory report needs no
+		// second call per VM.
 		if u, err := dom.GetUUIDString(); err == nil {
 			vi.UUID = u
 		}
 		if xmlDesc, err := dom.GetXMLDesc(0); err == nil {
 			vi.Firmware = domainFirmware(xmlDesc)
-			vi.Origin, vi.Comment = ParseMetadata(xmlDesc)
 		}
 		vms = append(vms, vi)
 		dom.Free()

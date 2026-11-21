@@ -117,6 +117,41 @@ var migrations = []string{
 	// 3: a VM whose disks the host could not read keeps its last known disks
 	// and is marked.
 	`ALTER TABLE vms ADD COLUMN disks_unreadable INTEGER NOT NULL DEFAULT 0;`,
+	// 4: a VM's notes (origin and comment) move out of the reported row into
+	// their own table, keyed (host, uuid), which no report touches. Existing
+	// values are carried over; the origin counts as written when the row was
+	// first seen, the comment when it was last seen.
+	`CREATE TABLE vm_notes (
+		host            TEXT NOT NULL,
+		uuid            TEXT NOT NULL,
+		name            TEXT NOT NULL,
+		origin_image    TEXT NOT NULL DEFAULT '',
+		origin_sha256   TEXT NOT NULL DEFAULT '',
+		origin_template TEXT NOT NULL DEFAULT '',
+		origin_clone    TEXT NOT NULL DEFAULT '',
+		origin_pool     TEXT NOT NULL DEFAULT '',
+		origin_created  TEXT NOT NULL DEFAULT '',
+		comment         TEXT NOT NULL DEFAULT '',
+		origin_written  TEXT,
+		comment_updated TEXT,
+		PRIMARY KEY (host, uuid)
+	);
+	INSERT INTO vm_notes(host, uuid, name, origin_image, origin_sha256, origin_template, origin_clone,
+		origin_pool, origin_created, comment, origin_written, comment_updated)
+	SELECT host, uuid, name, origin_image, origin_sha256, origin_template, origin_clone, origin_pool, created, comment,
+		CASE WHEN origin_image<>'' OR origin_sha256<>'' OR origin_template<>'' OR origin_clone<>''
+		       OR origin_pool<>'' OR created<>'' THEN first_seen END,
+		CASE WHEN comment<>'' THEN last_seen END
+	FROM vms
+	WHERE origin_image<>'' OR origin_sha256<>'' OR origin_template<>'' OR origin_clone<>''
+	   OR origin_pool<>'' OR created<>'' OR comment<>'';
+	ALTER TABLE vms DROP COLUMN origin_image;
+	ALTER TABLE vms DROP COLUMN origin_sha256;
+	ALTER TABLE vms DROP COLUMN origin_template;
+	ALTER TABLE vms DROP COLUMN origin_clone;
+	ALTER TABLE vms DROP COLUMN origin_pool;
+	ALTER TABLE vms DROP COLUMN created;
+	ALTER TABLE vms DROP COLUMN comment;`,
 }
 
 // DB is an open store database. It is safe for concurrent use.

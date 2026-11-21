@@ -37,10 +37,13 @@ wrong clock is not silenced.
 A VM its host no longer has is hidden unless --gone is given; it then shows
 when the store removes its row and its login. The login is kept 7 days after
 that; an empty report never deletes one earlier. 'vmtool delete' removes the
-login and the row at once. A VM's origin is known only for VMs vmtool created
-from this version on. A comment is kept in plain text, in the VM's definition
-and in the store. A VM marked * had its disks unreadable on the host; the
-last known disks are shown.
+login and the row at once. Origin and comment are the VM's notes, kept in the
+store only (vmtool writes nothing of its own into a VM's libvirt definition),
+in plain text; no report touches them. A VM's origin is recorded once, at
+create, and only with a store in use, so it is known only for VMs vmtool
+created that way from this version on. The comment is set with 'vmtool
+comment', also while the host sleeps. A VM marked * had its disks unreadable
+on the host; the last known disks are shown.
 
 Needs the store (a server: block in config.yml and VMTOOL_SERVER_TOKEN); with
 none, or one that does not answer, it says so and exits 1.`,

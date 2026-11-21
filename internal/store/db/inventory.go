@@ -14,10 +14,9 @@ import (
 const GracePeriod = 7 * 24 * time.Hour
 
 // VMRow is one VM of a host's report. Host is the report's host, not a
-// field here. Comment is a pointer so a report can say "absent" (nil: keep
-// the stored comment) apart from "present and empty" (clear it). The origin
-// fields and Created are empty for a VM vmtool did not create. Disks is a
-// JSON array (nil is stored as []); it never holds a secret.
+// field here. A report carries no origin and no comment: those are the VM's
+// notes (PutNotes). Disks is a JSON array (nil is stored as []); it never
+// holds a secret.
 type VMRow struct {
 	UUID      string
 	Name      string
@@ -31,13 +30,6 @@ type VMRow struct {
 	// DisksUnreadable: the host could not read this VM's disks. ApplyReport
 	// then keeps the stored disks and sets the flag; Disks is ignored.
 	DisksUnreadable bool
-	OriginImage     string
-	OriginSHA256    string
-	OriginTemplate  string
-	OriginClone     string
-	OriginPool      string
-	Created         string // creation time from the origin, as the daemon wrote it
-	Comment         *string
 }
 
 // ReportCounts is what ApplyReport did. Stale is true when the report was
@@ -60,12 +52,14 @@ type HostRow struct {
 	Gone          int
 }
 
-// InventoryVM is a VMRow as stored, with its host, times and the computed
-// HasCredentials (a credential record of the same host, name and UUID).
+// InventoryVM is a VMRow as stored, with its host, times, its notes (Origin
+// nil and Comment empty when it has none) and the computed HasCredentials (a
+// credential record of the same host, name and UUID).
 type InventoryVM struct {
 	Host string
 	VMRow
-	Comment        string // shadows VMRow.Comment: stored comments are never "absent"
+	Origin         *Origin
+	Comment        string
 	FirstSeen      time.Time
 	LastSeen       time.Time
 	GoneSince      *time.Time
@@ -85,21 +79,22 @@ type Delisted struct {
 	KeptUntil time.Time
 }
 
-// SweepCounts is what Sweep removed.
+// SweepCounts is what Sweep removed. Notes counts notes whose row never
+// appeared (notes of a removed row go with it and are not counted).
 type SweepCounts struct {
 	Rows        int
 	Credentials int
+	Notes       int
 }
 
 const vmCols = `uuid, name, state, vcpus, memory_gib, ip, autostart, firmware, disks,
-	origin_image, origin_sha256, origin_template, origin_clone, origin_pool,
-	created, comment, first_seen, last_seen, gone_since`
+	first_seen, last_seen, gone_since`
 
 // ApplyReport applies one host's full VM list in one transaction. Each listed
 // VM is inserted or updated (last_seen = now, gone_since cleared); each live
 // row of the host not listed is marked gone; a credential record of the host
-// whose UUID matches no row gets a gone row. A comment of nil leaves the
-// stored comment. A VM with DisksUnreadable keeps its stored disks and is
+// whose UUID matches no row gets a gone row. The VM's notes (vm_notes) are
+// never touched. A VM with DisksUnreadable keeps its stored disks and is
 // marked; a report that reads them clears the mark. Reports are ordered by
 // the store's own clock, read when the call starts (the time the request was
 // taken): a report received before the last applied one for the host changes
@@ -164,31 +159,22 @@ func (d *DB) ApplyReport(ctx context.Context, host string, generatedAt time.Time
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return cnt, fmt.Errorf("apply report: %w", err)
 		}
-		comment := ""
-		if v.Comment != nil {
-			comment = *v.Comment
-		}
 		if !exists {
 			_, err = tx.ExecContext(ctx,
-				`INSERT INTO vms(host, `+vmCols+`, disks_unreadable) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
+				`INSERT INTO vms(host, `+vmCols+`, disks_unreadable) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
 				host, v.UUID, v.Name, v.State, v.VCPUs, v.MemoryGiB, v.IP, v.Autostart, v.Firmware, disks,
-				v.OriginImage, v.OriginSHA256, v.OriginTemplate, v.OriginClone, v.OriginPool,
-				v.Created, comment, now, now, v.DisksUnreadable)
+				now, now, v.DisksUnreadable)
 		} else {
 			if gone.Valid {
 				cnt.Relisted++
 			}
-			// CASE keeps the stored comment when the report omitted the field.
 			_, err = tx.ExecContext(ctx,
 				`UPDATE vms SET name=?, state=?, vcpus=?, memory_gib=?, ip=?, autostart=?, firmware=?,
 				   disks=CASE WHEN ? THEN disks ELSE ? END, disks_unreadable=?,
-				   origin_image=?, origin_sha256=?, origin_template=?, origin_clone=?, origin_pool=?, created=?,
-				   comment=CASE WHEN ? THEN ? ELSE comment END, last_seen=?, gone_since=NULL
+				   last_seen=?, gone_since=NULL
 				 WHERE host=? AND uuid=?`,
 				v.Name, v.State, v.VCPUs, v.MemoryGiB, v.IP, v.Autostart, v.Firmware,
-				v.DisksUnreadable, disks, v.DisksUnreadable,
-				v.OriginImage, v.OriginSHA256, v.OriginTemplate, v.OriginClone, v.OriginPool, v.Created,
-				v.Comment != nil, comment, now, host, v.UUID)
+				v.DisksUnreadable, disks, v.DisksUnreadable, now, host, v.UUID)
 		}
 		if err != nil {
 			return cnt, fmt.Errorf("apply report: %w", err)
@@ -214,7 +200,7 @@ func (d *DB) ApplyReport(ctx context.Context, host string, generatedAt time.Time
 	// logins orphaned before the inventory existed fall under the grace period.
 	res, err := tx.ExecContext(ctx,
 		`INSERT INTO vms(host, `+vmCols+`)
-		 SELECT c.host, c.uuid, c.name, 'unknown', 0, 0, '', 0, '', '[]', '', '', '', '', '', '', '', ?, ?, ?
+		 SELECT c.host, c.uuid, c.name, 'unknown', 0, 0, '', 0, '', '[]', ?, ?, ?
 		 FROM vm_credentials c
 		 WHERE c.host=? AND c.uuid<>'' AND NOT EXISTS (SELECT 1 FROM vms v WHERE v.host=c.host AND v.uuid=c.uuid)`,
 		now, now, now, host)
@@ -281,9 +267,36 @@ func (d *DB) Delist(ctx context.Context, host, name string) (Delisted, error) {
 }
 
 // DeleteVMRow removes the row (host, uuid) at once, if it also has the given
-// name; ErrNotFound otherwise. It leaves the credential record alone.
+// name, and the VM's notes with it (also notes whose row never appeared);
+// ErrNotFound when there was neither. It leaves the credential record alone.
 func (d *DB) DeleteVMRow(ctx context.Context, host, name, uuid string) error {
-	return affected(d.sql.ExecContext(ctx, `DELETE FROM vms WHERE host=? AND name=? AND uuid=?`, host, name, uuid))
+	tx, err := d.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("delete vm row: %w", err)
+	}
+	defer tx.Rollback()
+	n := int64(0)
+	for _, q := range []string{
+		`DELETE FROM vms WHERE host=? AND name=? AND uuid=?`,
+		`DELETE FROM vm_notes WHERE host=? AND name=? AND uuid=?`,
+	} {
+		res, err := tx.ExecContext(ctx, q, host, name, uuid)
+		if err != nil {
+			return fmt.Errorf("delete vm row: %w", err)
+		}
+		k, err := res.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("delete vm row: %w", err)
+		}
+		n += k
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("delete vm row: %w", err)
+	}
+	return nil
 }
 
 // ListInventory returns the host rows and VM rows, for one host or (host "")
@@ -315,10 +328,13 @@ func (d *DB) ListInventory(ctx context.Context, host string, withGone bool) (Inv
 	}
 
 	vq := `SELECT v.host, v.uuid, v.name, v.state, v.vcpus, v.memory_gib, v.ip, v.autostart, v.firmware, v.disks,
-	         v.origin_image, v.origin_sha256, v.origin_template, v.origin_clone, v.origin_pool,
-	         v.created, v.comment, v.first_seen, v.last_seen, v.gone_since, v.disks_unreadable,
+	         n.origin_written IS NOT NULL, COALESCE(n.origin_image, ''), COALESCE(n.origin_sha256, ''),
+	         COALESCE(n.origin_template, ''), COALESCE(n.origin_clone, ''), COALESCE(n.origin_pool, ''),
+	         COALESCE(n.origin_created, ''), COALESCE(n.comment, ''),
+	         v.first_seen, v.last_seen, v.gone_since, v.disks_unreadable,
 	         EXISTS (SELECT 1 FROM vm_credentials c WHERE c.host=v.host AND c.name=v.name AND c.uuid=v.uuid)
-	       FROM vms v WHERE (?='' OR v.host=?) AND (? OR v.gone_since IS NULL)
+	       FROM vms v LEFT JOIN vm_notes n ON n.host=v.host AND n.uuid=v.uuid
+	       WHERE (?='' OR v.host=?) AND (? OR v.gone_since IS NULL)
 	       ORDER BY v.host, v.name, v.first_seen, v.uuid`
 	rows, err = d.sql.QueryContext(ctx, vq, host, host, withGone)
 	if err != nil {
@@ -329,10 +345,15 @@ func (d *DB) ListInventory(ctx context.Context, host string, withGone bool) (Inv
 		var v InventoryVM
 		var disks, first, last string
 		var gone sql.NullString
+		var hasOrigin bool
+		var o Origin
 		if err := rows.Scan(&v.Host, &v.UUID, &v.Name, &v.State, &v.VCPUs, &v.MemoryGiB, &v.IP, &v.Autostart,
-			&v.Firmware, &disks, &v.OriginImage, &v.OriginSHA256, &v.OriginTemplate, &v.OriginClone,
-			&v.OriginPool, &v.Created, &v.Comment, &first, &last, &gone, &v.DisksUnreadable, &v.HasCredentials); err != nil {
+			&v.Firmware, &disks, &hasOrigin, &o.Image, &o.SHA256, &o.Template, &o.Clone, &o.Pool, &o.Created,
+			&v.Comment, &first, &last, &gone, &v.DisksUnreadable, &v.HasCredentials); err != nil {
 			return inv, fmt.Errorf("list inventory: %w", err)
+		}
+		if hasOrigin {
+			v.Origin = &o
 		}
 		v.Disks = json.RawMessage(disks)
 		v.FirstSeen, v.LastSeen = parseTime(first), parseTime(last)
@@ -381,6 +402,9 @@ func (d *DB) Sweep(ctx context.Context, now time.Time) (SweepCounts, error) {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM vms WHERE host=? AND uuid=?`, k.host, k.uuid); err != nil {
 			return out, fmt.Errorf("sweep: %w", err)
 		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM vm_notes WHERE host=? AND uuid=?`, k.host, k.uuid); err != nil {
+			return out, fmt.Errorf("sweep: %w", err)
+		}
 		out.Rows++
 		res, err := tx.ExecContext(ctx, `DELETE FROM vm_credentials WHERE host=? AND name=? AND uuid=?`, k.host, k.name, k.uuid)
 		if err != nil {
@@ -392,8 +416,45 @@ func (d *DB) Sweep(ctx context.Context, now time.Time) (SweepCounts, error) {
 		}
 		out.Credentials += int(n)
 	}
+	orphans, err := orphanNotesDue(ctx, tx, cutoff)
+	if err != nil {
+		return out, fmt.Errorf("sweep: %w", err)
+	}
+	for _, k := range orphans {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM vm_notes WHERE host=? AND uuid=?`, k[0], k[1]); err != nil {
+			return out, fmt.Errorf("sweep: %w", err)
+		}
+		out.Notes++
+	}
 	if err := tx.Commit(); err != nil {
 		return SweepCounts{}, fmt.Errorf("sweep: %w", err)
 	}
 	return out, nil
+}
+
+// orphanNotesDue lists the (host, uuid) of notes that have no inventory row
+// and were last written (origin or comment) at or before cutoff.
+func orphanNotesDue(ctx context.Context, tx *sql.Tx, cutoff time.Time) ([][2]string, error) {
+	rows, err := tx.QueryContext(ctx,
+		`SELECT n.host, n.uuid, COALESCE(n.origin_written, ''), COALESCE(n.comment_updated, '')
+		 FROM vm_notes n WHERE NOT EXISTS (SELECT 1 FROM vms v WHERE v.host=n.host AND v.uuid=n.uuid)`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var due [][2]string
+	for rows.Next() {
+		var host, uuid, ow, cu string
+		if err := rows.Scan(&host, &uuid, &ow, &cu); err != nil {
+			return nil, err
+		}
+		last := parseTime(ow)
+		if c := parseTime(cu); c.After(last) {
+			last = c
+		}
+		if !last.After(cutoff) {
+			due = append(due, [2]string{host, uuid})
+		}
+	}
+	return due, rows.Err()
 }

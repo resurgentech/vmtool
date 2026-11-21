@@ -127,7 +127,6 @@ func (g *goneVMs) Resume(string) error              { return g.op() }
 func (g *goneVMs) Destroy(string) error             { return g.op() }
 func (g *goneVMs) Reboot(string) error              { return g.op() }
 func (g *goneVMs) SetAutostart(string, bool) error  { return g.op() }
-func (g *goneVMs) SetComment(string, string) error  { return g.op() }
 func (g *goneVMs) MigrateDisk(string, string) error { return g.op() }
 func (g *goneVMs) ResizeDisk(string, uint) error    { return g.op() }
 func (g *goneVMs) Delete(string, bool) error        { return g.op() }
@@ -153,10 +152,6 @@ var workflows = map[string]func(s *Service, m Manager) error{
 	"reboot":   func(s *Service, m Manager) error { _, err := s.RebootVM(context.Background(), m, dlRef); return err },
 	"autostart": func(s *Service, m Manager) error {
 		_, err := s.SetAutostart(context.Background(), m, dlRef, true)
-		return err
-	},
-	"comment": func(s *Service, m Manager) error {
-		_, err := s.SetComment(context.Background(), m, dlRef, "placeholder comment")
 		return err
 	},
 	"migrate": func(s *Service, m Manager) error {

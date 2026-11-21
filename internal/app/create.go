@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jaredeh/vmtool/internal/vmnotes"
 	"github.com/jaredeh/vmtool/pkg/vmtool"
 )
 
@@ -185,7 +186,7 @@ func (s *Service) CreateVM(ctx context.Context, m Manager, in CreateVMInput) (*v
 	if err := vmtool.CheckExtraVars(in.ExtraVars); err != nil {
 		return nil, invalid("create", err)
 	}
-	if err := vmtool.ValidateComment(in.Comment); err != nil {
+	if err := vmnotes.ValidateComment(in.Comment); err != nil {
 		return nil, invalid("create", err)
 	}
 	if in.NoWait && in.Playbook != "" {
@@ -193,6 +194,13 @@ func (s *Service) CreateVM(ctx context.Context, m Manager, in CreateVMInput) (*v
 	}
 	if vmtool.IsMachine(in.Name) {
 		return nil, conflict("create", fmt.Errorf("%q is registered as a metal/alien machine", in.Name))
+	}
+	// A comment is kept in the store only: with no store in use it is refused
+	// here, before anything is created (and before any Manager call).
+	if in.Comment != "" {
+		if _, err := s.Store.requireStore(ctx); err != nil {
+			return nil, commentNeedsStore("create", err)
+		}
 	}
 
 	// The vmexp- prefix belongs to export volumes in the array's volume group;
@@ -264,7 +272,6 @@ func (s *Service) CreateVM(ctx context.Context, m Manager, in CreateVMInput) (*v
 		cfg.SSHPass = in.SSHPass
 	}
 	cfg.Noclone = in.Noclone
-	cfg.Comment = in.Comment
 	if in.Firmware != "" {
 		cfg.Firmware = in.Firmware // else DefaultConfig's efi
 	}
@@ -348,7 +355,9 @@ func (s *Service) CreateVM(ctx context.Context, m Manager, in CreateVMInput) (*v
 		emit(in, "extra_disk", "done", fmt.Sprintf("extra disk %s → vdb", path), "")
 	}
 
-	cfg.Origin = originOf(in, pools, cfg.DiskPath, imageSHA, s.now())
+	// What the VM was made from, recorded in the store (not in the domain)
+	// once the host has given the domain its UUID.
+	notes := createNotes{in: in, ref: ref, pools: pools, cloned: cfg.DiskPath, sha: imageSHA, created: s.now()}
 	emit(in, "start", "start", "defining and starting", "")
 	if err := m.Define(cfg); err != nil {
 		emit(in, "start", "error", err.Error(), "")
@@ -367,6 +376,9 @@ func (s *Service) CreateVM(ctx context.Context, m Manager, in CreateVMInput) (*v
 		if err := s.WriteInventory(ref, s.InventoryPath, vmtool.Auth{User: cfg.SSHUser, Password: cfg.SSHPass}); err != nil {
 			emit(in, "write_inventory", "error", err.Error(), "")
 			info, _ := m.Info(cfg.Name) // best effort: the domain exists
+			if info != nil {
+				s.recordNotes(ctx, m, notes, info.UUID)
+			}
 			return info, wrap("create", err)
 		}
 		emit(in, "write_inventory", "done", "inventory written", "")
@@ -381,6 +393,7 @@ func (s *Service) CreateVM(ctx context.Context, m Manager, in CreateVMInput) (*v
 		if err != nil {
 			return nil, wrap("create", err)
 		}
+		s.recordNotes(ctx, m, notes, info.UUID)
 		return info, nil
 	}
 
@@ -391,6 +404,7 @@ func (s *Service) CreateVM(ctx context.Context, m Manager, in CreateVMInput) (*v
 	if infoErr != nil {
 		return nil, wrap("create", infoErr)
 	}
+	s.recordNotes(ctx, m, notes, info.UUID)
 	if ipErr != nil {
 		// The VM stays defined and running; the caller decides.
 		err := fmt.Errorf("%s got no address within %s (%w); the VM exists and is running: delete it, or create with --no-wait for a guest whose address vmtool cannot see", ref, ipTimeout, ipErr)
@@ -521,24 +535,23 @@ func hostImageSHA(st ImageStore, image string) string {
 	return rem.SHA256
 }
 
-// originOf is what a create records with the VM: the image, its digest when
-// known, how the disk was made and where, and when. kind and pool come from
-// the clone's path against the host's pool list when it was listed: a
-// directory that is a thin pool's path is a thin snapshot, one that is a
-// logical pool's (or any /dev path) a thick LV, anything else a file. A
-// hypervisor's thin Manager refines a thin origin with the template it knows
-// (hosts.ThinPools.Define). Without a clone (noclone) the image is booted in
-// place: kind none, no pool.
-func originOf(in CreateVMInput, pools []vmtool.PoolInfo, cloned, sha string, now time.Time) *vmtool.VMOrigin {
-	o := &vmtool.VMOrigin{Image: in.Image, ImageSHA256: sha, Created: now.UTC()}
+// originOf is what a create records about the VM in the store: the image,
+// its digest when known, how the disk was made and where, and when. kind and
+// pool come from the clone's path against the host's pool list: a directory
+// that is a thin pool's path is a thin snapshot, one that is a logical pool's
+// (or any /dev path) a thick LV, anything else a file. Without a clone
+// (noclone) the image is booted in place: kind none, no pool. The template of
+// a thin snapshot is filled in by recordNotes, which can ask the host.
+func originOf(in CreateVMInput, pools []vmtool.PoolInfo, cloned, sha string, now time.Time) *vmnotes.Origin {
+	o := &vmnotes.Origin{Image: in.Image, ImageSHA256: sha, Created: now.UTC()}
 	if in.Noclone {
-		o.CloneKind = vmtool.CloneKindNone
+		o.CloneKind = vmnotes.CloneKindNone
 		return o
 	}
 	o.Pool = in.Pool
-	o.CloneKind = vmtool.CloneKindFile
+	o.CloneKind = vmnotes.CloneKindFile
 	if strings.HasPrefix(cloned, "/dev/") {
-		o.CloneKind = vmtool.CloneKindBlock
+		o.CloneKind = vmnotes.CloneKindBlock
 	}
 	dir := filepath.Dir(filepath.Clean(cloned))
 	for _, p := range pools {
@@ -546,7 +559,7 @@ func originOf(in CreateVMInput, pools []vmtool.PoolInfo, cloned, sha string, now
 			continue
 		}
 		if p.Type == vmtool.PoolTypeThin {
-			o.CloneKind, o.Pool = vmtool.CloneKindThin, p.Name
+			o.CloneKind, o.Pool = vmnotes.CloneKindThin, p.Name
 			break
 		}
 		if o.Pool == "" {

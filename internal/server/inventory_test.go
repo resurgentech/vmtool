@@ -42,7 +42,8 @@ var noVMChange = map[string]string{
 	"listPools": "read", "createPool": "a pool is not a VM",
 	"listTemplates": "templates", "createTemplate": "templates", "deleteTemplate": "templates", "exportTemplate": "templates",
 	"createVolume": "an unattached volume is not a VM's disk", "cloneVolume": "an unattached volume",
-	"getInventory": "read", "listPlaybooks": "read", "listMachines": "metal machines, not VMs", "addMachine": "machines",
+	"getInventory": "read", "setVMComment": "a store write: the comment is in the store's notes, never in the VM",
+	"listPlaybooks": "read", "listMachines": "metal machines, not VMs", "addMachine": "machines",
 	"getMachine": "machines", "removeMachine": "machines", "rebootMachine": "machines",
 	"execMachine": "machines", "openMachineConsole": "machines", "runMachinePlaybook": "machines",
 }
@@ -88,10 +89,14 @@ func TestEveryOperationIsClassified(t *testing.T) {
 		}
 	}
 	for _, id := range []string{"defineVM", "deleteVMDefinition", "deleteVM", "startVM", "stopVM", "resumeVM", "poweroffVM",
-		"rebootVM", "setAutostart", "setVMComment", "addDisk", "migrateDisk", "resizeVMVolume", "resizeVolume"} {
+		"rebootVM", "setAutostart", "addDisk", "migrateDisk", "resizeVMVolume", "resizeVolume"} {
 		if !vmChangeOps[id] {
 			t.Errorf("%s is missing from the VM change set", id)
 		}
+	}
+	// A comment is a store write: it changes nothing the host reports.
+	if vmChangeOps["setVMComment"] || noVMChange["setVMComment"] == "" {
+		t.Error("setVMComment must be in noVMChange, not in the VM change set")
 	}
 }
 
@@ -120,7 +125,7 @@ func TestVMChangeKicksOnSuccessOnly(t *testing.T) {
 	k := &kickCount{}
 	fm := &fakeMgr{}
 	h := kickServer(t, fm, k)
-	if rec := do(h, "PUT", "/v1/hosts/box/vms/vm1/comment", `{"comment":"placeholder comment"}`); rec.Code != 200 {
+	if rec := do(h, "PUT", "/v1/hosts/box/vms/vm1/autostart", `{"enabled":true}`); rec.Code != 200 {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
 	}
 	if k.get() != 1 {
@@ -133,11 +138,11 @@ func TestVMChangeKicksOnSuccessOnly(t *testing.T) {
 		t.Fatalf("a read kicked: %d", k.get())
 	}
 	// refused (bad body): 400, no kick
-	if rec := do(h, "PUT", "/v1/hosts/box/vms/vm1/comment", `{"comment":"a\nb"}`); rec.Code != 400 {
+	if rec := do(h, "PUT", "/v1/hosts/box/vms/vm1/autostart", `{"enabled":"yes"}`); rec.Code != 400 {
 		t.Fatalf("%d", rec.Code)
 	}
 	fm.err = fmt.Errorf("looking up domain: %w", vmtool.ErrNotFound)
-	if rec := do(h, "PUT", "/v1/hosts/box/vms/ghost/comment", `{"comment":"x"}`); rec.Code != 404 {
+	if rec := do(h, "PUT", "/v1/hosts/box/vms/ghost/autostart", `{"enabled":true}`); rec.Code != 404 {
 		t.Fatalf("%d", rec.Code)
 	}
 	if k.get() != 1 {
@@ -145,7 +150,7 @@ func TestVMChangeKicksOnSuccessOnly(t *testing.T) {
 	}
 	// no reporter configured: nothing to kick, nothing breaks
 	h2 := kickServer(t, &fakeMgr{}, nil)
-	if rec := do(h2, "PUT", "/v1/hosts/box/vms/vm1/comment", `{"comment":"x"}`); rec.Code != 200 {
+	if rec := do(h2, "PUT", "/v1/hosts/box/vms/vm1/autostart", `{"enabled":false}`); rec.Code != 200 {
 		t.Fatalf("no reporter: %d", rec.Code)
 	}
 }
@@ -192,7 +197,7 @@ func TestOperationNeverWaitsForTheStore(t *testing.T) {
 	h := kickServer(t, &fakeMgr{}, rep)
 	finished := make(chan int, 1)
 	go func() {
-		finished <- do(h, "PUT", "/v1/hosts/box/vms/vm1/comment", `{"comment":"placeholder comment"}`).Code
+		finished <- do(h, "PUT", "/v1/hosts/box/vms/vm1/autostart", `{"enabled":true}`).Code
 	}()
 	select {
 	case code := <-finished:

@@ -15,10 +15,10 @@ import (
 	"github.com/jaredeh/vmtool/internal/storeapi"
 )
 
-// Report limits. The 1 MiB body limit is maxCredentialBody (the same guard).
+// Report and notes limits. The 1 MiB body limit is maxCredentialBody (the
+// same guard). The comment's limit is vmnotes.MaxCommentBytes.
 const (
 	maxReportVMs   = 4096
-	maxCommentLen  = 512
 	maxDisksPerVM  = 128
 	maxShortField  = 128
 	maxVersionLen  = 128
@@ -58,8 +58,6 @@ func reportVM(v storeapi.ReportVM) (db.VMRow, string) {
 		return db.VMRow{}, "firmware"
 	case len(v.Disks) > maxDisksPerVM:
 		return db.VMRow{}, "disks"
-	case v.Comment != nil && !plainText(*v.Comment, maxCommentLen):
-		return db.VMRow{}, "comment"
 	}
 	for _, d := range v.Disks {
 		if !plainText(d.Target, maxShortField) || !plainText(d.Pool, maxShortField) || d.CapacityBytes < 0 ||
@@ -73,17 +71,8 @@ func reportVM(v storeapi.ReportVM) (db.VMRow, string) {
 	}
 	row := db.VMRow{
 		UUID: strings.ToLower(v.Uuid), Name: v.Name, State: v.State, VCPUs: v.Vcpus, MemoryGiB: v.Memory,
-		IP: v.Ip, Autostart: v.Autostart, Firmware: v.Firmware, Disks: disks, Comment: v.Comment,
+		IP: v.Ip, Autostart: v.Autostart, Firmware: v.Firmware, Disks: disks,
 		DisksUnreadable: v.DisksUnreadable != nil && *v.DisksUnreadable,
-	}
-	if o := v.Origin; o != nil {
-		for _, s := range []*string{o.Image, o.ImageSha256, o.Template, o.Clone, o.Pool, o.Created} {
-			if !plainText(deref(s), maxOriginField) {
-				return db.VMRow{}, "origin"
-			}
-		}
-		row.OriginImage, row.OriginSHA256, row.OriginTemplate = deref(o.Image), deref(o.ImageSha256), deref(o.Template)
-		row.OriginClone, row.OriginPool, row.Created = deref(o.Clone), deref(o.Pool), deref(o.Created)
 	}
 	return row, ""
 }
@@ -150,18 +139,7 @@ func toInventoryVM(v db.InventoryVM) storeapi.InventoryVM {
 		t := true
 		out.DisksUnreadable = &t
 	}
-	if v.OriginImage != "" || v.OriginSHA256 != "" || v.OriginTemplate != "" || v.OriginClone != "" || v.OriginPool != "" || v.Created != "" {
-		opt := func(s string) *string {
-			if s == "" {
-				return nil
-			}
-			return &s
-		}
-		out.Origin = &storeapi.VMOrigin{
-			Image: opt(v.OriginImage), ImageSha256: opt(v.OriginSHA256), Template: opt(v.OriginTemplate),
-			Clone: opt(v.OriginClone), Pool: opt(v.OriginPool), Created: opt(v.Created),
-		}
-	}
+	out.Origin = originToAPI(v.Origin)
 	if v.GoneSince != nil {
 		g := *v.GoneSince
 		k := g.Add(db.GracePeriod)
@@ -296,7 +274,7 @@ func RunSweep(ctx context.Context, d SweepDeps) (db.SweepCounts, error) {
 		d.Log.Error("inventory sweep failed", "op", "sweep", "class", "sweep")
 		return n, err
 	}
-	d.Log.Info("inventory sweep done", "op", "sweep", "rows", n.Rows, "credentials", n.Credentials)
+	d.Log.Info("inventory sweep done", "op", "sweep", "rows", n.Rows, "credentials", n.Credentials, "orphan_notes", n.Notes)
 	return n, nil
 }
 

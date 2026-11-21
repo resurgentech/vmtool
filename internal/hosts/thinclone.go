@@ -455,42 +455,7 @@ func (t ThinPools) Define(cfg vmtool.VMConfig) error {
 		}
 	}
 	cfg.ExtraDisks = extras
-	cfg.Origin = thinOrigin(cfg.Origin, cfg.DiskPath, vols)
 	return t.Manager.Define(cfg)
-}
-
-// thinOrigin refines the origin a create recorded when the boot disk is a
-// thin vmtool volume: the daemon knows what the app could only guess, that
-// the disk is a snapshot (kind thin) and of which template, so it names the
-// template and its LV and, when the create did not know the image's digest,
-// takes the template's. The caller's origin is not changed; a nil origin or
-// any other disk leaves it as sent.
-func thinOrigin(o *vmtool.VMOrigin, diskPath string, vols []vmtool.ThinVolume) *vmtool.VMOrigin {
-	if o == nil {
-		return nil
-	}
-	vg, lv, ok := vmtool.ParseThinDevPath(diskPath)
-	if !ok {
-		return o
-	}
-	v, found := findVol(vols, vg, lv)
-	if !found || v.Kind != vmtool.ThinKindVol {
-		return o
-	}
-	out := *o
-	out.CloneKind = vmtool.CloneKindThin
-	if out.Pool == "" {
-		out.Pool = v.Pool
-	}
-	if ov, found := findVol(vols, vg, v.Origin); found && ov.Kind == vmtool.ThinKindTemplate {
-		if tpl, err := vmtool.TemplateFromVolume(ov, vols); err == nil {
-			out.Template, out.TemplateLV = tpl.Name, tpl.LV
-			if out.ImageSHA256 == "" {
-				out.ImageSHA256 = tpl.SHA256
-			}
-		}
-	}
-	return &out
 }
 
 // ---- delete ----

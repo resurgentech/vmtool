@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -185,9 +186,7 @@ func startReporter(t *testing.T, storeErrs ...error) *repEnv {
 	e := &repEnv{store: newRepStore(), src: &repSource{}, clock: newRepClock(), log: &bytes.Buffer{}, logMu: &sync.Mutex{}}
 	e.store.errs = storeErrs
 	e.src.set(vmtool.VMInfo{Name: "vm1", State: "running", VCPUs: 2, Memory: 4, IP: "192.0.2.10", Autostart: true,
-		UUID: repUUID1, Firmware: "efi", Comment: "placeholder comment",
-		Origin: &vmtool.VMOrigin{Image: "img1", ImageSHA256: repSHA, CloneKind: "file", Pool: "pool1",
-			Created: time.Date(2026, 11, 20, 1, 2, 3, 0, time.UTC)}})
+		UUID: repUUID1, Firmware: "efi"})
 	e.rep = NewInventoryReporter(InventoryReporterConfig{
 		Host: "hv1", Version: "v-test", Store: e.store, Source: e.src,
 		Now: e.clock.Now, After: e.clock.After,
@@ -228,8 +227,8 @@ func (e *repEnv) waitWait(t *testing.T) repWait {
 	}
 }
 
-// The report is the full list, at start, with everything N4 gave and the
-// disks; the comment field is always present.
+// The report is the full list, at start, with what the host knows and the
+// disks.
 func TestReporterSendsFullListAtStart(t *testing.T) {
 	e := startReporter(t)
 	e.waitSend(t)
@@ -245,30 +244,25 @@ func TestReporterSendsFullListAtStart(t *testing.T) {
 		v.Ip != "192.0.2.10" || !v.Autostart || v.Firmware != "efi" {
 		t.Errorf("vm: %+v", v)
 	}
-	if v.Comment == nil || *v.Comment != "placeholder comment" {
-		t.Errorf("comment: %v", v.Comment)
-	}
-	o := v.Origin
-	if o == nil || *o.Image != "img1" || *o.ImageSha256 != repSHA || *o.Clone != "file" || *o.Pool != "pool1" || *o.Created != "2026-11-20T01:02:03Z" {
-		t.Errorf("origin: %+v", o)
-	}
 	if len(v.Disks) != 1 || v.Disks[0].Target != "vda" || v.Disks[0].Pool != "pool1" ||
 		string(v.Disks[0].Kind) != "file" || v.Disks[0].CapacityBytes != 10<<30 {
 		t.Errorf("disks: %+v", v.Disks)
 	}
 }
 
-// A VM without a comment still carries the field (empty), so clearing reaches
-// the store; one without an origin carries none.
-func TestReporterAlwaysSendsComment(t *testing.T) {
+// A report carries no origin and no comment: those are the VM's notes, which
+// only the workstation writes to the store (N12).
+func TestReporterSendsNoNotes(t *testing.T) {
 	env := startReporterWith(t, vmtool.VMInfo{Name: "vm2", State: "shutoff", UUID: repUUID2})
 	env.waitSend(t)
-	v := env.store.last().Vms[0]
-	if v.Comment == nil || *v.Comment != "" {
-		t.Errorf("comment: %v", v.Comment)
+	b, err := json.Marshal(env.store.last())
+	if err != nil {
+		t.Fatal(err)
 	}
-	if v.Origin != nil {
-		t.Errorf("origin: %+v", v.Origin)
+	for _, k := range []string{`"comment"`, `"origin"`} {
+		if strings.Contains(string(b), k) {
+			t.Errorf("report carries %s: %s", k, b)
+		}
 	}
 }
 

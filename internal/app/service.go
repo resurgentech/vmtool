@@ -20,9 +20,6 @@ type Manager interface {
 	List() ([]vmtool.VMInfo, error)
 	WaitForIP(name string, timeout time.Duration) (string, error)
 	SetAutostart(name string, enabled bool) error
-	// SetComment sets (or, when empty, clears) the VM's comment in its
-	// domain metadata, without redefining the VM. The caller validated it.
-	SetComment(name, comment string) error
 	Reboot(name string) error
 	ResizeDisk(name string, sizeGB uint) error
 	MigrateDisk(name, pool string) error
@@ -163,8 +160,10 @@ type CreateVMInput struct {
 	// NoWait returns right after start: no address wait, no SSH wait, no
 	// filesystem grow. Refused together with Playbook.
 	NoWait bool
-	// Comment is kept with the VM (domain metadata, plain text): at most 512
-	// bytes of UTF-8, one line, no control characters. Empty is none.
+	// Comment is written to the store with the VM's origin after define (the
+	// VM's notes, plain text; nothing goes into the domain): at most 512
+	// bytes of UTF-8, one line, no control characters. Empty is none. With
+	// no store in use a comment is refused before anything is created.
 	Comment    string
 	OnProgress ProgressFunc
 }

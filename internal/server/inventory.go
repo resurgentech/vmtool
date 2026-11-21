@@ -16,15 +16,15 @@ import (
 type Kicker interface{ Kick() }
 
 // vmChangeOps are the operations whose success changes what a VM looks like
-// in the store's inventory (state, disks, comment, autostart, existence). The
+// in the store's inventory (state, disks, autostart, existence). A comment is
+// not one: it is written to the store by the workstation, not by the host. The
 // server kicks the reporter after a 2xx answer of one of them. Every
 // operation of vmtool.yaml is here or in noVMChange (inventory_test.go), so
 // a new route cannot be forgotten.
 var vmChangeOps = map[string]bool{
 	"defineVM": true, "deleteVMDefinition": true, "deleteVM": true,
 	"startVM": true, "stopVM": true, "resumeVM": true, "poweroffVM": true, "rebootVM": true,
-	"setAutostart": true, "setVMComment": true,
-	"addDisk": true, "migrateDisk": true, "resizeVMVolume": true, "resizeVolume": true,
+	"setAutostart": true, "addDisk": true, "migrateDisk": true, "resizeVMVolume": true, "resizeVolume": true,
 }
 
 // startInventory starts the reporter of a hypervisor daemon, or does not: with

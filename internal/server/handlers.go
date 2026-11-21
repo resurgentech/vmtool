@@ -146,8 +146,6 @@ func toAPI(info *vmtool.VMInfo) api.VMInfo {
 		fw := api.VMInfoFirmware(info.Firmware)
 		out.Firmware = &fw
 	}
-	out.Origin = originToAPI(info.Origin)
-	out.Comment = nonEmptyPtr(info.Comment)
 	return out
 }
 
@@ -307,6 +305,9 @@ func (h *handlers) CreateVM(ctx context.Context, req api.CreateVMRequestObject) 
 			return api.CreateVM404JSONResponse(apiErr(err)), nil
 		case app.KindConflict:
 			return api.CreateVM409JSONResponse(apiErr(err)), nil
+		case app.KindUnavailable:
+			// a comment with no store in use, refused before anything is made
+			return api.CreateVM503JSONResponse(apiErr(err)), nil
 		default:
 			return api.CreateVM500JSONResponse(apiErrVM(err, info)), nil
 		}
@@ -409,25 +410,43 @@ func (h *handlers) SetAutostart(ctx context.Context, req api.SetAutostartRequest
 	return api.SetAutostart200JSONResponse(toAPI(v.(*vmtool.VMInfo))), nil
 }
 
-// SetVMComment sets or clears a VM's comment. A comment that breaks the rules
-// is 400 and the message names `comment`.
+// SetVMComment sets or clears a VM's comment in the workstation's store (the
+// VM's notes); the VM's host is not asked. A comment that breaks the rules is
+// 400 and the message names `comment`; no store in use is 503; no inventory
+// row is 404; a gone row is 409.
 func (h *handlers) SetVMComment(ctx context.Context, req api.SetVMCommentRequestObject) (api.SetVMCommentResponseObject, error) {
 	if req.Body == nil {
 		return api.SetVMComment400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: "request body required"}}, nil
 	}
-	v, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
-		return h.svcFor(ctx).SetComment(ctx, m, app.VMRef{Host: req.Host, Name: req.Name}, req.Body.Comment)
-	})
+	ref := app.VMRef{Host: req.Host, Name: req.Name}
+	n, err := h.svcFor(ctx).SetComment(ctx, ref, req.Body.Comment)
 	if err != nil {
 		switch kindOf(err) {
 		case app.KindInvalid:
 			return api.SetVMComment400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
 		case app.KindNotFound:
 			return api.SetVMComment404JSONResponse(apiErr(err)), nil
+		case app.KindConflict:
+			return api.SetVMComment409JSONResponse(apiErr(err)), nil
+		case app.KindUnavailable:
+			return api.SetVMComment503JSONResponse(apiErr(err)), nil
 		}
 		return api.SetVMComment500JSONResponse(apiErr(err)), nil
 	}
-	return api.SetVMComment200JSONResponse(toAPI(v.(*vmtool.VMInfo))), nil
+	return api.SetVMComment200JSONResponse(toAPINotes(ref, n)), nil
+}
+
+// toAPINotes is a VM's notes as the API carries them.
+func toAPINotes(ref app.VMRef, n *app.VMNotes) api.VMNotes {
+	out := api.VMNotes{Host: ref.Host, Name: ref.Name, Uuid: n.UUID, Comment: n.Comment}
+	if o := n.Origin; o != nil {
+		out.Origin = &api.InventoryOrigin{Image: nonEmptyPtr(o.Image), ImageSha256: nonEmptyPtr(o.ImageSHA256),
+			Template: nonEmptyPtr(o.Template), Clone: nonEmptyPtr(o.CloneKind), Pool: nonEmptyPtr(o.Pool)}
+		if !o.Created.IsZero() {
+			out.Origin.Created = nonEmptyPtr(o.Created.UTC().Format(time.RFC3339))
+		}
+	}
+	return out
 }
 
 // stdinOf is an exec request's stdin text, "" when absent.

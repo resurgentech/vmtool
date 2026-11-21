@@ -133,6 +133,10 @@ func newFakeStoreServer(t *testing.T) *fakeStoreServer {
 				delete(f.creds, key)
 				w.WriteHeader(204)
 			}
+		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/v1/inventory/") && strings.HasSuffix(r.URL.Path, "/notes"):
+			// create's origin write (N12): taken, so credential tests see
+			// only their own lines.
+			out(200, map[string]any{"host": "h", "name": "n", "uuid": stUUID, "comment": ""})
 		default:
 			out(404, map[string]string{"error": "not found"})
 		}

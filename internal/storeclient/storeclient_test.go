@@ -443,3 +443,38 @@ func TestInventoryClient(t *testing.T) {
 		}
 	}
 }
+
+func TestPutVMNotes(t *testing.T) {
+	var got storeapi.VMNotesInput
+	f := newFake(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method + " " + r.URL.Path {
+		case "PUT /v1/inventory/hv1/vm1/notes":
+			_ = json.NewDecoder(r.Body).Decode(&got)
+			js(w, 200, map[string]any{"host": "hv1", "name": "vm1", "uuid": uuid, "comment": "placeholder comment",
+				"origin": map[string]string{"image": "img1", "clone": "thin"}})
+		case "PUT /v1/inventory/hv1/gone/notes":
+			js(w, 409, map[string]any{"error": "the VM is gone from the inventory " + tok})
+		case "PUT /v1/inventory/hv1/nope/notes":
+			js(w, 404, map[string]any{"error": "not found"})
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	c := f.client(t, tok)
+	ctx := context.Background()
+	u, comment, img, clone := uuid, "placeholder comment", "img1", "thin"
+	n, err := c.PutVMNotes(ctx, "hv1", "vm1", VMNotesInput{Uuid: &u, Comment: &comment, Origin: &VMOrigin{Image: &img, Clone: &clone}})
+	if err != nil || n.Uuid != uuid || n.Comment != comment || n.Origin == nil || *n.Origin.Image != "img1" {
+		t.Fatalf("notes = %+v %v", n, err)
+	}
+	if got.Uuid == nil || *got.Uuid != uuid || got.Comment == nil || got.Origin == nil || *got.Origin.Clone != "thin" {
+		t.Fatalf("server got %+v", got)
+	}
+	_, err = c.PutVMNotes(ctx, "hv1", "gone", VMNotesInput{Comment: &comment})
+	if !errors.Is(err, ErrNotesRefused) || strings.Contains(err.Error(), tok) {
+		t.Fatalf("409 = %v", err)
+	}
+	if _, err := c.PutVMNotes(ctx, "hv1", "nope", VMNotesInput{Comment: &comment}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("404 = %v", err)
+	}
+}

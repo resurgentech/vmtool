@@ -42,7 +42,6 @@ func (c cliFake) WaitForIP(string, time.Duration) (string, error) {
 	return "", c.rec("WaitForIP")
 }
 func (c cliFake) SetAutostart(string, bool) error  { return c.rec("SetAutostart") }
-func (c cliFake) SetComment(string, string) error  { return c.rec("SetComment") }
 func (c cliFake) Reboot(string) error              { return c.rec("Reboot") }
 func (c cliFake) ResizeDisk(string, uint) error    { return c.rec("ResizeDisk") }
 func (c cliFake) MigrateDisk(string, string) error { return c.rec("MigrateDisk") }
@@ -137,7 +136,12 @@ func TestVMCommandsReachRemoteHost(t *testing.T) {
 			t.Errorf("%s veritech01/web: %v, want the fake host's error", name, r.err)
 		}
 		ops, tokens := f.seen()
-		if len(tokens) != 1 || tokens[0] != "veritech01 "+gateToken {
+		if name == "comment" {
+			// A comment is a store write (N12): the host is checked, never opened.
+			if len(tokens) != 0 || len(ops) != 0 {
+				t.Errorf("comment reached the host: %q %q", tokens, ops)
+			}
+		} else if len(tokens) != 1 || tokens[0] != "veritech01 "+gateToken {
 			t.Errorf("%s: remote clients %q, want one for veritech01 with the CLI token", name, tokens)
 		}
 		for _, op := range ops {

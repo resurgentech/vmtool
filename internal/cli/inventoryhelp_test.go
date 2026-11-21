@@ -21,8 +21,9 @@ func TestInventoryHelpPinsKeyWords(t *testing.T) {
 			"from this version on", "plain text", "ip_wait_seconds", "its own clock",
 			"disks unreadable", "last known",
 		}},
-		{[]string{"comment"}, []string{"plain text", "store", "never put a secret"}},
-		{[]string{"create"}, []string{"--comment", "plain text", "from this version on"}},
+		{[]string{"comment"}, []string{"plain text", "store only", "never put a secret", "needs a store", "while the host sleeps"}},
+		{[]string{"create"}, []string{"--comment", "plain text", "in the store", "once", "nothing of its own into the VM's libvirt definition",
+			"no store in use no origin is recorded"}},
 	} {
 		c, _, err := root.Find(tc.path)
 		if err != nil || c == nil || c == root {

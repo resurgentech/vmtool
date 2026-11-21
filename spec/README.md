@@ -277,7 +277,9 @@ any other route all answer 401.
 no up/down state, and nothing is marked gone by age or silence; the store never
 decides whether a host is up, and a sleeping host's VMs stay listed. A host's
 `putHostInventory` body is its whole VM list (JSON, at most 1 MiB and 4096 VMs,
-a comment at most 512 bytes on one line); a listed VM is inserted or updated,
+no origin and no comment: those are the VM's notes, written only through
+`putVMNotes`, see [A VM's notes in the store](#a-vms-notes-in-the-store-api-260));
+a listed VM is inserted or updated,
 an omitted live row of that host goes gone. Reports are ordered by the store's
 own clock: a report received before the last one applied is answered 200 and
 ignored; `generated_at` is required and stored, and orders nothing, so a host
@@ -434,15 +436,14 @@ the body and keeps the error.
 | `Start` / `Stop` / `Resume` / `Reboot` | `startVM` / `stopVM` / `resumeVM` / `rebootVM` | Method, then `Info`. Returns `VMInfo`. |
 | `Destroy` | `poweroffVM` | Same shape. |
 | `SetAutostart` | `setAutostart` | Same shape. |
-| `SetComment(name, comment)` | `setVMComment` | New (2.6.0). `PUT vms/{name}/comment` with `{comment}`; method, then `Info`. A VM-changing operation (the daemon's report trigger set names it). See [Origin and comment](#origin-and-comment-api-260). |
-| `Info` | `getVM` | `VMInfo` carries every field of `vmtool.VMInfo`, `origin` and `comment` (2.6.0) included. |
-| `List` | `listVMs` | `origin` and `comment` filled from the domain XML (2.6.0); the other XML fields stay empty. |
+| `Info` | `getVM` | `VMInfo` carries every field of `vmtool.VMInfo` (no origin and no comment: those are in the store, see [A VM's notes in the store](#a-vms-notes-in-the-store-api-260)). |
+| `List` | `listVMs` | The UUID and firmware are filled; the other XML fields stay empty. |
 | `Delete(name, noclone)` | `deleteVMDefinition` | Raw. `deleteVM` is the workstation workflow: it also forgets `.machines/<host>/<vm>/` credentials. |
 | `MigrateDisk` | `migrateDisk` | Method, then `Info`. |
 | `AddDisk` | `addDisk` | Method, then `Info`; result carries `path` and `target` (`DiskDevice`). On a thin pool the volume is the thin LV `<vm>-N`; a pool with no room is 409 with the numbers (see [Thin pools and templates](#thin-pools-and-templates-api-240)). |
 | `ResizeDisk` | `resizeVMVolume` | New. libvirt, and a thin boot volume (extend, then `BlockResize` when running); a thick `logical` disk is refused. A thin pool with no room is 409 with the numbers. `resizeDisk` is the workstation workflow that also grows the guest. |
 | `WaitForIP` | `waitVMIP` | New. `timeout_seconds` 1..3600, default 120. |
-| `Define` | `defineVM` | New. `PUT vms/{name}/definition`; no `ssh_user`/`ssh_pass`. `origin` and `comment` (2.6.0) are optional and written into the domain's metadata. |
+| `Define` | `defineVM` | New. `PUT vms/{name}/definition`; no `ssh_user`/`ssh_pass`. The domain carries nothing of vmtool's own (no `<metadata>`). |
 | `CreateVolume` | `createVolume` | New. Returns `{path}`. |
 | `CloneImage` | `cloneVolume` | New. `base_path` must be inside a pool. Optional `size_bytes` (2.2.0): a `logical` target gets an LV of max(image, size), converted to raw; dir pools ignore it. Optional `template` (2.4.0): the image name as asked, informational. When `target_pool` is a thin pool the clone is a thin snapshot of the template of the cached image (by file name and manifest SHA-256; built first if missing; 409 when the pool has no room); there `base_path` may also be a saved template's `/dev/<vg>/<lv>`. Returns `{path}`. |
 | `ResizeVolume` | `resizeVolume` | New. `path` must be inside a pool. |
@@ -747,40 +748,50 @@ the first generate. Update this line when known:
 | `getOpenAPISpec` | `GET /openapi.yaml` |
 | `getOpenAPIJSON` | `GET /openapi.json` |
 
-## Origin and comment (API 2.6.0)
+## A VM's notes in the store (API 2.6.0)
 
-What a VM was made from, and a note a user keeps with it, live in the VM's own
-definition, in libvirt's `<metadata>`: one element in vmtool's namespace
-(`urn:vmtool:vm:1`, prefix `vmtool`) holding an `<origin .../>` and a
-`<comment>`. It survives daemon restarts, `just deploy` and host reboots, and
-goes with the VM. Nothing else about a VM is kept there.
+vmtool writes nothing of its own into a VM's libvirt definition: no
+`<metadata>`, no element of its own. What it records about a VM besides what
+the host reports, its **origin** and its **comment** (together, the VM's
+*notes*), lives in the store only, in plain text, in the store's `vm_notes`
+table keyed (host, libvirt UUID). No daemon report carries or touches them.
 
-- `VMInfo.origin` (`VMOrigin`: `image`, `image_sha256`, `template`,
-  `template_lv`, `clone_kind` `thin|block|file|none`, `pool`, `created`) and
-  `VMInfo.comment`, from `getVM` and `listVMs`. A VM with no element (made
-  before 2.6.0 or outside vmtool) omits both.
-- `DefineVMRequest.origin` and `DefineVMRequest.comment`, optional: the
-  workstation's create fills them. A client older than 2.6.0 sends neither and
-  its VMs have none; a daemon older than 2.6.0 ignores both and create still
-  works (its VMs have none). A hypervisor's thin-pool manager refines a thin
-  origin (kind `thin`, the template and its LV, the template's digest) because
-  it knows the snapshot's template. `image_sha256` is the host's manifest
-  digest after the image sync, empty when the create did not know it
-  (a local libvirt host, a template-only host).
-- `CreateVMRequest.comment`, optional.
-- `PUT /v1/hosts/{host}/vms/{name}/comment` (`setVMComment`), body
-  `{"comment": "..."}`, answers the VM. The daemon applies it with libvirt's
-  metadata call to the persistent definition and, when the VM runs, to the
-  running domain, without redefining it; it works on a running and on a
-  shut-off VM. Empty clears. 404 for an unknown VM, 400 naming `comment` for a
-  bad one. A daemon older than 2.6.0 has no such route.
-- The comment is at most 512 bytes of UTF-8, one line, no control characters
-  (`vmtool.ValidateComment`), checked by the workstation's `internal/app` and
-  again by the daemon (`defineVM` and `setVMComment`: 400). It is not a secret:
-  it is stored in plain text in the domain definition.
-- Disk changes keep the element: `addDisk` and the resize routes do not edit
-  the domain's XML, and `migrateDisk` redefines from the domain's own XML
-  (`redefineDiskPath` swaps a path and nothing else).
+- **Origin** (`image`, `image_sha256`, `template`, `clone`
+  `thin|block|file|none`, `pool`, `created` RFC 3339) is written once, by the
+  workstation's create in `internal/app`, right after define, when it knows
+  host, name and the UUID the host gave the domain, and only with a store in
+  use. The store accepts it only while (host, uuid) has none; the same origin
+  again is 200 and changes nothing, a different one is 409. `image_sha256` is
+  the host's manifest digest after the image sync (empty when the create did
+  not know it); for a thin snapshot the create asks the host's template list
+  for the template it was made from (and takes its digest when the image's was
+  unknown). No store in use: no origin, and no extra line.
+- **Comment**: at most 512 bytes of UTF-8, one line, no control characters
+  (`vmnotes.ValidateComment`), checked by the workstation and again by the
+  store. `CreateVMRequest.comment` is written with the origin; with no store
+  in use it is refused (503) before anything is created.
+  `PUT /v1/hosts/{host}/vms/{name}/comment` (`setVMComment`, workstation-only;
+  a hypervisor answers 403), body `{"comment": "..."}`, writes the store
+  without asking the host (it may sleep) and answers the VM's notes
+  (`VMNotes`). Empty clears. 400 naming `comment` for a bad one, 404 when the
+  store's inventory has no row for the VM, 409 when the row is gone, 503 with
+  no store in use (the message says comments are kept in the store).
+- **The store fails after define** (store mode at the start): the create
+  succeeds; one line (stderr, `X-Vmtool-Warnings`, and a progress notice on a
+  streamed create) says the origin (and the comment) was not saved and how to
+  set the comment later.
+- **Reading them**: `GET /v1/inventory` (`InventoryVM.origin`,
+  `InventoryVM.comment`). `VMInfo` carries neither; `vmtool info` reads the
+  store once and shows them in store mode only (nothing on a store failure).
+- **The store side**: `PUT /v1/inventory/{host}/{name}/notes` (`putVMNotes`,
+  user tokens only; a host token gets 401), body `{uuid?, origin?, comment?}`.
+  With `uuid` (create's case) the notes are stored before the host's first
+  report makes the row; without it the route needs a live row of (host, name).
+  Notes go with their row (`deleteInventoryRow`, the sweep); notes whose row
+  never appears are swept 7 days after they were last written.
+- A domain that still carries the element an earlier 2.6.0 build wrote
+  (`urn:vmtool:vm:1`; none exists outside tests) defines, lists and reports
+  as any other: vmtool neither reads nor removes it.
 
 ## Reading the inventory (API 2.6.0)
 

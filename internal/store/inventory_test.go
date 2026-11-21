@@ -173,7 +173,6 @@ func TestReportHostTokenForThatHostOnly(t *testing.T) {
 func TestReportValidation(t *testing.T) {
 	e := newInvEnv(t)
 	at := e.clock.Now()
-	long := strings.Repeat("a", 513)
 	tooMany := make([]storeapi.ReportVM, 4097)
 	for i := range tooMany {
 		tooMany[i] = vm("vm1", invU1)
@@ -193,9 +192,6 @@ func TestReportValidation(t *testing.T) {
 		{"empty state", mod(func(v *storeapi.ReportVM) { v.State = "" }), "state"},
 		{"negative vcpus", mod(func(v *storeapi.ReportVM) { v.Vcpus = -1 }), "vcpus"},
 		{"bad disk kind", mod(func(v *storeapi.ReportVM) { v.Disks[0].Kind = "tape" }), "disks"},
-		{"comment too long", mod(func(v *storeapi.ReportVM) { v.Comment = &long }), "comment"},
-		{"comment newline", mod(func(v *storeapi.ReportVM) { v.Comment = ph("a\nb") }), "comment"},
-		{"comment control", mod(func(v *storeapi.ReportVM) { v.Comment = ph("a\x07b") }), "comment"},
 		{"too many vms", reportBody(t, at, tooMany...), "vms"},
 	}
 	for _, c := range cases {
@@ -220,11 +216,18 @@ func TestReportValidation(t *testing.T) {
 		t.Fatalf("inventory after odd name = %+v", inv)
 	}
 
-	// The limits themselves are accepted: 512 bytes (multi-byte too), no comment, empty comment.
-	edge := strings.Repeat("é", 256) // 512 bytes
-	v1, v2, v3 := vm("vm1", invU1), vm("vm2", invU2), vm("vm3", invU3)
-	v1.Comment, v2.Comment = &edge, ph("")
-	e.report(t, "hv1", tokH, v1, v2, v3)
+	// A report with several VMs is accepted.
+	e.report(t, "hv1", tokH, vm("vm1", invU1), vm("vm2", invU2), vm("vm3", invU3))
+	// A report carrying the removed origin and comment fields (a daemon built
+	// before they left the report) is still taken; the fields are ignored.
+	old := strings.Replace(reportBody(t, at, vm("vm1", invU1)), `"name":"vm1"`,
+		`"name":"vm1","comment":"placeholder comment","origin":{"image":"img1","clone":"file"}`, 1)
+	if code, body := e.call(t, "PUT", "/v1/hosts/hv1/inventory", tokH, old); code != 200 {
+		t.Fatalf("report with the old fields = %d %s", code, body)
+	}
+	if v := e.inventory(t, "").Vms[0]; v.Comment != "" || v.Origin != nil {
+		t.Fatalf("a report set notes: %+v", v)
+	}
 
 	// Not JSON; bad JSON; a declared body over 1 MiB.
 	req, _ := http.NewRequest("PUT", e.ts.URL+"/v1/hosts/hv1/inventory", strings.NewReader("{}"))
@@ -246,24 +249,6 @@ func TestReportValidation(t *testing.T) {
 		t.Errorf("over 1 MiB = %d, want 413", code)
 	}
 	e.noSecretsInLogs(t)
-}
-
-func TestCommentKeptWhenOmitted(t *testing.T) {
-	e := newInvEnv(t)
-	v := vm("vm1", invU1)
-	v.Comment = ph("placeholder comment")
-	e.report(t, "hv1", tokH, v)
-	e.clock.Advance(time.Minute)
-	e.report(t, "hv1", tokH, vm("vm1", invU1)) // field absent
-	if got := e.inventory(t, "").Vms[0].Comment; got != "placeholder comment" {
-		t.Fatalf("comment after an omitting report = %q", got)
-	}
-	e.clock.Advance(time.Minute)
-	v.Comment = ph("")
-	e.report(t, "hv1", tokH, v)
-	if got := e.inventory(t, "").Vms[0].Comment; got != "" {
-		t.Fatalf("comment after an empty one = %q", got)
-	}
 }
 
 func TestStaleReportAnswered200(t *testing.T) {
@@ -350,8 +335,11 @@ func TestReportDisksUnreadableMarksAndKeepsDisks(t *testing.T) {
 func TestInventoryReadRoute(t *testing.T) {
 	e := newInvEnv(t)
 	v := vm("vm1", invU1)
-	v.Origin = &storeapi.VMOrigin{Image: ph("img1"), ImageSha256: ph(invSHA), Clone: ph("file"), Pool: ph("default"), Created: ph("2026-11-20T00:00:00Z")}
-	v.Comment = ph("placeholder comment")
+	// The notes come from the notes route, not from the report.
+	if code, _, body := e.notes(t, "hv1", "vm1", `{"uuid":"`+invU1+`","origin":{"image":"img1","image_sha256":"`+invSHA+
+		`","clone":"file","pool":"default","created":"2026-11-20T00:00:00Z"},"comment":"placeholder comment"}`); code != 200 {
+		t.Fatalf("notes = %d %s", code, body)
+	}
 	e.report(t, "hv2", tokH2, vm("vm9", invU3), vm("vm2", invU2))
 	e.report(t, "hv1", tokH, v)
 	if code, _ := e.call(t, "PUT", "/v1/credentials/machines/m1", tokA,

@@ -32,11 +32,12 @@ var storeOperations = map[string]bool{
 // and is not here.)
 var lazyStoreOperations = map[string]bool{
 	"startVM": true, "stopVM": true, "resumeVM": true, "poweroffVM": true, "rebootVM": true,
-	"setAutostart": true, "setVMComment": true, "migrateDisk": true, "addDisk": true,
-	// getInventory needs the store and has no local mode, so a probe would only
-	// add a "using local" warning to a 503: app.Service.Inventory decides the
-	// mode itself, quietly.
-	"getInventory": true,
+	"setAutostart": true, "migrateDisk": true, "addDisk": true,
+	// getInventory and setVMComment need the store and have no local mode, so
+	// a probe would only add a "using local" warning to a 503: the workflow
+	// (app.Service.Inventory, app.Service.SetComment) decides the mode itself,
+	// quietly.
+	"getInventory": true, "setVMComment": true,
 }
 
 type storeKeyType struct{}

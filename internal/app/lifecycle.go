@@ -101,17 +101,6 @@ func (s *Service) RebootVM(ctx context.Context, m Manager, ref VMRef) (*vmtool.V
 	return s.after(ctx, "reboot", m, ref, m.Reboot(ref.Name))
 }
 
-// SetComment sets a VM's comment, or clears it when comment is empty, and
-// answers the VM. It is a metadata change: the VM is not redefined, and it
-// works on a running and on a shut-off VM alike. A comment that breaks the
-// rules (vmtool.ValidateComment) is KindInvalid and the host is not called.
-func (s *Service) SetComment(ctx context.Context, m Manager, ref VMRef, comment string) (*vmtool.VMInfo, error) {
-	if err := vmtool.ValidateComment(comment); err != nil {
-		return nil, invalid("comment", err)
-	}
-	return s.after(ctx, "comment", m, ref, m.SetComment(ref.Name, comment))
-}
-
 func (s *Service) SetAutostart(ctx context.Context, m Manager, ref VMRef, enabled bool) (*vmtool.VMInfo, error) {
 	return s.after(ctx, "autostart", m, ref, m.SetAutostart(ref.Name, enabled))
 }
