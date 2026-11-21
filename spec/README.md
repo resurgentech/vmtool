@@ -409,7 +409,8 @@ bearer check and before the body is read, driven by that extension read from
 the spec, so the set cannot drift. The marked operations are `createVM`,
 `execVM`, `runPlaybook`, `resizeDisk` (the workflow form that also grows
 the guest and uses credentials), `listPlaybooks` (playbooks live on the
-workstation) and every `/v1/metal` operation. `openVMTunnel` is not marked: a
+workstation), `getInventory` (the store's inventory, read through the
+workstation's store; API 2.6.0) and every `/v1/metal` operation. `openVMTunnel` is not marked: a
 hypervisor exists to serve it. `TestWorkstationOnlySet` pins the exact set.
 
 `remote.Manager` (an HTTP client implementing `app.Manager`) calls these
@@ -704,3 +705,22 @@ goes with the VM. Nothing else about a VM is kept there.
 - Disk changes keep the element: `addDisk` and the resize routes do not edit
   the domain's XML, and `migrateDisk` redefines from the domain's own XML
   (`redefineDiskPath` swaps a path and nothing else).
+
+## Reading the inventory (API 2.6.0)
+
+`GET /v1/inventory` (`getInventory`, workstation-only) is the workstation's
+read of the store's `GET /v1/inventory` (see [The store](#the-store)), through
+the one `internal/app` call `Service.Inventory` that `vmtool inventory` and the
+TUI's `I` view also use. Query `host` limits hosts and VMs to one host;
+`gone=true` adds the VMs their host no longer has (each with `gone_since` and
+`credentials_kept_until`). Machines (metal and alien names and kinds) are never
+filtered by `host`. The answer is a record of what each daemon last said: no
+up/down state and no staleness mark, `last_report` a plain time.
+
+| Status | When |
+|---|---|
+| 200 | `{hosts, vms, machines}` |
+| 401 | missing or invalid bearer |
+| 403 | the server's role is hypervisor: `getInventory is served by the workstation, not by hypervisor <name>` |
+| 503 | no store configured, or it did not answer: `inventory: <why>; the inventory is kept by the store, and there is no local copy`. The CLI prints the same text and exits 1. There is no local mode, so no `X-Vmtool-Warnings` fallback line rides on it. |
+| 500 | anything else |

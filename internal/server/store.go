@@ -24,7 +24,7 @@ var storeOperations = map[string]bool{
 	"rebootMachine": true, "execMachine": true, "runMachinePlaybook": true,
 }
 
-// lazyStoreOperations are VM operations that need the store only when the
+// lazyStoreOperations are operations that get a session with no probe: VM operations that need the store only when the
 // host answers "no such VM": the workflow then delists the VM in the store's
 // inventory (app.missingVM). They get a session without a probe, so a call that
 // succeeds sends the store nothing; the delist itself does not decide the mode,
@@ -33,6 +33,10 @@ var storeOperations = map[string]bool{
 var lazyStoreOperations = map[string]bool{
 	"startVM": true, "stopVM": true, "resumeVM": true, "poweroffVM": true, "rebootVM": true,
 	"setAutostart": true, "setVMComment": true, "migrateDisk": true, "addDisk": true,
+	// getInventory needs the store and has no local mode, so a probe would only
+	// add a "using local" warning to a 503: app.Service.Inventory decides the
+	// mode itself, quietly.
+	"getInventory": true,
 }
 
 type storeKeyType struct{}

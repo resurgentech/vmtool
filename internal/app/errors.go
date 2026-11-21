@@ -14,6 +14,9 @@ const (
 	KindConflict
 	KindBadGateway
 	KindInternal
+	// KindUnavailable: a service the command needs (the store) is not
+	// configured or did not answer. REST 503.
+	KindUnavailable
 )
 
 // Error is the shared workflow error. CLI/TUI print Error() and Output;
@@ -87,4 +90,8 @@ func badGateway(op string, err error) *Error {
 
 func internal(op string, err error) *Error {
 	return &Error{Kind: KindInternal, Op: op, Err: err}
+}
+
+func unavailable(op string, err error) *Error {
+	return &Error{Kind: KindUnavailable, Op: op, Err: err}
 }

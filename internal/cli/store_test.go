@@ -46,6 +46,9 @@ type cliStore struct {
 	updated map[string]time.Time
 	pushes  atomic.Int32
 	corrupt atomic.Bool
+	// invQuery is the last GET /v1/inventory request URI; inv is the body.
+	invQuery atomic.Value
+	inv      map[string]any
 }
 
 // newCLIStore starts a store and points the CLI's store client at its test
@@ -74,6 +77,22 @@ func newCLIStore(t *testing.T) *cliStore {
 				return
 			}
 			out(200, map[string]string{"name": "jared"})
+		case "/v1/inventory":
+			if r.Header.Get("Authorization") != "Bearer "+storeTok {
+				out(401, map[string]string{"error": "unauthorized"})
+				return
+			}
+			s.invQuery.Store(r.URL.RequestURI())
+			// Like the store: VMs their host no longer has only with gone=true.
+			body := map[string]any{"hosts": s.inv["hosts"], "machines": s.inv["machines"]}
+			vms := []any{}
+			for _, v := range s.inv["vms"].([]any) {
+				if _, isGone := v.(map[string]any)["gone_since"]; !isGone || r.URL.Query().Get("gone") == "true" {
+					vms = append(vms, v)
+				}
+			}
+			body["vms"] = vms
+			out(200, body)
 		default:
 			if key, ok := strings.CutPrefix(r.URL.Path, "/v1/credentials/vms/"); ok {
 				s.serveVM(w, r, key, out)

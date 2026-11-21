@@ -1824,3 +1824,26 @@ are appended, never edited in; a hook refuses rewrites.
 - Red: assertion failures (no delist text, no delist call; the fallback line
   printed for a down store); green; `just check` green.
 - Commits: the N8 commit on `clone-identity`.
+
+## 2026-11-21 — N9 Read the inventory: `vmtool inventory`, REST, TUI
+
+- `spec/openapi/vmtool.yaml` (still 2.6.0): `GET /v1/inventory`
+  (`getInventory`, workstation-only, `?host=`, `?gone=`; 503 without a
+  usable store) and its schemas, mirroring the store's; `internal/api`
+  regenerated; `spec/README.md` route list and a section on reading the
+  inventory.
+- `internal/app`: `Service.Inventory`, the one call of all three surfaces;
+  it decides the store mode without the local-mode fallback line and answers
+  a new `KindUnavailable` (REST 503) with one message when no store is
+  configured or usable; `WriteInventory`, the text tables (hosts, VMs,
+  machines) shared by CLI and TUI.
+- `internal/server`: the handler (403 on a hypervisor, like createVM).
+  `internal/cli`: `vmtool inventory` (`--host`, `--gone`, `--json`; exit 1
+  without a store). `internal/tui`: a read-only view (`I`; `g` gone, `r`
+  refresh).
+- Also: the N5 reporter tests seeded the store's errors after the reporter
+  had started, so the start-time send could run ahead of them
+  (`TestReporterBackoff` failed once under load); now seeded before start.
+- Red: assertion failures in app, server and CLI tests (a compile failure
+  for the TUI); green; `just check` green.
+- Commits: the N9 commit on `clone-identity`.

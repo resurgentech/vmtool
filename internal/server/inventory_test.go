@@ -42,7 +42,7 @@ var noVMChange = map[string]string{
 	"listPools": "read", "createPool": "a pool is not a VM",
 	"listTemplates": "templates", "createTemplate": "templates", "deleteTemplate": "templates", "exportTemplate": "templates",
 	"createVolume": "an unattached volume is not a VM's disk", "cloneVolume": "an unattached volume",
-	"listPlaybooks": "read", "listMachines": "metal machines, not VMs", "addMachine": "machines",
+	"getInventory": "read", "listPlaybooks": "read", "listMachines": "metal machines, not VMs", "addMachine": "machines",
 	"getMachine": "machines", "removeMachine": "machines", "rebootMachine": "machines",
 	"execMachine": "machines", "openMachineConsole": "machines", "runMachinePlaybook": "machines",
 }

@@ -455,7 +455,7 @@ func TestWorkstationOnlySet(t *testing.T) {
 	}
 	sort.Strings(got)
 	want := []string{
-		"addMachine", "createVM", "execMachine", "execVM", "getMachine",
+		"addMachine", "createVM", "execMachine", "execVM", "getInventory", "getMachine",
 		"listMachines", "listPlaybooks", "openMachineConsole", "openVMConsole",
 		"rebootMachine", "removeMachine", "resizeDisk", "runMachinePlaybook",
 		"runPlaybook",

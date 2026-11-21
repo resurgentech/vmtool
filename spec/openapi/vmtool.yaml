@@ -1328,6 +1328,49 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/WorkstationOnly' }
         '500': { $ref: '#/components/responses/Error' }
+  /v1/inventory:
+    get:
+      operationId: getInventory
+      x-vmtool-workstation-only: true
+      summary: The store's inventory of hosts, VMs and machines
+      description: >
+        What the store last heard from each host daemon (API 2.6.0), read
+        through the workstation's configured store: hosts (last report as a
+        time, daemon version, live and gone counts), VMs (one row per host and
+        libvirt UUID) and the metal and alien machine names the store keeps.
+        It is a record, not a live view: no up/down state and no staleness
+        mark; `GET /v1/hosts/{host}/vms` is the live view. VMs their host no
+        longer has are listed only with `gone=true`. Machines are not filtered
+        by `host`. Decides the store mode once, at the start of the request;
+        with no store configured, or one that does not answer, the answer is
+        503 with a message naming the cause (the request does not fall back to
+        local mode: there is no local inventory).
+        Served by the workstation only: on a server whose config.yml role is hypervisor this operation answers 403 "served by the workstation" before reading the body.
+      parameters:
+        - name: host
+          in: query
+          required: false
+          description: Only this host's row and VMs.
+          schema: { type: string }
+        - name: gone
+          in: query
+          required: false
+          description: Also list VMs their host no longer has.
+          schema: { type: boolean }
+      responses:
+        '200':
+          description: the inventory
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Inventory' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/WorkstationOnly' }
+        '500': { $ref: '#/components/responses/Error' }
+        '503':
+          description: No store is configured, or the store did not answer.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /v1/metal:
     get:
@@ -1727,6 +1770,67 @@ components:
           description: thin = snapshot of a template in a thin pool; block = copy to a logical volume; file = copy to a qcow2 file; none = booted in place (noclone).
         pool: { type: string, description: The storage pool the disk was made in; empty is the host's default pool. }
         created: { type: string, format: date-time, description: When vmtool created the VM (the workstation's clock). }
+    InventoryHost:
+      type: object
+      required: [name, last_report, daemon_version, live, gone]
+      properties:
+        name: { type: string }
+        last_report: { type: string, format: date-time, description: When the host's daemon last reported. A plain time; the store does not judge whether the host is up. }
+        daemon_version: { type: string }
+        live: { type: integer }
+        gone: { type: integer }
+    InventoryDisk:
+      type: object
+      required: [target, pool, capacity_bytes, kind]
+      properties:
+        target: { type: string }
+        pool: { type: string }
+        capacity_bytes: { type: integer, format: int64 }
+        kind: { type: string, enum: [file, block, thin] }
+    InventoryOrigin:
+      type: object
+      description: What a VM was made from, as its daemon reported it. Omitted for a VM vmtool did not create.
+      properties:
+        image: { type: string }
+        image_sha256: { type: string }
+        template: { type: string }
+        clone: { type: string }
+        pool: { type: string }
+        created: { type: string, description: Creation time as the daemon wrote it. }
+    InventoryVM:
+      type: object
+      required: [host, name, uuid, state, vcpus, memory, ip, autostart, firmware, disks, comment, first_seen, last_seen, has_credentials]
+      properties:
+        host: { type: string }
+        name: { type: string }
+        uuid: { type: string }
+        state: { type: string }
+        vcpus: { type: integer }
+        memory: { type: integer, description: GiB }
+        ip: { type: string }
+        autostart: { type: boolean }
+        firmware: { type: string }
+        disks: { type: array, items: { $ref: '#/components/schemas/InventoryDisk' } }
+        origin: { $ref: '#/components/schemas/InventoryOrigin' }
+        comment: { type: string }
+        first_seen: { type: string, format: date-time }
+        last_seen: { type: string, format: date-time }
+        gone_since: { type: string, format: date-time, description: Present only on a VM its host no longer has. }
+        credentials_kept_until: { type: string, format: date-time, description: On a gone VM, when the store's sweep removes the row and its login. }
+        has_credentials: { type: boolean }
+    InventoryMachine:
+      type: object
+      required: [name, kind]
+      properties:
+        name: { type: string }
+        kind: { type: string }
+    Inventory:
+      type: object
+      required: [hosts, vms, machines]
+      properties:
+        hosts: { type: array, items: { $ref: '#/components/schemas/InventoryHost' } }
+        vms: { type: array, items: { $ref: '#/components/schemas/InventoryVM' } }
+        machines: { type: array, items: { $ref: '#/components/schemas/InventoryMachine' } }
     CommentRequest:
       type: object
       required: [comment]

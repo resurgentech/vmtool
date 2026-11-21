@@ -101,6 +101,18 @@ func (s *StoreSession) Mode(ctx context.Context) Mode {
 	if s == nil {
 		return ModeLocal
 	}
+	note := s.decide(ctx)
+	if note != "" && s.notify != nil {
+		s.notify(note)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mode
+}
+
+// decide runs the mode probe once and returns the fallback line on the call
+// that ran it, "" on every other.
+func (s *StoreSession) decide(ctx context.Context) string {
 	var note string
 	s.once.Do(func() {
 		s.mu.Lock()
@@ -122,12 +134,27 @@ func (s *StoreSession) Mode(ctx context.Context) Mode {
 		s.notice = note
 		s.decided = true
 	})
-	if note != "" && s.notify != nil {
-		s.notify(note)
+	return note
+}
+
+// requireStore decides the mode like Mode but never delivers the "using local"
+// fallback line: for a command with no local mode, whose own error says what
+// is wrong. It returns the store's client, or a reason (no credential in it)
+// the store cannot be used.
+func (s *StoreSession) requireStore(ctx context.Context) (*storeclient.Client, error) {
+	if s == nil {
+		return nil, errNoStoreConfigured
 	}
+	s.decide(ctx)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.mode
+	switch {
+	case s.mode == ModeStore:
+		return s.client, nil
+	case s.tokenErr != nil:
+		return nil, fmt.Errorf("%s: %v", s.host, s.tokenErr)
+	}
+	return nil, fmt.Errorf("the store at %s is not reachable, or refused this token", s.host)
 }
 
 // Host is the store URL's host (no port, nothing else of the URL), for

@@ -27,6 +27,9 @@ type srvStore struct {
 	// reqs counts every request that reached the store (whoami included);
 	// delists counts POST .../delist.
 	reqs, delists atomic.Int32
+	// invQuery is the last GET /v1/inventory request URI; invs counts them.
+	invQuery atomic.Value
+	invs     atomic.Int32
 }
 
 func newSrvStore(t *testing.T) *srvStore {
@@ -46,6 +49,26 @@ func newSrvStore(t *testing.T) *srvStore {
 				return
 			}
 			_ = json.NewEncoder(w).Encode(map[string]string{"name": "jared"})
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/inventory" {
+			s.invs.Add(1)
+			s.invQuery.Store(r.URL.RequestURI())
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"hosts": []any{map[string]any{"name": "hv1", "last_report": "2026-11-21T01:02:03Z", "daemon_version": "2.6.0", "live": 1, "gone": 1}},
+				"vms": []any{
+					map[string]any{"host": "hv1", "name": "vm1", "uuid": "00000000-0000-4000-8000-000000000001", "state": "running",
+						"vcpus": 2, "memory": 4, "ip": "10.0.0.5", "autostart": true, "firmware": "efi",
+						"disks":   []any{map[string]any{"target": "vda", "pool": "nvme", "capacity_bytes": 21474836480, "kind": "thin"}},
+						"origin":  map[string]any{"image": "img1", "image_sha256": strings.Repeat("a", 64), "clone": "thin", "pool": "nvme", "created": "2026-11-20T00:00:00Z"},
+						"comment": "placeholder comment", "first_seen": "2026-11-20T00:00:00Z", "last_seen": "2026-11-21T01:02:03Z", "has_credentials": true},
+					map[string]any{"host": "hv1", "name": "vm2", "uuid": "00000000-0000-4000-8000-000000000002", "state": "shutoff",
+						"vcpus": 1, "memory": 1, "ip": "", "autostart": false, "firmware": "bios", "disks": []any{}, "comment": "",
+						"first_seen": "2026-11-20T00:00:00Z", "last_seen": "2026-11-20T00:00:00Z", "gone_since": "2026-11-21T01:02:03Z",
+						"credentials_kept_until": "2026-11-28T01:02:03Z", "has_credentials": false},
+				},
+				"machines": []any{map[string]any{"name": "nuc1", "kind": "metal"}},
+			})
 			return
 		}
 		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/delist") {

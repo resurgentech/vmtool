@@ -42,6 +42,7 @@ const (
 	modeAddMachine
 	modeTemplates
 	modeSaveTemplate
+	modeInventory
 )
 
 type pane int
@@ -251,6 +252,12 @@ type model struct {
 	listTemplates func(ctx context.Context) []app.HostTemplates
 	tplRows       []tplRow
 	tplCursor     int
+	// inventory view (modeInventory): the store's record, read through
+	// app.Service.Inventory (readInventory replaces it in tests).
+	readInventory func(ctx context.Context, host string, gone bool) (*app.Inventory, error)
+	invData       *app.Inventory
+	invErr        error
+	invGone       bool
 	// save-as-template prompt (modeSaveTemplate): the VM, the name typed so far
 	// and whether it replaces a saved template of that name.
 	saveRef     app.VMRef
@@ -545,6 +552,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.clampTemplateCursor()
 		return m, nil
 
+	case inventoryMsg:
+		// A late answer for a view already left, or for the other filter, is dropped.
+		if m.mode == modeInventory {
+			m.invData, m.invErr, m.invGone = msg.inv, msg.err, msg.gone
+		}
+		return m, nil
+
 	case tea.KeyMsg:
 		switch m.mode {
 		case modeConfirm:
@@ -563,6 +577,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateTemplates(msg)
 		case modeSaveTemplate:
 			return m.updateSaveTemplate(msg)
+		case modeInventory:
+			return m.updateInventory(msg)
 		default:
 			return m.updateList(msg)
 		}
@@ -637,6 +653,10 @@ func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "T":
 		if m.focus == paneVMs {
 			return m.enterTemplatesMode()
+		}
+	case "I":
+		if m.focus == paneVMs {
+			return m.enterInventoryMode()
 		}
 	case "W":
 		if vm, ok := m.selectedVM(); ok && m.focus == paneVMs {
@@ -1466,6 +1486,8 @@ func (m model) View() string {
 		return b.String() + m.viewTemplates()
 	case modeSaveTemplate:
 		return b.String() + m.viewSaveTemplate()
+	case modeInventory:
+		return b.String() + m.viewInventory()
 	}
 
 	// --- VM list pane ---
@@ -1593,7 +1615,7 @@ func (m model) View() string {
 
 	b.WriteString("\n")
 	if m.focus == paneVMs {
-		b.WriteString(helpStyle.Render("c=create  m=add machine  s=start/stop  b=reboot  a=autostart  p=playbook  T=templates  W=save template  t=ssh  D=delete/forget  r=refresh  tab=log  q=quit"))
+		b.WriteString(helpStyle.Render("c=create  m=add machine  s=start/stop  b=reboot  a=autostart  p=playbook  T=templates  I=inventory  W=save template  t=ssh  D=delete/forget  r=refresh  tab=log  q=quit"))
 	} else {
 		b.WriteString(helpStyle.Render("enter=view output  tab=vms  q=quit"))
 	}

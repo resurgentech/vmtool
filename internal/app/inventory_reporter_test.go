@@ -177,9 +177,13 @@ func (e *repEnv) logText() string {
 	return e.log.String()
 }
 
-func startReporter(t *testing.T) *repEnv {
+// startReporter starts a reporter over one VM. storeErrs, if any, are the
+// store's answers to the first sends, seeded before the reporter starts so the
+// start-time send cannot run ahead of them.
+func startReporter(t *testing.T, storeErrs ...error) *repEnv {
 	t.Helper()
 	e := &repEnv{store: newRepStore(), src: &repSource{}, clock: newRepClock(), log: &bytes.Buffer{}, logMu: &sync.Mutex{}}
+	e.store.errs = storeErrs
 	e.src.set(vmtool.VMInfo{Name: "vm1", State: "running", VCPUs: 2, Memory: 4, IP: "192.0.2.10", Autostart: true,
 		UUID: repUUID1, Firmware: "efi", Comment: "placeholder comment",
 		Origin: &vmtool.VMOrigin{Image: "img1", ImageSHA256: repSHA, CloneKind: "file", Pool: "pool1",
@@ -366,11 +370,8 @@ func startReporterGated(t *testing.T) *repEnv {
 // A failing store is retried after 30 s doubling to 5 min, each attempt with a
 // freshly built list; a success resets the pace.
 func TestReporterBackoff(t *testing.T) {
-	e := startReporter(t)
 	boom := errors.New("store unreachable")
-	e.store.mu.Lock()
-	e.store.errs = []error{boom, boom, boom, boom, boom, boom}
-	e.store.mu.Unlock()
+	e := startReporter(t, boom, boom, boom, boom, boom, boom)
 	want := []time.Duration{30 * time.Second, time.Minute, 2 * time.Minute, 4 * time.Minute, 5 * time.Minute, 5 * time.Minute}
 	e.waitSend(t)
 	for i, d := range want {
@@ -403,10 +404,7 @@ func TestReporterBackoff(t *testing.T) {
 // A kick during a backoff wait does not send at once: the next attempt
 // carries it (assumption: the store is failing, so a send now would fail).
 func TestReporterKickDuringBackoffWaitsForTheAttempt(t *testing.T) {
-	e := startReporter(t)
-	e.store.mu.Lock()
-	e.store.errs = []error{errors.New("down")}
-	e.store.mu.Unlock()
+	e := startReporter(t, errors.New("down"))
 	e.waitSend(t)
 	w := e.waitWait(t)
 	e.rep.Kick()
@@ -477,14 +475,11 @@ func TestReporterDiskErrors(t *testing.T) {
 // 401 and 403 are logged once per change of state and retried at the slow
 // pace; recovery is logged once.
 func TestReporterDeniedLoggedOnce(t *testing.T) {
-	e := startReporter(t)
-	e.store.mu.Lock()
-	e.store.errs = []error{
+	e := startReporter(t,
 		fmt.Errorf("put host inventory: %w", storeclient.ErrUnauthorized),
 		fmt.Errorf("put host inventory: %w", storeclient.ErrForbidden),
 		fmt.Errorf("put host inventory: %w", storeclient.ErrForbidden),
-	}
-	e.store.mu.Unlock()
+	)
 	e.waitSend(t)
 	for i := 0; i < 2; i++ {
 		w := e.waitWait(t)
