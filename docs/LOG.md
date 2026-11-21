@@ -1600,3 +1600,18 @@ are appended, never edited in; a hook refuses rewrites.
   trailer line disabled fails the trailer and relay tests; the PullHostImage
   trailer path disabled fails 2 tests (6 cases); green; `just check` green.
 - Commits: the E3 commit on `clone-identity`.
+
+## 2026-11-20 — E4 Docs for tranche 13
+
+- README "Templates: save, export, pull": the export is a thick `vmexp-`
+  volume on the NVMe array, not in the image cache (`images list`/`images
+  delete` do not apply), kept 24 hours, one per template, removed with its
+  template; `virsh vol-list nvme` shows it and it is vmtool's; the room rule
+  and its message; no fallback to the boot drive; the digest computed while
+  sent (trailer), `--push` reads once first; old clients refused. "Thin
+  pools": a "Room for exports" bullet.
+- spec/README.md: "Export volumes (2.5.0)".
+- CLI help of `templates export`, `images pull`, `templates list`,
+  `templates prune`; `TestExportHelpNamesTheArray` pins the keywords.
+- Red: 17 keywords missing; green; `just check` green.
+- Commits: the E4 commit on `clone-identity`.

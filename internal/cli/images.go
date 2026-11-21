@@ -77,16 +77,21 @@ func imagesPullCmd(e *env) *cobra.Command {
 			"                 config.yml, else ./<name>; --to is the destination file. An existing file is\n" +
 			"                 refused unless --force. Needs a store.\n\n" +
 			"  <host>/<name>  download an image from the image cache of <host>'s daemon, one the daemon created\n" +
-			"                 itself (an upload or a `vmtool templates export`; never a file it did not create).\n" +
+			"                 itself (an upload), or a template's export on its NVMe array under the template's\n" +
+			"                 name (see below); never a file it did not create.\n" +
 			"                 It is written to <dir>/<name>, where <dir> is --to (a directory) or image_dir, else\n" +
 			"                 the current directory: a .part file, checked against the size and SHA-256 the\n" +
 			"                 daemon sent, then linked into place. A file of that name that is already there with\n" +
 			"                 the same SHA-256 is left as it is; with a different one the pull is refused, and\n" +
 			"                 there is no --force. Needs no store.\n\n" +
-			"A template is per host. 'vmtool templates export <host>/<name>' writes a saved template into <host>'s\n" +
-			"image cache as a qcow2 image; 'images pull <host>/<name>' then brings it to this machine's image_dir, from\n" +
-			"where a create on any host uses it as a base image, and 'vmtool images push' (or 'templates export --push',\n" +
-			"which skips the local file) puts it in the store. Only an image the daemon created can be pulled this way.",
+			"A template is per host. 'vmtool templates export <host>/<name>' writes a saved template as a qcow2 volume on\n" +
+			"<host>'s NVMe array, not into its image cache, and keeps it 24 hours; 'images pull <host>/<name>' (the\n" +
+			"template's name) then brings it to this machine's image_dir, from where a create on any host uses it as a\n" +
+			"base image, and 'vmtool images push' (or 'templates export --push', which skips the local file) puts it in\n" +
+			"the store. When the daemon does not know the export's SHA-256 yet it computes it while it sends and sends\n" +
+			"it as a trailer after the last byte; the pull compares then, and on a mismatch, or when none arrives,\n" +
+			"nothing is kept. A name that is neither a cached image nor an export is refused (exports are removed\n" +
+			"after 24 hours). Only an image the daemon created can be pulled this way.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if isHostImageRef(args[0]) {

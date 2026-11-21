@@ -57,7 +57,9 @@ concurrently with a 5 s timeout. An unreachable host is one row,
 "<host>  ERROR: <why>". With --host, only that host, and its failure is the
 command's error. A host with no thin pools has no rows. --stale lists only
 stale templates. SHA256 shows the first 12 hex digits, which are also the
-suffix of the template's LV name (vmtpl-<12 hex>).`,
+suffix of the template's LV name (vmtpl-<12 hex>). The last column, EXPORT, is
+"-" when the template has no export on the NVMe array, else the export's size,
+whether its sha256 is known, and when it expires (an export is kept 24 hours).`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			r := e.resolver()
@@ -233,7 +235,9 @@ func templatesPruneCmd(e *env) *cobra.Command {
 		Short: "Remove every stale template on a host",
 		Long: `Remove the stale image templates of <host>: those whose image is no longer the
 host's current copy under that name. Current templates and saved templates are
-never removed, and neither are any clones.`,
+never removed, and neither are any clones. A removed template's export (the
+thick vmexp-<12 hex> volume "templates export" makes on the NVMe array) goes
+with it; other exports are removed by the daemon 24 hours after they were made.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			host := args[0]
@@ -323,21 +327,33 @@ func templatesExportCmd(e *env) *cobra.Command {
 		Use:   "export <host>/<name>",
 		Short: "Export a template onto the host's NVMe array as a qcow2 volume, kept 24 hours",
 		Long: `Have <host>'s daemon convert the template <name> (its name, or its LV name
-vmtpl-<12 hex>) into a qcow2 file on a temporary volume in the host's NVMe
-array (its volume group), never the host's image cache or boot drive. The
-volume is kept 24 hours, then removed by the daemon ("vmtool templates list"
-shows each export and when it expires). Take it to another machine in that
-time with "vmtool images pull <host>/<name>" (the image is called by the
-template's name) and create from it there as from any base image (the first
-create on a host builds that host's own template from it). A template is
-per host, and this is how one leaves it. The SHA-256 is computed while the bytes are sent, in one pass, and checked at the end of the
-pull. With no room on the array the export is refused before anything is
-written.
+vmtpl-<12 hex>) into a qcow2 file on a temporary volume on the
+host's NVMe array (its volume group). It is not in the image cache and not on
+the boot drive: "images list <host>" does not show it and "images delete" does
+not apply. The volume is kept 24 hours, then removed by the daemon. "vmtool
+templates list" shows each export in its EXPORT column and when it expires;
+deleting the template (or "vmtool templates prune <host>" removing it) removes it sooner.
+Take it to another machine in that time with "vmtool images pull <host>/<name>"
+(the image is called by the template's name) and create from it there as from
+any base image (the first create on a host builds that host's own template from
+it). A template is per host, and this is how one leaves it.
 
-A name already in the host's image cache is refused unless it is this same
-template; remove the cached image first with "vmtool images delete". Only a
-saved template makes a new image. Use --pool when the name is in more than one
-thin pool.
+The volume is a thick logical volume named vmexp-<12 hex> in the array's volume
+group. "virsh vol-list nvme" shows it; it is vmtool's, leave it. Its size is
+what a fully allocated qcow2 of the template needs. The export is refused,
+before anything is written, when the space
+free outside the thin pool, less that size, would fall below 10 % of the thin
+pool's size (the room the pool keeps to grow); the message gives the sizes. There is no fallback to
+the boot drive.
+
+The export does not compute the SHA-256. The daemon computes it while it sends
+the bytes to "images pull" (as a trailer after the last byte, checked there),
+and with --push it reads the volume once first. A name already in the host's
+image cache is refused unless it is this same template's own cached image; an
+image template exports only as the cached image it came from. Only a saved
+template makes a new export, and a replaced one ("templates save --replace")
+gets a fresh export when exported again. Use --pool when the name is in more
+than one thin pool.
 
 With --push the image then goes straight from <host>'s daemon into the store,
 as an image of the template's name, with no copy on this machine: the daemon

@@ -787,6 +787,11 @@ vmtool delete hv1/vm1                                      # removes vm1 and vm1
   them (`--errorwhenfull n`), and a guest sees I/O errors. Guests give space
   back through `discard='unmap'` (Ubuntu's weekly `fstrim` timer); free the
   rest with `vmtool delete` and `templates delete`.
+- **Room for exports.** A template export takes a thick volume from the same
+  volume group's free space, and leaves at least 10 % of the thin pool's size
+  free for the pool to grow (see [Templates](#templates-save-export-pull)); an
+  export that would not leave it is refused. Exports are removed after 24 hours,
+  so that space comes back.
 - **The root helper.** LVM needs root and the daemon (user `vmtool`) has none,
   so it runs one script as root, `/usr/local/libexec/vmtool-thin`
   (`deploy/vmtool-thin`), installed root:root 0755 by `just deploy`, with this
@@ -864,23 +869,59 @@ name. Whether the clone is fit to use is what
 **To another host.** A template is per host, so it moves as an image:
 
 ```bash
-vmtool templates export hv1/t1-tpl       # the daemon writes it as a qcow2 into its image cache
+vmtool templates export hv1/t1-tpl       # the daemon writes it as a qcow2 onto its NVMe array, kept 24 hours
 vmtool images pull hv1/t1-tpl            # that qcow2 into this machine's image_dir (or --to <dir>)
 vmtool create hv2/job1 t1-tpl --pool nvme-thin   # hv2 builds its own template from it, then clones
 ```
 
 `templates export` makes the daemon convert the template to qcow2 (through the
-root helper) into its image cache under the template's name, hash it and record
-it as an image the daemon created; the template's tags then carry the image's
-SHA-256, so a later create of `t1-tpl` on that same host clones the template
-with no upload and no rebuild. A name already in the host's image cache is
-refused unless it is this same template exported again (then nothing is
-rewritten); an image template exports only as its own cached image, so only a
-saved template makes a new image. `images pull host/<name>` (an argument with a
-`/`; a bare `images pull <name>` pulls from the store) downloads an image that
-daemon created, never a file it did not create, to a `.part` file, checks its
+root helper) onto a temporary **thick** logical volume in the array's volume
+group, in the space the thin pool leaves free: not into the host's image cache,
+not onto its boot drive, and not into the thin pool. The volume is named
+`vmexp-<12 hex>` and tagged `vmtool_export`; `virsh vol-list nvme` shows it,
+and it is vmtool's, so leave it alone. There is one per template (exporting
+again reuses it; a template replaced with `templates save --replace` gets a new
+one). It is removed 24 hours after it was made (the daemon checks at start and
+every hour), and when its template is deleted (by `templates delete`, or by
+`templates prune <host>` when the template is stale).
+`templates list` shows each export in its `EXPORT` column: its size, whether
+its SHA-256 is known yet, and when it expires.
+
+What changed from earlier versions (API 2.5.0), in plain words:
+
+- `templates export` no longer puts the image in the host's image cache.
+  `images list <host>` does not show it, and `images delete` does not apply to
+  it. It waits on the array for 24 hours for an `images pull` or a push.
+- A VM name may not start with `vmexp-` on any pool.
+- With no room on the array the export is **refused** instead of filling the
+  boot drive; nothing is written. The room rule: the volume's size is what a
+  fully allocated qcow2 of the template needs (`qemu-img measure`, rounded up to
+  the extent); the export is refused when the volume group's free space outside
+  the thin pool, less that size, would fall below 10 % of the thin pool's size,
+  the room the pool keeps to grow. The message gives the numbers, for example
+  `hv1: export of t1-tpl needs 21.5 GB in volume group vg-test; 9.8 GB is free
+  outside the thin pool after keeping 30 GB for it to grow; nothing was
+  written`. There is no fallback to the boot drive.
+- The SHA-256 is no longer computed by the export. The daemon computes it while
+  it sends the bytes to `images pull`; when it does not know it yet, it sends it
+  as a trailer after the last byte, and the pull compares it with what it
+  wrote and keeps nothing on a mismatch or when none arrives. After a full send
+  the daemon records the digest on the export and the template, so a later pull
+  gets it up front, and a later create of `t1-tpl` on that same host clones the
+  template with no upload and no rebuild. `templates export --push` reads the
+  export once for its digest first (the store wants it before the bytes).
+- An old client pulling an export whose digest is not yet known is refused with
+  "did not send a SHA-256 digest"; update the client.
+
+A name already in the host's image cache is refused unless it is this same
+template's own cached image; an image template exports only as the cached image
+it came from, so only a saved template makes a new export. `images pull
+host/<name>` (an argument with a `/`; a bare `images pull <name>` pulls from the
+store) downloads an image that daemon created, or a template's export by the
+template's name, never a file it did not create, to a `.part` file, checks its
 size and SHA-256 and links it into place; an identical file already there is
-left as it is, a different one is refused, and there is no `--force`. The first
+left as it is, a different one is refused, and there is no `--force`. After 24
+hours the export is gone and the pull answers 404 (make a new export). The first
 create on the other host builds that host's own template in a few seconds.
 With the store, `images push` sends the pulled file there, and `vmtool
 templates export hv1/t1-tpl --push` streams from the daemon into the store with

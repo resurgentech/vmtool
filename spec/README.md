@@ -613,6 +613,26 @@ The body is never logged. A workstation daemon forwards both this route
 (header or trailer relayed unchanged) and `exportTemplate` to a listed host and
 answers 403 for its own unlisted name.
 
+**Export volumes (2.5.0).** What changed for a caller of `exportTemplate`:
+nothing is written to the image cache any more, so `listImages` and `getImage`
+never show an export and `deleteImage` does not apply to one; the export is a
+thick LV `vmexp-<12 hex>` in the array's volume group, tagged `vmtool_export`,
+one per template (reused; a replaced template gets a fresh one), removed 24
+hours after it was made (checked at daemon start and hourly), and with its
+template (`deleteTemplate`, which `templates prune` uses, removes the
+template's export too), and `TemplateInfo`
+carries an optional `export` (size, whether the digest is known, expiry).
+*Room rule:* the volume's size is `qemu-img measure` "fully allocated" for the
+template, rounded to the extent; the call is refused with 409, before the
+stream starts and before anything is written, when the group's free space
+outside the thin pool, less that size, would fall below 10 % of the thin
+pool's size: `<host>: export of <t> needs X GB in volume group <vg>; Y GB is
+free outside the thin pool after keeping R GB for it to grow; nothing was
+written`. There is no fallback to the boot drive. A VM name starting `vmexp-`
+is refused on every pool. `virsh vol-list nvme` lists these volumes: they are
+vmtool's. An old client pulling an export whose digest is not yet known gets
+"did not send a SHA-256 digest".
+
 **What the API does not carry.** `createVM` is one synchronous JSON call and
 streams no progress; its timings are the CLI's closing line (`timings: clone
 0.3s, ...`), stamped from the clock of the process that runs the workflow.
