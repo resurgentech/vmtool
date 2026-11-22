@@ -2552,3 +2552,30 @@ are appended, never edited in; a hook refuses rewrites.
   call. Green; `just check` green.
 - Hosts need `just deploy` (helper and daemon) for the fix to take effect.
 - Commits: the Z1 commit on `clone-identity` (this entry rides in it).
+
+## 2026-11-22 — Z2 The link helper's `report` survives a crash of `ip`
+
+- Cause: on iproute2 6.1.0 `ip -j -d link show type vxlan` sometimes exits
+  139 (SIGSEGV) while devices are being changed; `report` took no lock and
+  did not retry, so `vmtool net join` failed with "cannot list the links".
+- `deploy/vmtool-net`: `report` holds the helper's lock shared (`flock -s
+  9`), `link` and `unlink` exclusive (`flock 9`) as before. Each of
+  `report`'s two listings is tried up to 5 times, `retry_pause=0.2` apart
+  (a line tests rewrite); the errors after the last try are unchanged. The
+  lock file moves from `/run/lock/vmtool-net.lock` to
+  `/run/vmtool-net.lock`, is opened with `exec 9<>` (no truncation), and a
+  symlink or anything but a regular file at that path is refused ("the lock
+  file is not a regular file"), checked before and after the open. No new
+  verb, argument validation unchanged, no sudoers change.
+- `spec/README.md`: the helper re-makes only a device whose settings differ
+  (Z1).
+- Tests (stub `ip`/`bridge`/`flock`): `TestNetLockTaken` (now report
+  `flock -s 9`), `TestNetLockNotTruncated`, `TestNetLockPathRefused`,
+  `TestNetReportRetries`, `TestNetReportGivesUp`; `TestNetReportNoLock`
+  removed (it asserted the old behaviour).
+- Red (new tests against the old helper with only its lock path line
+  updated): report `flock calls "", want "flock -s 9\n"`; symlink/dir lock
+  paths accepted; `cannot list the links` on one crash; `listing ran 1
+  times, want 5`; lock file truncated by `unlink`. Green; `just check` green.
+- Hosts need `just deploy` (helper) for the fix to take effect.
+- Commits: the Z2 commit on `clone-identity` (this entry rides in it).

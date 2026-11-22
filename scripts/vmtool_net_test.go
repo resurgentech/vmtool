@@ -17,10 +17,11 @@ import (
 // at all. No real ip or bridge ever runs here.
 
 const (
-	netScript  = "../deploy/vmtool-net"
-	netPathTok = "PATH=/usr/sbin:/usr/bin:/sbin:/bin"
-	netSysTok  = "sysnet=/sys/class/net"
-	netLockTok = "lockfile=/run/lock/vmtool-net.lock"
+	netScript   = "../deploy/vmtool-net"
+	netPathTok  = "PATH=/usr/sbin:/usr/bin:/sbin:/bin"
+	netSysTok   = "sysnet=/sys/class/net"
+	netLockTok  = "lockfile=/run/vmtool-net.lock"
+	netPauseTok = "retry_pause=0.2"
 )
 
 // netReportLinks and netReportFDB are what the stub ip and bridge print for
@@ -35,6 +36,7 @@ type netEnv struct {
 	stub   string
 	sys    string
 	script string
+	lock   string
 }
 
 func newNetEnv(t *testing.T) *netEnv {
@@ -44,7 +46,7 @@ func newNetEnv(t *testing.T) *netEnv {
 		t.Fatal(err)
 	}
 	s := string(src)
-	for _, tok := range []string{netPathTok, netSysTok, netLockTok} {
+	for _, tok := range []string{netPathTok, netSysTok, netLockTok, netPauseTok} {
 		if n := strings.Count(s, tok); n != 1 {
 			t.Fatalf("script has %d occurrences of %q, want exactly 1", n, tok)
 		}
@@ -53,7 +55,12 @@ func newNetEnv(t *testing.T) *netEnv {
 	// Both stubs append to one log, so the order across them is asserted. A
 	// line in fail.txt that the call's argv contains makes that call fail.
 	body := `echo "$(basename "$0") $*" >> "$d/calls"
-if [[ -f $d/fail.txt ]] && grep -qF -- "$(cat "$d/fail.txt")" <<<"$*"; then exit 1; fi`
+if [[ -f $d/fail.txt ]] && grep -qF -- "$(cat "$d/fail.txt")" <<<"$*"; then exit 1; fi
+# n.txt: the first n calls of a listing exit 139 (a crash), then it works.
+if [[ "$*" == "-j -d link show type vxlan" || "$*" == "-j fdb show" ]] && [[ -f $d/crash-$(basename "$0").txt ]]; then
+  n=$(cat "$d/crash-$(basename "$0").txt")
+  if (( n > 0 )); then echo $((n-1)) > "$d/crash-$(basename "$0").txt"; exit 139; fi
+fi`
 	// show.txt and fdbdev.txt are what ip -d -o link show dev vx10001 and
 	// bridge fdb show dev vx10001 print for a device that already exists.
 	addStub(t, stub, "ip", body+"\n"+`[[ "$*" == "-j -d link show type vxlan" ]] && cat "$d/links.json"
@@ -63,7 +70,7 @@ if [[ -f $d/fail.txt ]] && grep -qF -- "$(cat "$d/fail.txt")" <<<"$*"; then exit
 	// flock records its call in its own log; flockfail.txt makes it fail.
 	addStub(t, stub, "flock", `echo "flock $*" >> "$d/flock.log"
 [[ -f $d/flockfail.txt ]] && exit 1; true`)
-	for _, tool := range []string{"bash", "env", "dirname", "cat", "basename", "grep"} {
+	for _, tool := range []string{"bash", "env", "dirname", "cat", "basename", "grep", "sleep"} {
 		p, err := exec.LookPath(tool)
 		if err != nil {
 			t.Fatal(err)
@@ -80,12 +87,14 @@ if [[ -f $d/fail.txt ]] && grep -qF -- "$(cat "$d/fail.txt")" <<<"$*"; then exit
 	}
 	s = strings.Replace(s, netPathTok, "PATH="+stub, 1)
 	s = strings.Replace(s, netSysTok, "sysnet="+sys, 1)
-	s = strings.Replace(s, netLockTok, "lockfile="+filepath.Join(thinTemp(t), "lock"), 1)
+	lock := filepath.Join(thinTemp(t), "lock")
+	s = strings.Replace(s, netLockTok, "lockfile="+lock, 1)
+	s = strings.Replace(s, netPauseTok, "retry_pause=0", 1)
 	script := filepath.Join(thinTemp(t), "vmtool-net")
 	if err := os.WriteFile(script, []byte(s), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	e := &netEnv{t: t, stub: stub, sys: sys, script: script}
+	e := &netEnv{t: t, stub: stub, sys: sys, script: script, lock: lock}
 	e.write("links.json", netReportLinks)
 	e.write("fdb.json", netReportFDB)
 	return e

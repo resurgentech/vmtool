@@ -951,9 +951,9 @@ their LAN addresses, so joining needs the store.
     `lan_dev`, `peers`) makes the host's VXLAN device flood to exactly those
     addresses, through the root helper `vmtool-net` (`NetHelper.EnsureLink`: it
     reads the helper's report and links only when the device differs, because
-    the helper re-makes the device and that drops the network's cross-host
-    traffic for a moment). `404` for an unknown network, `409` for one that is
-    not vmtool's, `400` for an argument the helper would refuse; `DELETE` of
+    the helper re-makes a device whose settings differ, which drops the
+    network's cross-host traffic for a moment; one that matches is kept, Z1).
+    `404` for an unknown network, `409` for one that is not vmtool's, `400` for an argument the helper would refuse; `DELETE` of
     the same path (`deleteNetworkPeers`) removes the device.
   - `GET /v1/hosts/{host}/underlay?to=IP` (`getUnderlay`) runs `ip route get`
     (no root) and answers the host's source address and interface toward `to`.

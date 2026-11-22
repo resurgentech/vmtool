@@ -35,8 +35,13 @@
 # (no delete, no traffic gap) and only sets its flood entries to exactly the
 # ones given; a device with other settings is deleted and made again. A step
 # that fails after a device was made deletes it again. link and the removal
-# verb hold an exclusive flock on a fixed file under /run/lock for their whole
-# run, so two callers never interleave; report takes no lock.
+# verb hold an exclusive flock on a fixed file, /run/vmtool-net.lock, for
+# their whole run, so two callers never interleave; report holds it shared, so
+# it never sees a device another call is half-way through making. The lock
+# file is opened without truncating, and a path that is a symlink or not a
+# regular file is refused. report runs each of its two listings up to 5 times
+# (0.2 s apart) when one exits non-zero: ip has been seen to crash (SIGSEGV)
+# listing links while a device is being made.
 set -euo pipefail
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
@@ -46,9 +51,13 @@ umask 022
 # Where interfaces are looked up (the one line a test rewrites).
 sysnet=/sys/class/net
 
-# The one lock file link and unlink hold (exclusive) for their whole run, so
-# two callers never interleave. Fixed path; the line a test rewrites.
-lockfile=/run/lock/vmtool-net.lock
+# The one lock file link and the removal verb hold (exclusive) and report
+# holds (shared) for their whole run. /run is root-only, so no other user can
+# pre-create it. Fixed path; the line a test rewrites.
+lockfile=/run/vmtool-net.lock
+
+# The pause between the tries of report's listings (a test rewrites this line).
+retry_pause=0.2
 
 die() { echo "vmtool-net: $*" >&2; exit 1; }
 
@@ -71,10 +80,33 @@ check_ipv4() {
   (( o[0] != 0 && o[0] != 127 && o[0] < 224 )) || die "invalid $what"
 }
 
-# take_lock: the exclusive lock on fd 9, held until the helper exits.
+# take_lock [-s]: the lock on fd 9 (exclusive; shared with -s), held until
+# the helper exits. A symlink or anything but a regular file at the path is
+# refused before it is opened; the file is opened read-write without
+# truncating (created if missing) and the open file is checked again, which
+# narrows the check-then-open gap (only root can write in /run anyway).
 take_lock() {
-  exec 9>"$lockfile" || die "cannot open the lock file"
-  flock 9 || die "cannot take the lock"
+  if [[ -L $lockfile ]] || { [[ -e $lockfile ]] && [[ ! -f $lockfile ]]; }; then
+    die "the lock file is not a regular file"
+  fi
+  exec 9<>"$lockfile" || die "cannot open the lock file"
+  [[ -f /dev/fd/9 && ! -L $lockfile ]] || die "the lock file is not a regular file"
+  flock "$@" 9 || die "cannot take the lock"
+}
+
+# list_retry VAR CMD...: run CMD up to 5 times, retry_pause apart, while it
+# exits non-zero; its output goes to VAR. Returns 1 after the last try.
+list_retry() {
+  local __var=$1 __out __try
+  shift
+  for __try in 1 2 3 4 5; do
+    if __out=$("$@"); then
+      printf -v "$__var" '%s' "$__out"
+      return 0
+    fi
+    (( __try == 5 )) || sleep "$retry_pause"
+  done
+  return 1
 }
 
 verb=${1:-}
@@ -171,8 +203,9 @@ case "$verb" in
     ;;
   report)
     (( nargs == 0 )) || die "report: wrong number of arguments"
-    links=$(ip -j -d link show type vxlan) || die "cannot list the links"
-    fdb=$(bridge -j fdb show) || die "cannot list the flood entries"
+    take_lock -s
+    list_retry links ip -j -d link show type vxlan || die "cannot list the links"
+    list_retry fdb bridge -j fdb show || die "cannot list the flood entries"
     printf '{"links":%s,"fdb":%s}\n' "$links" "$fdb"
     ;;
   *)
