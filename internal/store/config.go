@@ -15,6 +15,7 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"strings"
 
 	"github.com/resurgentech/vmtool/internal/tokenhash"
 	"gopkg.in/yaml.v3"
@@ -47,6 +48,11 @@ type Config struct {
 	KeyFile        string `yaml:"key_file"`
 	TLSCert        string `yaml:"tls_cert"`
 	TLSKey         string `yaml:"tls_key"`
+
+	// PathPrefix is the path the store serves under, for a proxy that serves
+	// several services on one host and passes the full path on unchanged. It
+	// is empty (serve at the root) or one or more /segment (checkPathPrefix).
+	PathPrefix string `yaml:"path_prefix"`
 
 	// S3AccessKey and S3SecretKey come from the environment.
 	S3AccessKey string `yaml:"-"`
@@ -103,7 +109,32 @@ func Load(path string) (*Config, error) {
 	if err := c.checkListen(); err != nil {
 		return nil, err
 	}
+	if err := checkPathPrefix(c.PathPrefix); err != nil {
+		return nil, err
+	}
 	return c, nil
+}
+
+var prefixSegmentRE = regexp.MustCompile(`^[A-Za-z0-9._~-]+$`)
+
+// checkPathPrefix is the path_prefix rule: empty, or one or more /segment of
+// A-Z a-z 0-9 . _ ~ -, with no empty or "." segment, no ".." anywhere and no
+// trailing "/". Nothing in it needs escaping, so the prefix is the same in a
+// request's decoded and escaped path.
+func checkPathPrefix(p string) error {
+	if p == "" {
+		return nil
+	}
+	bad := fmt.Errorf("path_prefix %q must be empty or one or more /segment of A-Z a-z 0-9 . _ ~ -, with no empty or '.' segment, no '..' and no trailing '/'", p)
+	if !strings.HasPrefix(p, "/") || strings.Contains(p, "..") {
+		return bad
+	}
+	for _, seg := range strings.Split(p[1:], "/") {
+		if seg == "." || !prefixSegmentRE.MatchString(seg) {
+			return bad
+		}
+	}
+	return nil
 }
 
 // privateFile refuses a file with any group or other permission bit. A

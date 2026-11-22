@@ -207,7 +207,7 @@ store_url=$(cd "$root" && "$vmtool_bin" config server-url) || die "'vmtool confi
 store_arg=""
 if [[ -n $store_url ]]; then
   [[ $store_url =~ ^https://[A-Za-z0-9][A-Za-z0-9.:-]*(/[A-Za-z0-9._~/-]*)?$ ]] \
-    || die "server.url in config.yml is not a plain https URL (like https://vmtool-store.labtwo); it becomes the daemon's store_url."
+    || die "server.url in config.yml is not a plain https URL (like https://proxy.example/vmstore); it becomes the daemon's store_url."
   store_arg=" --store-url $store_url"
 fi
 

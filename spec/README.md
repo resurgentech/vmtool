@@ -9,7 +9,7 @@ a handler.
 | Path | Contract |
 |---|---|
 | `openapi/vmtool.yaml` | Every HTTP endpoint `vmtool server` registers. oapi-codegen generates models, a stdlib `ServerInterface`, a strict wrapper, an embedded spec, and a test client (`internal/api`). |
-| `openapi/store.yaml` | The image and credential store's HTTP API (`vmtool-store`, 1.2.0), served by `cmd/vmtool-store`, not by `vmtool server`. Its own generated package, `internal/storeapi`; handled as `vmtool.yaml` is (see [The store](#the-store)). |
+| `openapi/store.yaml` | The image and credential store's HTTP API (`vmtool-store`, 1.3.0), served by `cmd/vmtool-store`, not by `vmtool server`. Its own generated package, `internal/storeapi`; handled as `vmtool.yaml` is (see [The store](#the-store)). |
 
 Interactive SSH from CLI (`vmtool ssh`) and TUI (`t`) execs `ssh` locally and
 is not an HTTP operation.
@@ -237,6 +237,24 @@ SQLite). The spec-first rule applies as for `vmtool.yaml`, and every route the
 store serves is in its spec (the exclusion register above is for vmtool's
 server). Setup, modes and deployment are in the root `README.md`; this section
 is the contract.
+
+**Base URL and `path_prefix` (API 1.3.0).** The store's base URL may carry a
+path. With `path_prefix: /vmstore` in the store's `config.yaml` (empty by
+default: serve at the root), every route below, `GET /version` included, is
+served under the prefix, for example `https://proxy.example/vmstore/version`
+and `https://proxy.example/vmstore/v1/whoami`, behind a proxy that passes the
+full path on unchanged. One wrapper in front of the request log checks the
+prefix and removes it from the path (decoded and escaped) before anything
+else, so routing, auth, the public `GET /version`, the ticket check (which
+still refuses an encoded path) and the log's route are as without a prefix.
+Any other path, `/vmstore` alone, `/vmstorex/...` and an unclean path below
+the prefix, is `404` with the store's error body, before auth: no token is
+asked for, nothing changes and no redirect is sent. The value is one or more
+`/segment` of `A-Z a-z 0-9 . _ ~ -`, with no empty or `.` segment, no `..` and
+no trailing `/`; the store refuses to start with any other, naming
+`path_prefix`. Clients (`internal/storeclient`, the daemon's image fetch from
+`store_url`) keep the base URL's path and append the routes to it, so they
+need only the address with the path.
 
 **Auth.** Every route needs `Authorization: Bearer <token>` except `GET
 /version`. The store holds a SHA-256 per named caller (`tokens.yaml`), never a

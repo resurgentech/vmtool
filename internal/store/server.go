@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"path"
 	"strings"
 	"time"
@@ -51,7 +52,8 @@ func NewServer(c *Config, log *slog.Logger, d Deps) *Server {
 	return &Server{cfg: c, log: log, routes: newRouteTable(), img: newImages(log, d)}
 }
 
-// Handler is the whole request pipeline: log -> auth -> generated routes.
+// Handler is the whole request pipeline: prefix -> log -> auth -> generated
+// routes.
 func (s *Server) Handler() http.Handler {
 	strict := storeapi.NewStrictHandlerWithOptions(&handlers{version: specVersion(), img: s.img}, nil, storeapi.StrictHTTPServerOptions{
 		// Fixed text only: a decoder error can quote the input, which may be a secret.
@@ -62,7 +64,51 @@ func (s *Server) Handler() http.Handler {
 		BaseRouter:       http.NewServeMux(),
 		ErrorHandlerFunc: paramError,
 	})
-	return s.logRequests(s.requireAuth(guardCredentialBody(api)))
+	return s.servePrefix(s.logRequests(s.requireAuth(guardCredentialBody(api))))
+}
+
+// servePrefix serves the API under the configured path_prefix. A request
+// whose path is the prefix plus a clean path, in both its decoded and its
+// escaped form, goes on with the prefix removed from URL.Path and URL.RawPath,
+// so routing, auth (and its public GET /version), the ticket check and every
+// handler see the same paths as with no prefix. Anything else, the prefix
+// alone included, is 404 with the store's error body, before auth: no token
+// is asked for, nothing is changed and no redirect is sent. With no prefix it
+// returns next unchanged.
+func (s *Server) servePrefix(next http.Handler) http.Handler {
+	prefix := s.cfg.PathPrefix
+	if prefix == "" {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rest, ok := strings.CutPrefix(r.URL.Path, prefix)
+		ok = ok && strings.HasPrefix(rest, "/") && path.Clean(rest) == rest
+		rawRest := ""
+		if r.URL.RawPath != "" {
+			var rawOK bool
+			rawRest, rawOK = strings.CutPrefix(r.URL.RawPath, prefix)
+			ok = ok && rawOK && strings.HasPrefix(rawRest, "/")
+		}
+		if !ok {
+			start := time.Now()
+			writeError(w, http.StatusNotFound, "not found")
+			s.log.Info("request",
+				"method", r.Method,
+				"route", "unmatched",
+				"status", http.StatusNotFound,
+				"caller", "-",
+				"duration", time.Since(start),
+			)
+			return
+		}
+		r2 := new(http.Request)
+		*r2 = *r
+		r2.URL = new(url.URL)
+		*r2.URL = *r.URL
+		r2.URL.Path = rest
+		r2.URL.RawPath = rawRest
+		next.ServeHTTP(w, r2)
+	})
 }
 
 // paramError answers a request whose parameters the generated wrapper
@@ -82,6 +128,9 @@ func paramError(w http.ResponseWriter, _ *http.Request, err error) {
 // not trusted) and returns the server to run. It never binds.
 func (s *Server) httpServer() (*http.Server, error) {
 	if err := s.cfg.checkListen(); err != nil {
+		return nil, err
+	}
+	if err := checkPathPrefix(s.cfg.PathPrefix); err != nil {
 		return nil, err
 	}
 	srv := &http.Server{

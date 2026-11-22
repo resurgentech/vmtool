@@ -396,11 +396,13 @@ OpenBao, never in `config.yml`, never in git.
 
 #### Using it from a client
 
-Name the store in `config.yml` (https only, no credentials in the URL):
+Name the store in `config.yml` (https only, no credentials in the URL). The
+URL may carry a path, when the store serves under a `path_prefix` (see
+[Building and deploying the store](#building-and-deploying-the-store)):
 
 ```yaml
 server:
-  url: https://vmtool-store.labtwo
+  url: https://proxy.example/vmstore
 ```
 
 The client's token is `VMTOOL_SERVER_TOKEN`, read like `VMTOOL_TOKEN`: from
@@ -429,7 +431,7 @@ credentials or base images, by one authenticated `GET /v1/whoami` with a
 - **Not configured, no token, or not reachable: local mode.** Credentials
   stay in `.machines/` and images come from `image_dir` and the local pools,
   uploaded to the daemon as before. When `server:` is set, one stderr line
-  says so: `vmtool-store.labtwo unreachable: using this machine's .machines/
+  says so: `proxy.example unreachable: using this machine's .machines/
   and image_dir` (with the host of your `server.url`; a missing or unusable
   token gives the same ending with the reason in place of `unreachable`).
 
@@ -603,8 +605,8 @@ just store-image <tag>    # builds registry.labtwo/vmtool-store:<tag> and :lates
 
 `<tag>` is a version; empty and `latest` are refused. No secret goes into the
 image. It is deployed to sdf1 by the `vmtool_store` role in `ansible_labtwo`,
-behind Caddy as `https://vmtool-store.labtwo` (port 8095, not behind
-Authelia). The role's own `README.md` has the detail. In outline, with `bao`
+behind Caddy (port 8095, not behind Authelia). The role's own `README.md` has
+the detail and the store's address. In outline, with `bao`
 logged in:
 
 ```bash
@@ -626,6 +628,27 @@ refuses a token or key file readable by group or others, and a data
 directory looser than 0700. It serves plain HTTP only on loopback or with
 `behind_proxy: true` behind a TLS-terminating proxy (rule 5 in `AGENTS.md`);
 it needs a token on every route except `GET /version`.
+
+**Serving under a path.** A proxy that serves several services on one host
+and passes the full path on unchanged (Caddy's `handle /vmstore/*`, not
+`handle_path`) needs the store to know its prefix. Set `path_prefix` in the
+store's `config.yaml`, beside `behind_proxy`:
+
+```yaml
+behind_proxy: true
+path_prefix: /vmstore
+```
+
+The store then answers only under the prefix:
+`https://proxy.example/vmstore/version` (public) and
+`https://proxy.example/vmstore/v1/...`; any other path, and `/vmstore` alone,
+is `404` before auth, and the store sends no redirect. Clients name the same
+base, `server.url: https://proxy.example/vmstore` (and a hypervisor's
+`store_url` is the same address). The value is empty (the default: serve at
+the root) or one or more `/segment` of letters, digits and `. _ ~ -`, with no
+empty or `.` segment, no `..` and no trailing `/`; anything else stops the
+store at start with an error naming `path_prefix`. Tokens, host tokens,
+tickets and everything else are unchanged.
 
 **Key loss: `enc.key` encrypts every stored credential.** If it is lost from
 both OpenBao and the file on sdf1, every stored credential is lost, and

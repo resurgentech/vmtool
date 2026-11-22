@@ -116,7 +116,7 @@ type Config struct {
 // it: it comes from VMTOOL_SERVER_TOKEN (ServerToken).
 type StoreServer struct {
 	// URL is the store's base URL, https only, for example
-	// https://vmtool-store.labtwo.
+	// https://proxy.example/vmstore.
 	URL string `yaml:"url"`
 }
 
@@ -133,7 +133,7 @@ func checkStoreAddress(key, raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil ||
 		u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.Opaque != "" {
-		return errors.New(key + " must be an https URL with a host, like https://vmtool-store.labtwo (no credentials, query or fragment)")
+		return errors.New(key + " must be an https URL with a host, like https://proxy.example/vmstore (no credentials, query or fragment)")
 	}
 	return nil
 }

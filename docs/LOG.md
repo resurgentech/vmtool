@@ -2639,3 +2639,56 @@ are appended, never edited in; a hook refuses rewrites.
   move; hosts are unaffected until their next `just deploy`.
 - Commits: the module-path commit on `master` (this entry rides in it);
   not pushed: it is pushed after the repository moves. No tag.
+
+## 2026-11-22 — Store API 1.3.0: serving under an optional `path_prefix`
+
+- The store gains `path_prefix` in its `config.yaml`, beside
+  `behind_proxy`, for a proxy that serves several services on one host and
+  passes the full path on unchanged. Empty (the default) is today's
+  behaviour. Otherwise it is one or more `/segment` of `A-Z a-z 0-9 . _ ~ -`,
+  no empty or `.` segment, no `..` and no trailing `/`; `Load` (and
+  `httpServer`, for a hand-built config) refuses anything else with an error
+  naming `path_prefix`.
+- With a prefix the whole API, `GET /version` included, sits under it. One
+  wrapper in front of the request log (`servePrefix`,
+  `internal/store/server.go`) requires the prefix plus a clean path in both
+  `URL.Path` and `URL.RawPath`, removes it from both, and hands on; routing,
+  auth and its public `GET /version`, the host-token allow-list, the ticket
+  check (which still refuses an encoded path) and the log's route see the
+  same paths as without a prefix. Any other path, the prefix alone, a
+  sibling such as `/vmstorex/...`, an escaped prefix and an unclean path
+  below the prefix answer `404` with the store's error body before auth (no
+  token asked for, no redirect: the mux's own redirect would drop the
+  prefix), with one log line, route `unmatched`.
+- Spec first: `spec/openapi/store.yaml` `info.version` 1.2.0 -> 1.3.0; the
+  description and `servers` say the base URL may carry a path. No route
+  changes; `internal/storeapi` regenerated (embedded spec only).
+- Clients need no change; tests pin it against the real store handler under
+  `/vmstore` (httptest TLS): `storeclient` with base `<URL>/vmstore` and
+  `<URL>/vmstore/` sends every call under `/vmstore/...`, the version probe
+  without `Authorization` and every other call with the bearer; a host
+  token's inventory report and network-registry read go through; a daemon
+  fetch with a ticket through a `store_url` with a path succeeds and spends
+  the ticket.
+- Docs: the README store sections and `spec/README.md` describe the setting
+  (`path_prefix: /vmstore` against `https://proxy.example/vmstore`); store
+  addresses in the README, the `server.url` / `store_url` error text
+  (`internal/config/config.go`) and `scripts/deploy.sh` use that neutral
+  example.
+- Red: `TestPathPrefixRefused` (every case accepted),
+  `TestPrefixVersionPublic` (401), `TestPrefixWhoami`,
+  `TestPrefixOutsideIs404`, `TestPrefixHostTokenAllowList`,
+  `TestPrefixTicketOneUse`, `TestPrefixUncleanPathNoRedirect` (307 with a
+  Location lacking the prefix), `TestPrefixLogRoute`, `TestVersionPublic`
+  (1.2.0), `TestClientUnderPathPrefix`, `TestHostCallsUnderPathPrefix`,
+  `TestFetchImageRealStoreUnderPathPrefix`. Green after the change; every
+  existing store test passes with only `TestVersionPublic`'s expected
+  version moved to 1.3.0; `just check` green; `scripts/verify-generate.sh`
+  clean; the store image builds
+  (`docker build -f deploy/vmtool-store.Dockerfile .`, not tagged or
+  pushed).
+- Deployed stores are unaffected until their image is rebuilt; a store
+  given a prefix answers only under it, so its clients' addresses move with
+  it in one change.
+- Commits: the path-prefix commit on `master` (this entry rides in it); not
+  pushed. No tag.
