@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // DefaultNetHelper is where `just deploy` installs the link helper.
@@ -199,4 +200,37 @@ func ParseNetReport(b []byte) ([]NetLink, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].VNI < out[j].VNI })
 	return out, nil
+}
+
+// netLocks holds one mutex per VNI for the whole process: the peers route, the
+// link keeper and join's own call all reach the helper through the functions
+// below, so one network's report-then-link sequence never interleaves with
+// another's. (The helper takes its own file lock for other processes.)
+var (
+	netLocksMu sync.Mutex
+	netLocks   = map[uint32]*sync.Mutex{}
+)
+
+func lockNet(vni uint32) func() {
+	netLocksMu.Lock()
+	mu := netLocks[vni]
+	if mu == nil {
+		mu = &sync.Mutex{}
+		netLocks[vni] = mu
+	}
+	netLocksMu.Unlock()
+	mu.Lock()
+	return mu.Unlock
+}
+
+// EnsureLinkLocked is EnsureLink under the VNI's lock.
+func (n *NetHelper) EnsureLinkLocked(vni uint32, bridge, localIP, dev string, peers []string) (bool, error) {
+	defer lockNet(vni)()
+	return n.EnsureLink(vni, bridge, localIP, dev, peers)
+}
+
+// UnlinkLocked is Unlink under the VNI's lock.
+func (n *NetHelper) UnlinkLocked(vni uint32) error {
+	defer lockNet(vni)()
+	return n.Unlink(vni)
 }

@@ -224,7 +224,8 @@ func (m *Manager) CreateNetworkMember(name string, vni uint32) (*NetworkInfo, er
 
 // SetNetworkLinks makes this host's VXLAN device of the vmtool network name
 // (vx<VNI>, on the network's bridge) bound to localIP on dev and flooding to
-// exactly peers. A device already so is left alone. The network must be a
+// exactly peers. A device already so is left alone. Calls for one network
+// run one after the other (a per-VNI lock), whoever makes them. The network must be a
 // vmtool network and active: its bridge is made when libvirt starts it.
 func (m *Manager) SetNetworkLinks(name, localIP, dev string, peers []string) error {
 	info, err := m.Network(name)
@@ -237,7 +238,7 @@ func (m *Manager) SetNetworkLinks(name, localIP, dev string, peers []string) err
 	if !info.Active {
 		return fmt.Errorf("network %q is not active, so its bridge %s does not exist yet; libvirt starts it (autostart) and vmtool links it then", name, info.Bridge)
 	}
-	_, err = (&NetHelper{}).EnsureLink(info.VNI, info.Bridge, localIP, dev, peers)
+	_, err = (&NetHelper{}).EnsureLinkLocked(info.VNI, info.Bridge, localIP, dev, peers)
 	return err
 }
 
@@ -251,7 +252,7 @@ func (m *Manager) RemoveNetworkLink(name string) error {
 	if !info.Vmtool {
 		return fmt.Errorf("%w: network %q has bridge %q, not %s plus six lowercase hex digits; vmtool leaves it alone", ErrNetworkNotVmtool, name, info.Bridge, BridgePrefix)
 	}
-	return (&NetHelper{}).Unlink(info.VNI)
+	return (&NetHelper{}).UnlinkLocked(info.VNI)
 }
 
 // Underlay is the address and interface this host reaches the IPv4 address to

@@ -2525,3 +2525,30 @@ are appended, never edited in; a hook refuses rewrites.
   `"\ruploading:  25% …", want "\rfetching:  25% …"`. Green; `just check`
   green.
 - Commits: the Y2 commit on `clone-identity` (this entry rides in it).
+
+## 2026-11-22 — Z1 `net join` no longer fails when two links are made at once
+
+- Cause: the peers route and the daemon's link keeper (woken by libvirt's
+  "network started") both ran report-then-link on the member at once; the
+  helper's `link` deleted and re-added `vx<VNI>`, so the second `ip link add`
+  got `File exists`.
+- `pkg/vmtool/netlink.go`: a process-wide lock per VNI (`lockNet`) and
+  `NetHelper.EnsureLinkLocked` / `UnlinkLocked`; `Manager.SetNetworkLinks`
+  and `RemoveNetworkLink` (`netlibvirt.go`) use them, so every caller in the
+  daemon (peers route, keeper, join) runs one after the other per network.
+- `deploy/vmtool-net`: `link` and `unlink` hold an exclusive `flock` on the
+  fixed `/run/lock/vmtool-net.lock` (after argument validation); `link`
+  keeps an existing `vx<VNI>` with the same VNI, local address, device,
+  dstport 4789 and bridge, and only syncs its flood entries (`bridge fdb
+  del` / `append`, every read-back dst validated) and sets it up; any other
+  device is replaced as before. No new verb, no sudoers change.
+- Tests: `TestEnsureLinkLockedSerialises`, `TestUnlinkLockedWaitsForLink`
+  (stateful stub sudo); helper `TestNetLinkIdempotent`,
+  `TestNetLinkIdempotentNoChange`, `TestNetLinkDiffersReplaced`,
+  `TestNetLinkIdempotentBadFDBEntry`, `TestNetLockTaken`,
+  `TestNetReportNoLock` (stub `ip`/`bridge`/`flock`).
+- Red: `helper calls [report report link link]` with `RTNETLINK answers:
+  File exists`; helper deleted and re-made a matching device; no `flock`
+  call. Green; `just check` green.
+- Hosts need `just deploy` (helper and daemon) for the fix to take effect.
+- Commits: the Z1 commit on `clone-identity` (this entry rides in it).

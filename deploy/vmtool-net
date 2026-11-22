@@ -30,9 +30,13 @@
 # each PEER are dotted-quad IPv4 addresses (no 0.x, 127.x or 224 and up; a
 # peer is never LOCAL_IP). DEV is an existing interface that is not lo,
 # vmt-*, vx*, virbr* or vnet*, at most 15 characters. Any number of PEERs,
-# none included; a repeated peer is added once. link replaces an existing
-# vx<VNI> (deleted, then made again), so its flood entries are exactly the
-# ones given; a step that fails after the device was made deletes it again.
+# none included; a repeated peer is added once. link leaves an existing
+# vx<VNI> with the same VNI, local address, DEV, port 4789 and BRIDGE in place
+# (no delete, no traffic gap) and only sets its flood entries to exactly the
+# ones given; a device with other settings is deleted and made again. A step
+# that fails after a device was made deletes it again. link and the removal
+# verb hold an exclusive flock on a fixed file under /run/lock for their whole
+# run, so two callers never interleave; report takes no lock.
 set -euo pipefail
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
@@ -41,6 +45,10 @@ umask 022
 
 # Where interfaces are looked up (the one line a test rewrites).
 sysnet=/sys/class/net
+
+# The one lock file link and unlink hold (exclusive) for their whole run, so
+# two callers never interleave. Fixed path; the line a test rewrites.
+lockfile=/run/lock/vmtool-net.lock
 
 die() { echo "vmtool-net: $*" >&2; exit 1; }
 
@@ -61,6 +69,12 @@ check_ipv4() {
     (( o[i] <= 255 )) || die "invalid $what"
   done
   (( o[0] != 0 && o[0] != 127 && o[0] < 224 )) || die "invalid $what"
+}
+
+# take_lock: the exclusive lock on fd 9, held until the helper exits.
+take_lock() {
+  exec 9>"$lockfile" || die "cannot open the lock file"
+  flock 9 || die "cannot take the lock"
 }
 
 verb=${1:-}
@@ -94,8 +108,47 @@ case "$verb" in
       done
       [[ -n $seen ]] || peers+=("$p")
     done
+    take_lock
     vx="vx$vni"
     if [[ -e $sysnet/$vx ]]; then
+      # An existing device with the same VNI, local address, underlay
+      # interface, port and bridge is kept (no delete, no traffic gap); only
+      # its flood entries are set. Anything else is replaced.
+      show=$(ip -d -o link show dev "$vx") || show=
+      cur_master= cur_id= cur_local= cur_dev= cur_port=
+      if [[ $show =~ [[:space:]]master[[:space:]]([^[:space:]]+) ]]; then cur_master=${BASH_REMATCH[1]}; fi
+      if [[ $show =~ [[:space:]]vxlan[[:space:]]id[[:space:]]([0-9]+)[[:space:]]local[[:space:]]([0-9.]+)[[:space:]]dev[[:space:]]([^[:space:]]+) ]]; then
+        cur_id=${BASH_REMATCH[1]} cur_local=${BASH_REMATCH[2]} cur_dev=${BASH_REMATCH[3]}
+      fi
+      if [[ $show =~ [[:space:]]dstport[[:space:]]([0-9]+) ]]; then cur_port=${BASH_REMATCH[1]}; fi
+      if [[ $cur_master == "$bridge" && $cur_id == "$vni" && $cur_local == "$local_ip" \
+            && $cur_dev == "$dev" && $cur_port == 4789 ]]; then
+        flood=$(bridge fdb show dev "$vx") || die "cannot list the flood entries"
+        have=()
+        while read -r mac w_dst dst _; do
+          [[ $mac == 00:00:00:00:00:00 && $w_dst == dst ]] || continue
+          check_ipv4 "flood entry" "$dst"
+          have+=("$dst")
+        done <<<"$flood"
+        for h in "${have[@]+"${have[@]}"}"; do
+          keep=
+          for p in "${peers[@]+"${peers[@]}"}"; do
+            [[ $p != "$h" ]] || keep=1
+          done
+          [[ -n $keep ]] || bridge fdb del 00:00:00:00:00:00 dev "$vx" dst "$h" \
+            || die "cannot remove a flood entry"
+        done
+        for p in "${peers[@]+"${peers[@]}"}"; do
+          present=
+          for h in "${have[@]+"${have[@]}"}"; do
+            [[ $p != "$h" ]] || present=1
+          done
+          [[ -n $present ]] || bridge fdb append 00:00:00:00:00:00 dev "$vx" dst "$p" \
+            || die "cannot add a flood entry"
+        done
+        ip link set "$vx" up || die "cannot bring the device up"
+        exit 0
+      fi
       ip link del "$vx" || die "cannot remove the old device"
     fi
     ip link add "$vx" type vxlan id "$vni" dstport 4789 local "$local_ip" dev "$dev" \
@@ -111,6 +164,7 @@ case "$verb" in
   unlink)
     (( nargs == 1 )) || die "unlink: wrong number of arguments"
     check_vni "$1"
+    take_lock
     if [[ -e $sysnet/vx$1 ]]; then
       ip link del "vx$1" || die "cannot remove the device"
     fi

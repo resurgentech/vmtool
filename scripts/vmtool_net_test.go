@@ -20,6 +20,7 @@ const (
 	netScript  = "../deploy/vmtool-net"
 	netPathTok = "PATH=/usr/sbin:/usr/bin:/sbin:/bin"
 	netSysTok  = "sysnet=/sys/class/net"
+	netLockTok = "lockfile=/run/lock/vmtool-net.lock"
 )
 
 // netReportLinks and netReportFDB are what the stub ip and bridge print for
@@ -43,7 +44,7 @@ func newNetEnv(t *testing.T) *netEnv {
 		t.Fatal(err)
 	}
 	s := string(src)
-	for _, tok := range []string{netPathTok, netSysTok} {
+	for _, tok := range []string{netPathTok, netSysTok, netLockTok} {
 		if n := strings.Count(s, tok); n != 1 {
 			t.Fatalf("script has %d occurrences of %q, want exactly 1", n, tok)
 		}
@@ -53,8 +54,15 @@ func newNetEnv(t *testing.T) *netEnv {
 	// line in fail.txt that the call's argv contains makes that call fail.
 	body := `echo "$(basename "$0") $*" >> "$d/calls"
 if [[ -f $d/fail.txt ]] && grep -qF -- "$(cat "$d/fail.txt")" <<<"$*"; then exit 1; fi`
-	addStub(t, stub, "ip", body+"\n"+`[[ "$*" == "-j -d link show type vxlan" ]] && cat "$d/links.json"; true`)
-	addStub(t, stub, "bridge", body+"\n"+`[[ "$*" == "-j fdb show" ]] && cat "$d/fdb.json"; true`)
+	// show.txt and fdbdev.txt are what ip -d -o link show dev vx10001 and
+	// bridge fdb show dev vx10001 print for a device that already exists.
+	addStub(t, stub, "ip", body+"\n"+`[[ "$*" == "-j -d link show type vxlan" ]] && cat "$d/links.json"
+[[ "$*" == "-d -o link show dev vx10001" && -f $d/show.txt ]] && cat "$d/show.txt"; true`)
+	addStub(t, stub, "bridge", body+"\n"+`[[ "$*" == "-j fdb show" ]] && cat "$d/fdb.json"
+[[ "$*" == "fdb show dev vx10001" && -f $d/fdbdev.txt ]] && cat "$d/fdbdev.txt"; true`)
+	// flock records its call in its own log; flockfail.txt makes it fail.
+	addStub(t, stub, "flock", `echo "flock $*" >> "$d/flock.log"
+[[ -f $d/flockfail.txt ]] && exit 1; true`)
 	for _, tool := range []string{"bash", "env", "dirname", "cat", "basename", "grep"} {
 		p, err := exec.LookPath(tool)
 		if err != nil {
@@ -72,6 +80,7 @@ if [[ -f $d/fail.txt ]] && grep -qF -- "$(cat "$d/fail.txt")" <<<"$*"; then exit
 	}
 	s = strings.Replace(s, netPathTok, "PATH="+stub, 1)
 	s = strings.Replace(s, netSysTok, "sysnet="+sys, 1)
+	s = strings.Replace(s, netLockTok, "lockfile="+filepath.Join(thinTemp(t), "lock"), 1)
 	script := filepath.Join(thinTemp(t), "vmtool-net")
 	if err := os.WriteFile(script, []byte(s), 0o644); err != nil {
 		t.Fatal(err)
@@ -180,7 +189,8 @@ func TestNetLinkReplaces(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.ok("link", netVNI, netBridge, "192.0.2.11", "eth-test", "192.0.2.12", "192.0.2.12")
-	e.wantCalls("ip link del vx10001\n" +
+	e.wantCalls("ip -d -o link show dev vx10001\n" +
+		"ip link del vx10001\n" +
 		"ip link add vx10001 type vxlan id 10001 dstport 4789 local 192.0.2.11 dev eth-test\n" +
 		"ip link set vx10001 master vmt-002711\n" +
 		"bridge fdb append 00:00:00:00:00:00 dev vx10001 dst 192.0.2.12\n" +
