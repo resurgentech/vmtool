@@ -213,7 +213,7 @@ func (h *handlers) GetImagePath(ctx context.Context, req api.GetImagePathRequest
 		if primKind(err) == app.KindNotFound {
 			return api.GetImagePath404JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
 		}
-		return api.GetImagePath500JSONResponse(apiErr(err)), nil
+		return nil, err
 	}
 	return api.GetImagePath200JSONResponse{Path: v.(string)}, nil
 }
@@ -225,7 +225,7 @@ func (h *handlers) networkHomeRefusal() *api.Error {
 	if !h.networkHome {
 		return nil
 	}
-	e := api.Error{Error: fmt.Sprintf("%s is a network home and runs no VMs", h.hosts.Local())}
+	e := errBody(http.StatusConflict, fmt.Sprintf("%s is a network home and runs no VMs", h.hosts.Local()))
 	return &e
 }
 
@@ -246,7 +246,7 @@ func (h *handlers) CreateVolume(ctx context.Context, req api.CreateVolumeRequest
 		bad = errors.New("pool contains invalid characters")
 	}
 	if bad != nil {
-		return api.CreateVolume400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: bad.Error()}}, nil
+		return api.CreateVolume400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Code: statusCode(400), Error: bad.Error()}}, nil
 	}
 	v, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
 		return m.CreateVolume(derefStr(b.Pool), b.Name, uint(b.SizeGb))
@@ -256,7 +256,7 @@ func (h *handlers) CreateVolume(ctx context.Context, req api.CreateVolumeRequest
 		case app.KindNotFound:
 			return api.CreateVolume404JSONResponse(apiErr(err)), nil
 		default:
-			return api.CreateVolume500JSONResponse(apiErr(err)), nil
+			return nil, err
 		}
 	}
 	return api.CreateVolume201JSONResponse{Path: v.(string)}, nil
@@ -283,7 +283,7 @@ func (h *handlers) CloneVolume(ctx context.Context, req api.CloneVolumeRequestOb
 		bad = badName("template", *b.Template)
 	}
 	if bad != nil {
-		return api.CloneVolume400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: bad.Error()}}, nil
+		return api.CloneVolume400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Code: statusCode(400), Error: bad.Error()}}, nil
 	}
 	v, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
 		base, err := basePath(m, b.BasePath)
@@ -310,7 +310,7 @@ func (h *handlers) CloneVolume(ctx context.Context, req api.CloneVolumeRequestOb
 		case app.KindConflict:
 			return api.CloneVolume409JSONResponse(apiErr(err)), nil
 		default:
-			return api.CloneVolume500JSONResponse(apiErr(err)), nil
+			return nil, err
 		}
 	}
 	return api.CloneVolume201JSONResponse{Path: v.(string)}, nil
@@ -328,7 +328,7 @@ func (h *handlers) ResizeVolume(ctx context.Context, req api.ResizeVolumeRequest
 		bad = errors.New("size_bytes must be > 0")
 	}
 	if bad != nil {
-		return api.ResizeVolume400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: bad.Error()}}, nil
+		return api.ResizeVolume400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Code: statusCode(400), Error: bad.Error()}}, nil
 	}
 	_, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
 		p, err := poolPath(m, b.Path)
@@ -344,7 +344,7 @@ func (h *handlers) ResizeVolume(ctx context.Context, req api.ResizeVolumeRequest
 		case app.KindNotFound:
 			return api.ResizeVolume404JSONResponse(apiErr(err)), nil
 		default:
-			return api.ResizeVolume500JSONResponse(apiErr(err)), nil
+			return nil, err
 		}
 	}
 	return api.ResizeVolume204Response{}, nil
@@ -442,7 +442,7 @@ func (h *handlers) DefineVM(ctx context.Context, req api.DefineVMRequestObject) 
 	}
 	cfg, bad := vmConfigFromDefine(req.Name, req.Body)
 	if bad != nil {
-		return api.DefineVM400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: bad.Error()}}, nil
+		return api.DefineVM400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Code: statusCode(400), Error: bad.Error()}}, nil
 	}
 	_, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
 		var err error
@@ -463,7 +463,7 @@ func (h *handlers) DefineVM(ctx context.Context, req api.DefineVMRequestObject) 
 		case app.KindNotFound:
 			return api.DefineVM404JSONResponse(apiErr(err)), nil
 		default:
-			return api.DefineVM500JSONResponse(apiErr(err)), nil
+			return nil, err
 		}
 	}
 	return api.DefineVM204Response{}, nil
@@ -478,7 +478,7 @@ func (h *handlers) DeleteVMDefinition(ctx context.Context, req api.DeleteVMDefin
 		if primKind(err) == app.KindNotFound {
 			return api.DeleteVMDefinition404JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
 		}
-		return api.DeleteVMDefinition500JSONResponse(apiErr(err)), nil
+		return nil, err
 	}
 	return api.DeleteVMDefinition204Response{}, nil
 }
@@ -499,14 +499,14 @@ func (h *handlers) WaitVMIP(ctx context.Context, req api.WaitVMIPRequestObject) 
 		if primKind(err) == app.KindNotFound {
 			return api.WaitVMIP404JSONResponse(apiErr(err)), nil
 		}
-		return api.WaitVMIP500JSONResponse(apiErr(err)), nil
+		return nil, err
 	}
 	return api.WaitVMIP200JSONResponse{Ip: v.(string)}, nil
 }
 
 func (h *handlers) ResizeVMVolume(ctx context.Context, req api.ResizeVMVolumeRequestObject) (api.ResizeVMVolumeResponseObject, error) {
 	if req.Body == nil || req.Body.SizeGb < 1 {
-		return api.ResizeVMVolume400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: "size_gb must be > 0"}}, nil
+		return api.ResizeVMVolume400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Code: statusCode(400), Error: "size_gb must be > 0"}}, nil
 	}
 	_, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
 		return nil, m.ResizeDisk(req.Name, uint(req.Body.SizeGb))
@@ -518,7 +518,7 @@ func (h *handlers) ResizeVMVolume(ctx context.Context, req api.ResizeVMVolumeReq
 		if primKind(err) == app.KindConflict { // a thin pool without room
 			return api.ResizeVMVolume409JSONResponse(apiErr(err)), nil
 		}
-		return api.ResizeVMVolume500JSONResponse(apiErr(err)), nil
+		return nil, err
 	}
 	return api.ResizeVMVolume204Response{}, nil
 }
@@ -586,5 +586,5 @@ func isWorkstationOnly(op *openapi3.Operation) bool {
 func writeWorkstationOnly(w http.ResponseWriter, opID, host string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusForbidden)
-	_ = json.NewEncoder(w).Encode(api.Error{Error: fmt.Sprintf("%s is served by the workstation, not by hypervisor %s", opID, host)})
+	_ = json.NewEncoder(w).Encode(withCode(api.Error{Error: fmt.Sprintf("%s is served by the workstation, not by hypervisor %s", opID, host)}, api.ErrorCodeWorkstationOnly))
 }

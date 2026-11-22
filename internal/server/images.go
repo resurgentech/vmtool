@@ -153,13 +153,13 @@ func refreshPool(m app.Manager, pool string) error {
 
 func (h *handlers) GetImageManifest(ctx context.Context, req api.GetImageManifestRequestObject) (api.GetImageManifestResponseObject, error) {
 	if !vmtool.ValidImageName(req.Name) {
-		return api.GetImageManifest400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: badImageName(req.Name)}}, nil
+		return api.GetImageManifest400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Code: statusCode(400), Error: badImageName(req.Name)}}, nil
 	}
 	// A workstation keeps no image cache; with its own name listed the
 	// daemon behind that name does, so the request is forwarded like any
 	// listed host's.
 	if h.role != config.RoleHypervisor && req.Host == h.hosts.Local() && !h.hosts.OwnListed() {
-		return api.GetImageManifest403JSONResponse{Error: fmt.Sprintf(
+		return api.GetImageManifest403JSONResponse{Code: statusCode(403), Error: fmt.Sprintf(
 			"image manifests are kept by hypervisor daemons; %s is the workstation and keeps no image cache", req.Host)}, nil
 	}
 	var v any
@@ -191,7 +191,7 @@ func (h *handlers) GetImageManifest(ctx context.Context, req api.GetImageManifes
 		case app.KindInvalid:
 			return api.GetImageManifest400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
 		}
-		return api.GetImageManifest500JSONResponse(apiErr(err)), nil
+		return nil, err
 	}
 	ri := v.(app.RemoteImage)
 	out := api.ImageManifestEntry{Name: ri.Name, Foreign: ri.Foreign}
@@ -297,7 +297,7 @@ func (h *handlers) warmPoolDir() {
 // UploadImage on the strict interface is never reached: tunnelMux serves the
 // route itself so it can stream the body and refuse before reading it.
 func (h *handlers) UploadImage(_ context.Context, _ api.UploadImageRequestObject) (api.UploadImageResponseObject, error) {
-	return api.UploadImage500JSONResponse{Error: "uploadImage streams its body; served by tunnelMux"}, nil
+	return api.UploadImage500JSONResponse{Code: statusCode(500), Error: "uploadImage streams its body; served by tunnelMux"}, nil
 }
 
 func (t tunnelMux) UploadImage(w http.ResponseWriter, r *http.Request, host api.HostName, name api.ImageName, params api.UploadImageParams) {
@@ -319,7 +319,7 @@ func (h *handlers) uploadImage(w http.ResponseWriter, r *http.Request, host, nam
 		if uerr.code >= 500 {
 			slog.Error("uploadImage", "image", name, "err", uerr.msg)
 		}
-		e := api.Error{Error: uerr.msg}
+		e := errBody(uerr.code, uerr.msg)
 		switch uerr.code {
 		case http.StatusBadRequest:
 			_ = api.UploadImage400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(e)}.VisitUploadImageResponse(w)

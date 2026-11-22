@@ -117,8 +117,12 @@ func (m *Manager) OpenImageBlob(ctx context.Context, name string) (io.ReadCloser
 	// Response headers within the ordinary timeout.
 	headerTimer := time.AfterFunc(m.timeout, cancel)
 	resp, err := m.client.GetImageBlob(ctx, m.name, name)
-	headerTimer.Stop()
+	late := !headerTimer.Stop() // the timer fired: no headers in time
 	if err != nil {
+		if late {
+			// cancel was the header timer's: report the timeout, not "context canceled"
+			err = context.DeadlineExceeded
+		}
 		cancel()
 		return nil, app.ImageBlobInfo{}, m.transportErr("getImageBlob", m.timeout, err)
 	}

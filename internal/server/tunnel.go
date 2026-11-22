@@ -45,7 +45,7 @@ func (t tunnelMux) OpenVMTunnel(w http.ResponseWriter, r *http.Request, host api
 // OpenVMTunnel on the strict interface is never reached: tunnelMux serves
 // the route. It exists because the generated interface requires it.
 func (h *handlers) OpenVMTunnel(_ context.Context, _ api.OpenVMTunnelRequestObject) (api.OpenVMTunnelResponseObject, error) {
-	return api.OpenVMTunnel500JSONResponse{Error: "openVMTunnel needs a connection upgrade; served by tunnelMux"}, nil
+	return api.OpenVMTunnel500JSONResponse{Code: statusCode(500), Error: "openVMTunnel needs a connection upgrade; served by tunnelMux"}, nil
 }
 
 // openTunnel checks the request, resolves the VM, dials <ip>:22 and only
@@ -55,21 +55,21 @@ func (h *handlers) OpenVMTunnel(_ context.Context, _ api.OpenVMTunnelRequestObje
 func (h *handlers) openTunnel(w http.ResponseWriter, r *http.Request, host, name string) {
 	if r.ProtoMajor != 1 {
 		_ = api.OpenVMTunnel426JSONResponse{
-			Body:    api.Error{Error: fmt.Sprintf("the tunnel needs HTTP/1.1 (got HTTP/%d.%d, which cannot upgrade a connection)", r.ProtoMajor, r.ProtoMinor)},
+			Body:    errBody(http.StatusUpgradeRequired, fmt.Sprintf("the tunnel needs HTTP/1.1 (got HTTP/%d.%d, which cannot upgrade a connection)", r.ProtoMajor, r.ProtoMinor)),
 			Headers: api.OpenVMTunnel426ResponseHeaders{Upgrade: tunnelProtocol},
 		}.VisitOpenVMTunnelResponse(w)
 		return
 	}
 	if !headerHasToken(r.Header, "Connection", "upgrade") || !headerHasToken(r.Header, "Upgrade", tunnelProtocol) {
-		_ = api.OpenVMTunnel400JSONResponse{Error: "the tunnel needs Connection: Upgrade and Upgrade: " + tunnelProtocol}.VisitOpenVMTunnelResponse(w)
+		_ = api.OpenVMTunnel400JSONResponse{Code: statusCode(400), Error: "the tunnel needs Connection: Upgrade and Upgrade: " + tunnelProtocol}.VisitOpenVMTunnelResponse(w)
 		return
 	}
 	if r.ContentLength != 0 || len(r.TransferEncoding) > 0 {
-		_ = api.OpenVMTunnel400JSONResponse{Error: "the tunnel request takes no body"}.VisitOpenVMTunnelResponse(w)
+		_ = api.OpenVMTunnel400JSONResponse{Code: statusCode(400), Error: "the tunnel request takes no body"}.VisitOpenVMTunnelResponse(w)
 		return
 	}
 	if !vmtool.ValidMachineName(name) {
-		_ = api.OpenVMTunnel400JSONResponse{Error: fmt.Sprintf("invalid VM name %q", name)}.VisitOpenVMTunnelResponse(w)
+		_ = api.OpenVMTunnel400JSONResponse{Code: statusCode(400), Error: fmt.Sprintf("invalid VM name %q", name)}.VisitOpenVMTunnelResponse(w)
 		return
 	}
 	// A configured remote host's guests are reachable only from that host:
@@ -77,7 +77,7 @@ func (h *handlers) openTunnel(w http.ResponseWriter, r *http.Request, host, name
 	// look up a remote VM's address and dial it from here. The client
 	// tunnels through the remote daemon itself.
 	if h.hosts.IsRemote(host) {
-		_ = api.OpenVMTunnel404JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: fmt.Sprintf(
+		_ = api.OpenVMTunnel404JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Code: statusCode(404), Error: fmt.Sprintf(
 			"tunnels to %s are served by that host's daemon, not by %s; use `vmtool tunnel %s/%s`",
 			host, h.hosts.Local(), host, name)}}.VisitOpenVMTunnelResponse(w)
 		return
@@ -94,18 +94,18 @@ func (h *handlers) openTunnel(w http.ResponseWriter, r *http.Request, host, name
 	}
 	// Only the address libvirt reports, only port 22.
 	if ip == "" {
-		_ = api.OpenVMTunnel409JSONResponse{Error: fmt.Sprintf("VM %s/%s has no IP address", host, name)}.VisitOpenVMTunnelResponse(w)
+		_ = api.OpenVMTunnel409JSONResponse{Code: statusCode(409), Error: fmt.Sprintf("VM %s/%s has no IP address", host, name)}.VisitOpenVMTunnelResponse(w)
 		return
 	}
 	addr := net.ParseIP(ip)
 	if addr == nil {
-		_ = api.OpenVMTunnel409JSONResponse{Error: fmt.Sprintf("VM %s/%s has no usable IP address (libvirt reported %q)", host, name, ip)}.VisitOpenVMTunnelResponse(w)
+		_ = api.OpenVMTunnel409JSONResponse{Code: statusCode(409), Error: fmt.Sprintf("VM %s/%s has no usable IP address (libvirt reported %q)", host, name, ip)}.VisitOpenVMTunnelResponse(w)
 		return
 	}
 	target := net.JoinHostPort(addr.String(), guestSSHPort)
 	guest, err := h.dialGuestSSH(r.Context(), target)
 	if err != nil {
-		_ = api.OpenVMTunnel502JSONResponse{Error: fmt.Sprintf("connect to %s/%s at %s: %v", host, name, target, err)}.VisitOpenVMTunnelResponse(w)
+		_ = api.OpenVMTunnel502JSONResponse{Code: statusCode(502), Error: fmt.Sprintf("connect to %s/%s at %s: %v", host, name, target, err)}.VisitOpenVMTunnelResponse(w)
 		return
 	}
 
@@ -113,7 +113,7 @@ func (h *handlers) openTunnel(w http.ResponseWriter, r *http.Request, host, name
 	conn, rw, err := http.NewResponseController(w).Hijack()
 	if err != nil {
 		guest.Close()
-		_ = api.OpenVMTunnel500JSONResponse{Error: "connection upgrade not supported: " + err.Error()}.VisitOpenVMTunnelResponse(w)
+		_ = api.OpenVMTunnel500JSONResponse{Code: statusCode(500), Error: "connection upgrade not supported: " + err.Error()}.VisitOpenVMTunnelResponse(w)
 		return
 	}
 	relay(conn, rw.Reader, guest)

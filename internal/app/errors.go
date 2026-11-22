@@ -17,6 +17,13 @@ const (
 	// KindUnavailable: a service the command needs (the store) is not
 	// configured or did not answer. REST 503.
 	KindUnavailable
+	// KindHostUnreachable: a configured host's daemon did not answer the
+	// call (connection refused, no route, TLS or DNS failure, a connection
+	// that broke). REST 502.
+	KindHostUnreachable
+	// KindHostTimeout: a configured host's daemon did not answer within the
+	// call's timeout. REST 504.
+	KindHostTimeout
 )
 
 // Error is the shared workflow error. CLI/TUI print Error() and Output;

@@ -66,6 +66,39 @@ port 22, hijacks the connection and relays raw bytes (`internal/server/tunnel.go
 wired through `tunnelMux`). It is still in the spec, so the exclusion register
 stays empty.
 
+## Errors (API 2.9.0)
+
+Every error body is the `Error` schema: `error` (text, for people), and
+`code`, a machine-readable reason. A client branches on `code`, never on the
+text of `error`, which may change. `code` is optional in the schema because
+an older server does not send it; this server sends it on every `Error` body.
+
+| `code` | Status | Meaning |
+|---|---|---|
+| `bad_request` | 400 and other 4xx refusals of the request | the request is wrong |
+| `unauthorized` | 401 | missing or invalid bearer token (the text is unchanged) |
+| `workstation_only` | 403 | a hypervisor refusing an operation the workstation serves |
+| `not_found` | 404 | no such host, VM, image or other object |
+| `conflict` | 409 | the object is in a state that refuses the operation |
+| `store_unavailable` | 503 | the store this operation needs did not answer or is not configured |
+| `host_unreachable` | 502 | the workstation could not reach the configured host's daemon it forwarded to (connection refused, no route, TLS failure, a connection that broke) |
+| `host_timeout` | 504 | the host's daemon did not answer in time; the operation may or may not have run |
+| `bad_gateway` | 502 | a service behind the server failed or answered badly (a guest over ssh in `execVM`) |
+| `internal` | 500 | anything else |
+
+`502` and `504` are documented on every per-host operation a workstation
+forwards to a host's daemon (`/v1/hosts/{host}/...`, except `openVMTunnel` and
+`openVMConsole`, which the workstation does not forward, `uploadImage`, which
+only a hypervisor serves, and `setVMComment`, which writes to the store).
+They are produced by the strict handler's response error handler
+(`internal/server/errors.go`): a handler returns the error it has no status of
+its own for, and one function maps it. `internal/remote` marks a call that got
+no answer as `app.KindHostUnreachable` or `app.KindHostTimeout`; a daemon that
+answered with a failure is still `app.KindBadGateway` and reaches the caller
+as before. The CLI runs `internal/app` directly and prints the error text.
+`TestForwardedOperationsReportAHostThatIsDown` drives every forwarded
+operation against a host that refuses and a host that does not answer.
+
 ## Console (WebSocket)
 
 `GET /v1/hosts/{host}/vms/{name}/console` (`openVMConsole`) and

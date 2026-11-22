@@ -908,6 +908,17 @@ as it is written, each with an `event`:
 - A dropped connection ends the create as it does for the plain JSON call. A
   VM that was already defined stays, as described under Waits at create.
 
+### REST errors (API 2.9.0)
+
+An error response is `{"error": "<text>", "code": "<code>"}`. Branch on `code`,
+never on the text: `bad_request`, `unauthorized`, `workstation_only`,
+`not_found`, `conflict`, `store_unavailable`, `host_unreachable`,
+`host_timeout`, `bad_gateway` or `internal`. When a workstation forwards an
+operation to a host's daemon and the host cannot be reached, the answer is
+`502` with `host_unreachable`; when it does not answer in time, `504` with
+`host_timeout` (the operation may or may not have run). `execVM` keeps `502`
+with `bad_gateway` for a guest that ssh cannot reach. The CLI is unchanged.
+
 ### VM identity at create
 
 Every new VM gets a random UUID and an SMBIOS serial

@@ -66,7 +66,7 @@ import (
 // ExportTemplate on the strict interface is never reached: tunnelMux serves
 // the route itself so it can stream NDJSON.
 func (h *handlers) ExportTemplate(_ context.Context, _ api.ExportTemplateRequestObject) (api.ExportTemplateResponseObject, error) {
-	return api.ExportTemplate500JSONResponse{Error: "exportTemplate streams NDJSON; served by tunnelMux"}, nil
+	return api.ExportTemplate500JSONResponse{Code: statusCode(500), Error: "exportTemplate streams NDJSON; served by tunnelMux"}, nil
 }
 
 func (t tunnelMux) ExportTemplate(w http.ResponseWriter, r *http.Request, host api.HostName, name string, params api.ExportTemplateParams) {
@@ -77,7 +77,7 @@ func (t tunnelMux) ExportTemplate(w http.ResponseWriter, r *http.Request, host a
 // GetImageBlob on the strict interface is never reached: tunnelMux serves the
 // route itself so it can stream the file.
 func (h *handlers) GetImageBlob(_ context.Context, _ api.GetImageBlobRequestObject) (api.GetImageBlobResponseObject, error) {
-	return api.GetImageBlob500JSONResponse{Error: "getImageBlob streams a file; served by tunnelMux"}, nil
+	return api.GetImageBlob500JSONResponse{Code: statusCode(500), Error: "getImageBlob streams a file; served by tunnelMux"}, nil
 }
 
 func (t tunnelMux) GetImageBlob(w http.ResponseWriter, r *http.Request, host api.HostName, name api.ImageName) {
@@ -86,7 +86,7 @@ func (t tunnelMux) GetImageBlob(w http.ResponseWriter, r *http.Request, host api
 }
 
 func writeExportStatus(w http.ResponseWriter, code int, msg string) {
-	e := api.Error{Error: msg}
+	e := errBody(code, msg)
 	switch code {
 	case http.StatusBadRequest:
 		_ = api.ExportTemplate400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(e)}.VisitExportTemplateResponse(w)
@@ -96,13 +96,17 @@ func writeExportStatus(w http.ResponseWriter, code int, msg string) {
 		_ = api.ExportTemplate404JSONResponse(e).VisitExportTemplateResponse(w)
 	case http.StatusConflict:
 		_ = api.ExportTemplate409JSONResponse(e).VisitExportTemplateResponse(w)
+	case http.StatusBadGateway:
+		_ = api.ExportTemplate502JSONResponse{HostUnreachableJSONResponse: api.HostUnreachableJSONResponse(withCode(e, api.ErrorCodeHostUnreachable))}.VisitExportTemplateResponse(w)
+	case http.StatusGatewayTimeout:
+		_ = api.ExportTemplate504JSONResponse{HostTimeoutJSONResponse: api.HostTimeoutJSONResponse(e)}.VisitExportTemplateResponse(w)
 	default:
 		_ = api.ExportTemplate500JSONResponse(e).VisitExportTemplateResponse(w)
 	}
 }
 
 func writeBlobStatus(w http.ResponseWriter, code int, msg string) {
-	e := api.Error{Error: msg}
+	e := errBody(code, msg)
 	switch code {
 	case http.StatusBadRequest:
 		_ = api.GetImageBlob400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(e)}.VisitGetImageBlobResponse(w)
@@ -112,6 +116,10 @@ func writeBlobStatus(w http.ResponseWriter, code int, msg string) {
 		_ = api.GetImageBlob404JSONResponse(e).VisitGetImageBlobResponse(w)
 	case http.StatusConflict:
 		_ = api.GetImageBlob409JSONResponse(e).VisitGetImageBlobResponse(w)
+	case http.StatusBadGateway:
+		_ = api.GetImageBlob502JSONResponse{HostUnreachableJSONResponse: api.HostUnreachableJSONResponse(withCode(e, api.ErrorCodeHostUnreachable))}.VisitGetImageBlobResponse(w)
+	case http.StatusGatewayTimeout:
+		_ = api.GetImageBlob504JSONResponse{HostTimeoutJSONResponse: api.HostTimeoutJSONResponse(e)}.VisitGetImageBlobResponse(w)
 	default:
 		_ = api.GetImageBlob500JSONResponse(e).VisitGetImageBlobResponse(w)
 	}
@@ -129,6 +137,9 @@ func statusFor(err error) int {
 		return http.StatusNotFound
 	case app.KindConflict:
 		return http.StatusConflict
+	}
+	if st := hostFailure(err); st != 0 {
+		return st
 	}
 	return http.StatusInternalServerError
 }

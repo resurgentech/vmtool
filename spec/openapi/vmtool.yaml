@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: vmtool API
-  version: 2.8.0
+  version: 2.9.0
   description: >
     HTTP surface of `vmtool server`. Spec-first: models, stdlib ServerInterface,
     embedded spec, and a test client are generated from this file. Metal and
@@ -116,6 +116,8 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/HostUnreachable' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
     post:
       operationId: createVM
       x-vmtool-workstation-only: true
@@ -181,6 +183,8 @@ paths:
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/HostUnreachable' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
         '503':
           description: A comment was given and no store is in use (comments are kept in the store); nothing was created.
           content:
@@ -202,6 +206,8 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/HostUnreachable' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
     delete:
       operationId: deleteVM
       summary: Stop and undefine a VM
@@ -216,6 +222,8 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/HostUnreachable' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
   /v1/hosts/{host}/vms/{name}/start:
     parameters:
       - $ref: '#/components/parameters/HostName'
@@ -232,6 +240,8 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/HostUnreachable' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
   /v1/hosts/{host}/vms/{name}/stop:
     parameters:
       - $ref: '#/components/parameters/HostName'
@@ -248,6 +258,8 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/HostUnreachable' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
   /v1/hosts/{host}/vms/{name}/resume:
     parameters:
       - $ref: '#/components/parameters/HostName'
@@ -264,6 +276,8 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/HostUnreachable' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
   /v1/hosts/{host}/vms/{name}/poweroff:
     parameters:
       - $ref: '#/components/parameters/HostName'
@@ -280,6 +294,8 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/HostUnreachable' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
   /v1/hosts/{host}/vms/{name}/reboot:
     parameters:
       - $ref: '#/components/parameters/HostName'
@@ -300,6 +316,8 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/HostUnreachable' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
   /v1/hosts/{host}/vms/{name}/autostart:
     parameters:
       - $ref: '#/components/parameters/HostName'
@@ -322,6 +340,8 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/HostUnreachable' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
   /v1/hosts/{host}/vms/{name}/comment:
     parameters:
       - $ref: '#/components/parameters/HostName'
@@ -361,6 +381,8 @@ paths:
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/HostUnreachable' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
         '503':
           description: No store is configured, or the store did not answer.
           content:
@@ -408,7 +430,15 @@ paths:
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
-        '502': { $ref: '#/components/responses/Error' }
+        '502':
+          description: >
+            The guest could not be reached over ssh (code `bad_gateway`), or
+            the host that holds the VM could not be reached (code
+            `host_unreachable`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
   /v1/hosts/{host}/vms/{name}/tunnel:
     parameters:
       - $ref: '#/components/parameters/HostName'
@@ -597,6 +627,8 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PlaybookResult' }
+        '502': { $ref: '#/components/responses/HostUnreachable' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
   /v1/hosts/{host}/vms/{name}/migrate-disk:
     parameters:
       - $ref: '#/components/parameters/HostName'
@@ -619,6 +651,8 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/HostUnreachable' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
   /v1/hosts/{host}/vms/{name}/resize-disk:
     parameters:
       - $ref: '#/components/parameters/HostName'
@@ -646,6 +680,8 @@ paths:
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/HostUnreachable' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
   /v1/hosts/{host}/vms/{name}/add-disk:
     parameters:
       - $ref: '#/components/parameters/HostName'
@@ -677,6 +713,8 @@ paths:
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/HostUnreachable' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
   /v1/hosts/{host}/networks:
     parameters:
       - $ref: '#/components/parameters/HostName'
@@ -692,6 +730,8 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/HostUnreachable' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
     post:
       operationId: createNetwork
       summary: Create a named vmtool network on this host
@@ -732,6 +772,8 @@ paths:
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/HostUnreachable' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
   /v1/hosts/{host}/networks/{name}:
     parameters:
       - $ref: '#/components/parameters/HostName'
@@ -755,6 +797,8 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/HostUnreachable' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
     delete:
       operationId: deleteNetwork
       summary: Destroy and undefine a vmtool network
@@ -768,6 +812,8 @@ paths:
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/HostUnreachable' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
   /v1/hosts/{host}/networks/{name}/reservations:
     parameters:
       - $ref: '#/components/parameters/HostName'
@@ -809,6 +855,8 @@ paths:
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/HostUnreachable' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
   /v1/hosts/{host}/networks/{name}/reservations/{mac}:
     parameters:
       - $ref: '#/components/parameters/HostName'
@@ -833,6 +881,8 @@ paths:
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/HostUnreachable' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
   /v1/hosts/{host}/networks/{name}/peers:
     parameters:
       - $ref: '#/components/parameters/HostName'
@@ -867,6 +917,8 @@ paths:
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/HostUnreachable' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
     delete:
       operationId: deleteNetworkPeers
       summary: Remove this host's link of a vmtool network
@@ -880,6 +932,8 @@ paths:
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/HostUnreachable' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
   /v1/hosts/{host}/underlay:
     parameters:
       - $ref: '#/components/parameters/HostName'
@@ -907,6 +961,8 @@ paths:
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/HostUnreachable' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
   /v1/hosts/{host}/bridges:
     parameters:
       - $ref: '#/components/parameters/HostName'
@@ -922,6 +978,8 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/HostUnreachable' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
   /v1/hosts/{host}/images:
     parameters:
       - $ref: '#/components/parameters/HostName'
@@ -941,6 +999,8 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/HostUnreachable' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
   /v1/hosts/{host}/images/{name}:
     parameters:
       - $ref: '#/components/parameters/HostName'
@@ -964,6 +1024,8 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/HostUnreachable' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
     put:
       operationId: uploadImage
       summary: Store a base image in a hypervisor's image cache
@@ -1025,6 +1087,8 @@ paths:
         '409': { $ref: '#/components/responses/Error' }
         '411': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/HostUnreachable' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
   /v1/hosts/{host}/images/{name}/fetch:
     parameters:
       - $ref: '#/components/parameters/HostName'
@@ -1081,6 +1145,8 @@ paths:
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/HostUnreachable' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
   /v1/hosts/{host}/images/{name}/manifest:
     parameters:
       - $ref: '#/components/parameters/HostName'
@@ -1108,6 +1174,8 @@ paths:
         '403': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/HostUnreachable' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
   /v1/hosts/{host}/images/{name}/blob:
     parameters:
       - $ref: '#/components/parameters/HostName'
@@ -1172,6 +1240,8 @@ paths:
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/HostUnreachable' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
   /v1/hosts/{host}/pools:
     parameters:
       - $ref: '#/components/parameters/HostName'
@@ -1189,6 +1259,8 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/HostUnreachable' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
     post:
       operationId: createPool
       summary: Create a directory storage pool
@@ -1207,6 +1279,8 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/HostUnreachable' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
   /v1/hosts/{host}/templates:
     parameters:
       - $ref: '#/components/parameters/HostName'
@@ -1232,6 +1306,8 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/HostUnreachable' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
     post:
       operationId: createTemplate
       summary: Build an image template ahead of the first create, or save a VM as a template (API 2.4.0)
@@ -1279,6 +1355,8 @@ paths:
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/HostUnreachable' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
   /v1/hosts/{host}/templates/{name}:
     parameters:
       - $ref: '#/components/parameters/HostName'
@@ -1315,6 +1393,8 @@ paths:
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/HostUnreachable' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
   /v1/hosts/{host}/templates/{name}/export:
     parameters:
       - $ref: '#/components/parameters/HostName'
@@ -1378,6 +1458,8 @@ paths:
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/HostUnreachable' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
   /v1/hosts/{host}/images/{name}/path:
     parameters:
       - $ref: '#/components/parameters/HostName'
@@ -1398,6 +1480,8 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/HostUnreachable' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
   /v1/hosts/{host}/volumes:
     parameters:
       - $ref: '#/components/parameters/HostName'
@@ -1428,6 +1512,8 @@ paths:
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/HostUnreachable' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
   /v1/hosts/{host}/volumes/clone:
     parameters:
       - $ref: '#/components/parameters/HostName'
@@ -1464,6 +1550,8 @@ paths:
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/HostUnreachable' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
   /v1/hosts/{host}/volumes/resize:
     parameters:
       - $ref: '#/components/parameters/HostName'
@@ -1485,6 +1573,8 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/HostUnreachable' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
   /v1/hosts/{host}/vms/{name}/definition:
     parameters:
       - $ref: '#/components/parameters/HostName'
@@ -1512,6 +1602,8 @@ paths:
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/HostUnreachable' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
     delete:
       operationId: deleteVMDefinition
       summary: Force off and undefine a VM (raw)
@@ -1530,6 +1622,8 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/HostUnreachable' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
   /v1/hosts/{host}/vms/{name}/interfaces:
     parameters:
       - $ref: '#/components/parameters/HostName'
@@ -1563,6 +1657,8 @@ paths:
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/HostUnreachable' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
   /v1/hosts/{host}/vms/{name}/interfaces/{mac}:
     parameters:
       - $ref: '#/components/parameters/HostName'
@@ -1586,6 +1682,8 @@ paths:
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/HostUnreachable' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
   /v1/hosts/{host}/vms/{name}/wait-ip:
     parameters:
       - $ref: '#/components/parameters/HostName'
@@ -1613,6 +1711,8 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/HostUnreachable' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
   /v1/hosts/{host}/vms/{name}/resize-volume:
     parameters:
       - $ref: '#/components/parameters/HostName'
@@ -1637,6 +1737,8 @@ paths:
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/HostUnreachable' }
+        '504': { $ref: '#/components/responses/HostTimeout' }
   /v1/playbooks:
     get:
       operationId: listPlaybooks
@@ -2024,6 +2126,22 @@ components:
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
+    HostUnreachable:
+      description: >
+        The workstation forwarded the operation to a configured host's daemon
+        and could not reach it (connection refused, no route, TLS or DNS
+        failure). Body code `host_unreachable`.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    HostTimeout:
+      description: >
+        The workstation forwarded the operation to a configured host's daemon
+        and got no answer within its timeout. Body code `host_timeout`. The
+        operation may or may not have run on the host.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
     Unauthorized:
       description: >
         Missing or invalid bearer token. Sent with `WWW-Authenticate: Bearer`.
@@ -2040,6 +2158,29 @@ components:
       required: [error]
       properties:
         error: { type: string }
+        code:
+          type: string
+          enum:
+            - not_found
+            - conflict
+            - bad_request
+            - unauthorized
+            - workstation_only
+            - store_unavailable
+            - host_unreachable
+            - host_timeout
+            - bad_gateway
+            - internal
+          description: >
+            A machine-readable reason. Clients branch on `code`, never on the
+            text of `error`, which may change. `host_unreachable` (502) and
+            `host_timeout` (504) mean the workstation could not reach, or got
+            no answer from, the configured host's daemon it forwarded to.
+            `bad_gateway` is any other failure of a service behind the server
+            (a guest over ssh, a daemon that answered badly, an image source).
+            `store_unavailable` (503) is the vmtool store not answering.
+            `workstation_only` (403) is a hypervisor refusing an operation the
+            workstation serves. Optional: older servers do not send it.
         vm:
           $ref: '#/components/schemas/VMInfo'
         output:

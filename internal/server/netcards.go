@@ -37,7 +37,7 @@ func reservationsToAPI(in []vmtool.Reservation) *[]api.Reservation {
 
 func (h *handlers) CreateReservation(ctx context.Context, req api.CreateReservationRequestObject) (api.CreateReservationResponseObject, error) {
 	if req.Body == nil {
-		return api.CreateReservation400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: "a body with a vm is required"}}, nil
+		return api.CreateReservation400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Code: statusCode(400), Error: "a body with a vm is required"}}, nil
 	}
 	v, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
 		return h.svc.AddReservation(ctx, m, req.Name, req.Body.Vm, derefStr(req.Body.Mac), derefStr(req.Body.Ip))
@@ -51,7 +51,7 @@ func (h *handlers) CreateReservation(ctx context.Context, req api.CreateReservat
 		case app.KindConflict:
 			return api.CreateReservation409JSONResponse(apiErr(err)), nil
 		}
-		return api.CreateReservation500JSONResponse(apiErr(err)), nil
+		return nil, err
 	}
 	r := v.(*vmtool.Reservation)
 	return api.CreateReservation201JSONResponse(api.Reservation{Network: r.Network, Mac: r.MAC, Ip: r.IP, Name: r.Name}), nil
@@ -68,14 +68,14 @@ func (h *handlers) DeleteReservation(ctx context.Context, req api.DeleteReservat
 		case app.KindConflict, app.KindInvalid:
 			return api.DeleteReservation409JSONResponse(apiErr(err)), nil
 		}
-		return api.DeleteReservation500JSONResponse(apiErr(err)), nil
+		return nil, err
 	}
 	return api.DeleteReservation204Response{}, nil
 }
 
 func (h *handlers) AttachInterface(ctx context.Context, req api.AttachInterfaceRequestObject) (api.AttachInterfaceResponseObject, error) {
 	if req.Body == nil {
-		return api.AttachInterface400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: "a body with a network and a mac is required"}}, nil
+		return api.AttachInterface400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Code: statusCode(400), Error: "a body with a network and a mac is required"}}, nil
 	}
 	v, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
 		return h.svc.AttachInterface(ctx, m, req.Name, req.Body.Network, req.Body.Mac)
@@ -89,7 +89,7 @@ func (h *handlers) AttachInterface(ctx context.Context, req api.AttachInterfaceR
 		case app.KindConflict:
 			return api.AttachInterface409JSONResponse(apiErr(err)), nil
 		}
-		return api.AttachInterface500JSONResponse(apiErr(err)), nil
+		return nil, err
 	}
 	a := v.(*vmtool.NetAttachment)
 	return api.AttachInterface201JSONResponse(api.NetworkAttachment{Network: a.Network, Mac: a.MAC, Ip: a.IP}), nil
@@ -106,7 +106,7 @@ func (h *handlers) DetachInterface(ctx context.Context, req api.DetachInterfaceR
 		case app.KindConflict, app.KindInvalid:
 			return api.DetachInterface409JSONResponse(apiErr(err)), nil
 		}
-		return api.DetachInterface500JSONResponse(apiErr(err)), nil
+		return nil, err
 	}
 	return api.DetachInterface204Response{}, nil
 }

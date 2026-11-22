@@ -155,6 +155,8 @@ func toAPI(info *vmtool.VMInfo) api.VMInfo {
 
 func apiErr(err error) api.Error {
 	out := api.Error{Error: err.Error()}
+	c := codeForKind(kindOf(err))
+	out.Code = &c
 	var ae *app.Error
 	if app.AsError(err, &ae) {
 		if ae.Output != "" {
@@ -210,7 +212,7 @@ func (h *handlers) ListVMs(ctx context.Context, req api.ListVMsRequestObject) (a
 		if kindOf(err) == app.KindNotFound {
 			return api.ListVMs404JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
 		}
-		return api.ListVMs500JSONResponse(apiErr(err)), nil
+		return nil, err
 	}
 	vms := v.([]vmtool.VMInfo)
 	out := make([]api.VMInfo, len(vms))
@@ -228,14 +230,14 @@ func (h *handlers) GetVM(ctx context.Context, req api.GetVMRequestObject) (api.G
 		if kindOf(err) == app.KindNotFound {
 			return api.GetVM404JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
 		}
-		return api.GetVM500JSONResponse(apiErr(err)), nil
+		return nil, err
 	}
 	return api.GetVM200JSONResponse(toAPI(v.(*vmtool.VMInfo))), nil
 }
 
 func (h *handlers) CreateVM(ctx context.Context, req api.CreateVMRequestObject) (api.CreateVMResponseObject, error) {
 	if req.Body == nil {
-		return api.CreateVM400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: "request body required"}}, nil
+		return api.CreateVM400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Code: statusCode(400), Error: "request body required"}}, nil
 	}
 	b := req.Body
 	in := app.CreateVMInput{
@@ -268,7 +270,7 @@ func (h *handlers) CreateVM(ctx context.Context, req api.CreateVMRequestObject) 
 	}
 	if b.ExtraDisk != nil {
 		if b.ExtraDisk.Size < 1 {
-			return api.CreateVM400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: "extra_disk.size must be > 0"}}, nil
+			return api.CreateVM400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Code: statusCode(400), Error: "extra_disk.size must be > 0"}}, nil
 		}
 		in.ExtraDiskSizeGB = uint(b.ExtraDisk.Size)
 		in.ExtraDiskPool = derefStr(b.ExtraDisk.Pool)
@@ -314,6 +316,9 @@ func (h *handlers) CreateVM(ctx context.Context, req api.CreateVMRequestObject) 
 			return api.CreateVM404JSONResponse(apiErr(err)), nil
 		case app.KindConflict:
 			return api.CreateVM409JSONResponse(apiErr(err)), nil
+		case app.KindHostUnreachable, app.KindHostTimeout:
+			// the host did not answer: whether the VM exists is not known, so none is reported
+			return nil, err
 		case app.KindUnavailable:
 			// a comment with no store in use, refused before anything is made
 			return api.CreateVM503JSONResponse(apiErr(err)), nil
@@ -333,7 +338,7 @@ func (h *handlers) DeleteVM(ctx context.Context, req api.DeleteVMRequestObject) 
 		if kindOf(err) == app.KindNotFound {
 			return api.DeleteVM404JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
 		}
-		return api.DeleteVM500JSONResponse(apiErr(err)), nil
+		return nil, err
 	}
 	return api.DeleteVM204Response{}, nil
 }
@@ -346,7 +351,7 @@ func (h *handlers) StartVM(ctx context.Context, req api.StartVMRequestObject) (a
 		if kindOf(err) == app.KindNotFound {
 			return api.StartVM404JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
 		}
-		return api.StartVM500JSONResponse(apiErr(err)), nil
+		return nil, err
 	}
 	return api.StartVM200JSONResponse(toAPI(v.(*vmtool.VMInfo))), nil
 }
@@ -359,7 +364,7 @@ func (h *handlers) StopVM(ctx context.Context, req api.StopVMRequestObject) (api
 		if kindOf(err) == app.KindNotFound {
 			return api.StopVM404JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
 		}
-		return api.StopVM500JSONResponse(apiErr(err)), nil
+		return nil, err
 	}
 	return api.StopVM200JSONResponse(toAPI(v.(*vmtool.VMInfo))), nil
 }
@@ -372,7 +377,7 @@ func (h *handlers) ResumeVM(ctx context.Context, req api.ResumeVMRequestObject) 
 		if kindOf(err) == app.KindNotFound {
 			return api.ResumeVM404JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
 		}
-		return api.ResumeVM500JSONResponse(apiErr(err)), nil
+		return nil, err
 	}
 	return api.ResumeVM200JSONResponse(toAPI(v.(*vmtool.VMInfo))), nil
 }
@@ -385,7 +390,7 @@ func (h *handlers) PoweroffVM(ctx context.Context, req api.PoweroffVMRequestObje
 		if kindOf(err) == app.KindNotFound {
 			return api.PoweroffVM404JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
 		}
-		return api.PoweroffVM500JSONResponse(apiErr(err)), nil
+		return nil, err
 	}
 	return api.PoweroffVM200JSONResponse(toAPI(v.(*vmtool.VMInfo))), nil
 }
@@ -398,14 +403,14 @@ func (h *handlers) RebootVM(ctx context.Context, req api.RebootVMRequestObject) 
 		if kindOf(err) == app.KindNotFound {
 			return api.RebootVM404JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
 		}
-		return api.RebootVM500JSONResponse(apiErr(err)), nil
+		return nil, err
 	}
 	return api.RebootVM200JSONResponse(toAPI(v.(*vmtool.VMInfo))), nil
 }
 
 func (h *handlers) SetAutostart(ctx context.Context, req api.SetAutostartRequestObject) (api.SetAutostartResponseObject, error) {
 	if req.Body == nil {
-		return api.SetAutostart400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: "request body required"}}, nil
+		return api.SetAutostart400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Code: statusCode(400), Error: "request body required"}}, nil
 	}
 	v, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
 		return h.svcFor(ctx).SetAutostart(ctx, m, app.VMRef{Host: req.Host, Name: req.Name}, req.Body.Enabled)
@@ -414,7 +419,7 @@ func (h *handlers) SetAutostart(ctx context.Context, req api.SetAutostartRequest
 		if kindOf(err) == app.KindNotFound {
 			return api.SetAutostart404JSONResponse(apiErr(err)), nil
 		}
-		return api.SetAutostart500JSONResponse(apiErr(err)), nil
+		return nil, err
 	}
 	return api.SetAutostart200JSONResponse(toAPI(v.(*vmtool.VMInfo))), nil
 }
@@ -425,7 +430,7 @@ func (h *handlers) SetAutostart(ctx context.Context, req api.SetAutostartRequest
 // row is 404; a gone row is 409.
 func (h *handlers) SetVMComment(ctx context.Context, req api.SetVMCommentRequestObject) (api.SetVMCommentResponseObject, error) {
 	if req.Body == nil {
-		return api.SetVMComment400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: "request body required"}}, nil
+		return api.SetVMComment400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Code: statusCode(400), Error: "request body required"}}, nil
 	}
 	ref := app.VMRef{Host: req.Host, Name: req.Name}
 	n, err := h.svcFor(ctx).SetComment(ctx, ref, req.Body.Comment)
@@ -440,7 +445,7 @@ func (h *handlers) SetVMComment(ctx context.Context, req api.SetVMCommentRequest
 		case app.KindUnavailable:
 			return api.SetVMComment503JSONResponse(apiErr(err)), nil
 		}
-		return api.SetVMComment500JSONResponse(apiErr(err)), nil
+		return nil, err
 	}
 	return api.SetVMComment200JSONResponse(toAPINotes(ref, n)), nil
 }
@@ -468,7 +473,7 @@ func stdinOf(s *string) string {
 
 func (h *handlers) ExecVM(ctx context.Context, req api.ExecVMRequestObject) (api.ExecVMResponseObject, error) {
 	if req.Body == nil || len(req.Body.Command) == 0 {
-		return api.ExecVM400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: "command is required"}}, nil
+		return api.ExecVM400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Code: statusCode(400), Error: "command is required"}}, nil
 	}
 	v, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
 		return h.guestSvc(ctx).ExecVM(ctx, m, app.VMRef{Host: req.Host, Name: req.Name}, req.Body.Command, stdinOf(req.Body.Stdin))
@@ -484,7 +489,7 @@ func (h *handlers) ExecVM(ctx context.Context, req api.ExecVMRequestObject) (api
 		case app.KindBadGateway:
 			return api.ExecVM502JSONResponse(apiErr(err)), nil
 		default:
-			return api.ExecVM500JSONResponse(apiErr(err)), nil
+			return nil, err
 		}
 	}
 	res := v.(*app.ExecResult)
@@ -493,7 +498,7 @@ func (h *handlers) ExecVM(ctx context.Context, req api.ExecVMRequestObject) (api
 
 func (h *handlers) RunPlaybook(ctx context.Context, req api.RunPlaybookRequestObject) (api.RunPlaybookResponseObject, error) {
 	if req.Body == nil || req.Body.Playbook == "" {
-		return api.RunPlaybook400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: "playbook is required"}}, nil
+		return api.RunPlaybook400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Code: statusCode(400), Error: "playbook is required"}}, nil
 	}
 	v, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
 		var extra map[string]string
@@ -515,6 +520,8 @@ func (h *handlers) RunPlaybook(ctx context.Context, req api.RunPlaybookRequestOb
 			return api.RunPlaybook404JSONResponse(apiErr(err)), nil
 		case app.KindConflict:
 			return api.RunPlaybook409JSONResponse(apiErr(err)), nil
+		case app.KindHostUnreachable, app.KindHostTimeout:
+			return nil, err
 		default:
 			msg := err.Error()
 			return api.RunPlaybook500JSONResponse{Output: out, Error: &msg}, nil
@@ -525,7 +532,7 @@ func (h *handlers) RunPlaybook(ctx context.Context, req api.RunPlaybookRequestOb
 
 func (h *handlers) MigrateDisk(ctx context.Context, req api.MigrateDiskRequestObject) (api.MigrateDiskResponseObject, error) {
 	if req.Body == nil || req.Body.Pool == "" {
-		return api.MigrateDisk400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: "pool is required"}}, nil
+		return api.MigrateDisk400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Code: statusCode(400), Error: "pool is required"}}, nil
 	}
 	v, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
 		return h.svcFor(ctx).MigrateDisk(ctx, m, app.VMRef{Host: req.Host, Name: req.Name}, req.Body.Pool)
@@ -537,14 +544,14 @@ func (h *handlers) MigrateDisk(ctx context.Context, req api.MigrateDiskRequestOb
 		if kindOf(err) == app.KindInvalid {
 			return api.MigrateDisk400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
 		}
-		return api.MigrateDisk500JSONResponse(apiErr(err)), nil
+		return nil, err
 	}
 	return api.MigrateDisk200JSONResponse(toAPI(v.(*vmtool.VMInfo))), nil
 }
 
 func (h *handlers) ResizeDisk(ctx context.Context, req api.ResizeDiskRequestObject) (api.ResizeDiskResponseObject, error) {
 	if req.Body == nil || req.Body.Size < 1 {
-		return api.ResizeDisk400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: "size must be > 0"}}, nil
+		return api.ResizeDisk400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Code: statusCode(400), Error: "size must be > 0"}}, nil
 	}
 	v, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
 		return h.guestSvc(ctx).ResizeDisk(ctx, m, app.VMRef{Host: req.Host, Name: req.Name}, uint(req.Body.Size), vmtool.DefaultAuth())
@@ -559,7 +566,7 @@ func (h *handlers) ResizeDisk(ctx context.Context, req api.ResizeDiskRequestObje
 		if primKind(err) == app.KindConflict { // a thin pool without room
 			return api.ResizeDisk409JSONResponse(apiErr(err)), nil
 		}
-		return api.ResizeDisk500JSONResponse(apiErr(err)), nil
+		return nil, err
 	}
 	res := v.(*app.ResizeResult)
 	out := api.ResizeDiskResult{Vm: toAPI(&res.VM), FilesystemGrown: res.FilesystemGrown}
@@ -571,7 +578,7 @@ func (h *handlers) ResizeDisk(ctx context.Context, req api.ResizeDiskRequestObje
 
 func (h *handlers) AddDisk(ctx context.Context, req api.AddDiskRequestObject) (api.AddDiskResponseObject, error) {
 	if req.Body == nil || req.Body.Size < 1 {
-		return api.AddDisk400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: "size must be > 0"}}, nil
+		return api.AddDisk400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Code: statusCode(400), Error: "size must be > 0"}}, nil
 	}
 	v, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
 		return h.svcFor(ctx).AddDisk(ctx, m, app.VMRef{Host: req.Host, Name: req.Name}, uint(req.Body.Size), derefStr(req.Body.Pool))
@@ -586,7 +593,7 @@ func (h *handlers) AddDisk(ctx context.Context, req api.AddDiskRequestObject) (a
 		if primKind(err) == app.KindConflict { // a thin pool without room
 			return api.AddDisk409JSONResponse(apiErr(err)), nil
 		}
-		return api.AddDisk500JSONResponse(apiErr(err)), nil
+		return nil, err
 	}
 	res := v.(*app.AddDiskResult)
 	return api.AddDisk200JSONResponse{Vm: toAPI(&res.VM), Path: res.Path, Target: res.Target}, nil
@@ -600,7 +607,7 @@ func (h *handlers) ListNetworks(ctx context.Context, req api.ListNetworksRequest
 		if kindOf(err) == app.KindNotFound {
 			return api.ListNetworks404JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
 		}
-		return api.ListNetworks500JSONResponse(apiErr(err)), nil
+		return nil, err
 	}
 	return api.ListNetworks200JSONResponse(v.([]string)), nil
 }
@@ -613,7 +620,7 @@ func (h *handlers) ListBridges(ctx context.Context, req api.ListBridgesRequestOb
 		if kindOf(err) == app.KindNotFound {
 			return api.ListBridges404JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
 		}
-		return api.ListBridges500JSONResponse(apiErr(err)), nil
+		return nil, err
 	}
 	return api.ListBridges200JSONResponse(v.([]string)), nil
 }
@@ -626,7 +633,7 @@ func (h *handlers) ListImages(ctx context.Context, req api.ListImagesRequestObje
 		if kindOf(err) == app.KindNotFound {
 			return api.ListImages404JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
 		}
-		return api.ListImages500JSONResponse(apiErr(err)), nil
+		return nil, err
 	}
 	return api.ListImages200JSONResponse(v.(map[string][]string)), nil
 }
@@ -670,7 +677,7 @@ func (h *handlers) DeleteImage(ctx context.Context, req api.DeleteImageRequestOb
 		if kindOf(err) == app.KindNotFound {
 			return api.DeleteImage404JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
 		}
-		return api.DeleteImage500JSONResponse(apiErr(err)), nil
+		return nil, err
 	}
 	return api.DeleteImage204Response{}, nil
 }
@@ -683,7 +690,7 @@ func (h *handlers) ListPools(ctx context.Context, req api.ListPoolsRequestObject
 		if kindOf(err) == app.KindNotFound {
 			return api.ListPools404JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
 		}
-		return api.ListPools500JSONResponse(apiErr(err)), nil
+		return nil, err
 	}
 	pools := v.([]vmtool.PoolInfo)
 	out := make([]api.PoolInfo, len(pools))
@@ -697,7 +704,7 @@ func (h *handlers) ListPools(ctx context.Context, req api.ListPoolsRequestObject
 
 func (h *handlers) CreatePool(ctx context.Context, req api.CreatePoolRequestObject) (api.CreatePoolResponseObject, error) {
 	if req.Body == nil || req.Body.Name == "" || req.Body.Path == "" {
-		return api.CreatePool400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: "name and path are required"}}, nil
+		return api.CreatePool400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Code: statusCode(400), Error: "name and path are required"}}, nil
 	}
 	_, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
 		return nil, h.svc.CreatePool(ctx, m, req.Body.Name, req.Body.Path)
@@ -709,7 +716,7 @@ func (h *handlers) CreatePool(ctx context.Context, req api.CreatePoolRequestObje
 		if kindOf(err) == app.KindNotFound {
 			return api.CreatePool404JSONResponse(apiErr(err)), nil
 		}
-		return api.CreatePool500JSONResponse(apiErr(err)), nil
+		return nil, err
 	}
 	return api.CreatePool201JSONResponse{Name: req.Body.Name, Path: req.Body.Path}, nil
 }
@@ -717,7 +724,7 @@ func (h *handlers) CreatePool(ctx context.Context, req api.CreatePoolRequestObje
 func (h *handlers) ListPlaybooks(_ context.Context, _ api.ListPlaybooksRequestObject) (api.ListPlaybooksResponseObject, error) {
 	pbs, err := h.svc.ListPlaybooks()
 	if err != nil {
-		return api.ListPlaybooks500JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
+		return nil, err
 	}
 	return api.ListPlaybooks200JSONResponse(pbs), nil
 }

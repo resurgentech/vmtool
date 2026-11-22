@@ -87,7 +87,7 @@ type imageFetcher interface {
 // FetchImage on the strict interface is never reached: tunnelMux serves the
 // route itself so it can stream NDJSON.
 func (h *handlers) FetchImage(_ context.Context, _ api.FetchImageRequestObject) (api.FetchImageResponseObject, error) {
-	return api.FetchImage500JSONResponse{Error: "fetchImage streams NDJSON; served by tunnelMux"}, nil
+	return api.FetchImage500JSONResponse{Code: statusCode(500), Error: "fetchImage streams NDJSON; served by tunnelMux"}, nil
 }
 
 func (t tunnelMux) FetchImage(w http.ResponseWriter, r *http.Request, host api.HostName, name api.ImageName) {
@@ -97,7 +97,7 @@ func (t tunnelMux) FetchImage(w http.ResponseWriter, r *http.Request, host api.H
 
 // writeStatus answers a refusal before the stream as the operation's JSON.
 func writeFetchStatus(w http.ResponseWriter, code int, msg string) {
-	e := api.Error{Error: msg}
+	e := errBody(code, msg)
 	switch code {
 	case http.StatusBadRequest:
 		_ = api.FetchImage400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(e)}.VisitFetchImageResponse(w)
@@ -107,6 +107,10 @@ func writeFetchStatus(w http.ResponseWriter, code int, msg string) {
 		_ = api.FetchImage404JSONResponse(e).VisitFetchImageResponse(w)
 	case http.StatusConflict:
 		_ = api.FetchImage409JSONResponse(e).VisitFetchImageResponse(w)
+	case http.StatusBadGateway:
+		_ = api.FetchImage502JSONResponse{HostUnreachableJSONResponse: api.HostUnreachableJSONResponse(withCode(e, api.ErrorCodeHostUnreachable))}.VisitFetchImageResponse(w)
+	case http.StatusGatewayTimeout:
+		_ = api.FetchImage504JSONResponse{HostTimeoutJSONResponse: api.HostTimeoutJSONResponse(e)}.VisitFetchImageResponse(w)
 	default:
 		_ = api.FetchImage500JSONResponse(e).VisitFetchImageResponse(w)
 	}
@@ -427,6 +431,12 @@ func (h *handlers) forwardFetch(w http.ResponseWriter, r *http.Request, host, na
 		return
 	}
 	msg := scrubTicket(err.Error(), req.Ticket)
+	if st0 := hostFailure(err); st0 != 0 && !st.started {
+		// the host did not answer and no line was sent: a status, not a line
+		slog.Warn("fetchImage forward", "image", name, "host", host, "err", msg)
+		writeFetchStatus(w, st0, msg)
+		return
+	}
 	var fe *remote.FetchError
 	if st.started || !errors.As(err, &fe) && !isStatusErr(err) {
 		// The stream began (or the call never got an answer): the failure is a line.

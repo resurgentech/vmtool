@@ -44,7 +44,7 @@ func (h *handlers) ListTemplates(ctx context.Context, req api.ListTemplatesReque
 		if primKind(err) == app.KindNotFound {
 			return api.ListTemplates404JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
 		}
-		return api.ListTemplates500JSONResponse(apiErr(err)), nil
+		return nil, err
 	}
 	ts := v.([]app.TemplateInfo)
 	out := make([]api.TemplateInfo, len(ts))
@@ -77,7 +77,7 @@ func (h *handlers) CreateTemplate(ctx context.Context, req api.CreateTemplateReq
 		bad = errors.New("name and replace go with from_vm")
 	}
 	if bad != nil {
-		return api.CreateTemplate400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: bad.Error()}}, nil
+		return api.CreateTemplate400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Code: statusCode(400), Error: bad.Error()}}, nil
 	}
 	save := derefStr(b.FromVm) != ""
 	v, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
@@ -96,7 +96,7 @@ func (h *handlers) CreateTemplate(ctx context.Context, req api.CreateTemplateReq
 		case app.KindConflict:
 			return api.CreateTemplate409JSONResponse(apiErr(err)), nil
 		default:
-			return api.CreateTemplate500JSONResponse(apiErr(err)), nil
+			return nil, err
 		}
 	}
 	if st, ok := v.(app.SavedTemplate); ok {
@@ -135,7 +135,7 @@ func (h *handlers) DeleteTemplate(ctx context.Context, req api.DeleteTemplateReq
 		bad = fmt.Errorf("pool contains invalid characters")
 	}
 	if bad != nil {
-		return api.DeleteTemplate400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: bad.Error()}}, nil
+		return api.DeleteTemplate400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Code: statusCode(400), Error: bad.Error()}}, nil
 	}
 	v, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
 		return h.svc.DeleteTemplate(ctx, m, req.Name, pool)
@@ -149,7 +149,7 @@ func (h *handlers) DeleteTemplate(ctx context.Context, req api.DeleteTemplateReq
 		case app.KindConflict:
 			return api.DeleteTemplate409JSONResponse(apiErr(err)), nil
 		default:
-			return api.DeleteTemplate500JSONResponse(apiErr(err)), nil
+			return nil, err
 		}
 	}
 	return api.DeleteTemplate200JSONResponse(toAPITemplate(v.(app.TemplateInfo))), nil

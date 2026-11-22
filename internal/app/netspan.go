@@ -695,7 +695,7 @@ type DeleteNetworkResult struct {
 // failed or timed out), as opposed to one that answered with a refusal.
 func hostSilent(err error) bool {
 	var ae *Error
-	return AsError(err, &ae) && ae.Kind == KindBadGateway
+	return AsError(err, &ae) && (ae.Kind == KindHostUnreachable || ae.Kind == KindHostTimeout)
 }
 
 // deleteStop is a refusal that stops the delete part way: it keeps the kind of

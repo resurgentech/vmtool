@@ -96,5 +96,5 @@ func unauthorized(w http.ResponseWriter) {
 	w.Header().Set("WWW-Authenticate", "Bearer")
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusUnauthorized)
-	_ = json.NewEncoder(w).Encode(api.Error{Error: "unauthorized: missing or invalid bearer token"})
+	_ = json.NewEncoder(w).Encode(errBody(http.StatusUnauthorized, "unauthorized: missing or invalid bearer token"))
 }

@@ -218,7 +218,7 @@ func TestTimeouts(t *testing.T) {
 		t.Errorf("List took %s", d)
 	}
 	var ae *app.Error
-	if !app.AsError(err, &ae) || ae.Kind != app.KindBadGateway {
+	if !app.AsError(err, &ae) || ae.Kind != app.KindHostTimeout {
 		t.Errorf("timeout kind: %v", err)
 	}
 

@@ -50,7 +50,7 @@ func netToAPI(n *vmtool.NetworkInfo) api.NetworkInfo {
 
 func (h *handlers) CreateNetwork(ctx context.Context, req api.CreateNetworkRequestObject) (api.CreateNetworkResponseObject, error) {
 	if req.Body == nil {
-		return api.CreateNetwork400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: "a body with a name is required"}}, nil
+		return api.CreateNetwork400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Code: statusCode(400), Error: "a body with a name is required"}}, nil
 	}
 	v, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
 		// A primitive: the number, when given, is the caller's (the store's
@@ -85,7 +85,7 @@ func (h *handlers) CreateNetwork(ctx context.Context, req api.CreateNetworkReque
 		case app.KindConflict:
 			return api.CreateNetwork409JSONResponse(apiErr(err)), nil
 		}
-		return api.CreateNetwork500JSONResponse(apiErr(err)), nil
+		return nil, err
 	}
 	return api.CreateNetwork201JSONResponse(netToAPI(v.(*vmtool.NetworkInfo))), nil
 }
@@ -98,7 +98,7 @@ func (h *handlers) GetNetwork(ctx context.Context, req api.GetNetworkRequestObje
 		if kindOf(err) == app.KindNotFound {
 			return api.GetNetwork404JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
 		}
-		return api.GetNetwork500JSONResponse(apiErr(err)), nil
+		return nil, err
 	}
 	return api.GetNetwork200JSONResponse(netToAPI(v.(*vmtool.NetworkInfo))), nil
 }
@@ -114,14 +114,14 @@ func (h *handlers) DeleteNetwork(ctx context.Context, req api.DeleteNetworkReque
 		case app.KindConflict:
 			return api.DeleteNetwork409JSONResponse(apiErr(err)), nil
 		}
-		return api.DeleteNetwork500JSONResponse(apiErr(err)), nil
+		return nil, err
 	}
 	return api.DeleteNetwork204Response{}, nil
 }
 
 func (h *handlers) SetNetworkPeers(ctx context.Context, req api.SetNetworkPeersRequestObject) (api.SetNetworkPeersResponseObject, error) {
 	if req.Body == nil {
-		return api.SetNetworkPeers400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: "a body with lan_ip, lan_dev and peers is required"}}, nil
+		return api.SetNetworkPeers400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Code: statusCode(400), Error: "a body with lan_ip, lan_dev and peers is required"}}, nil
 	}
 	_, err := h.withManager(ctx, req.Host, func(m app.Manager) (any, error) {
 		return nil, h.svc.SetNetworkPeers(ctx, m, req.Name, req.Body.LanIp, req.Body.LanDev, req.Body.Peers)
@@ -135,7 +135,7 @@ func (h *handlers) SetNetworkPeers(ctx context.Context, req api.SetNetworkPeersR
 		case app.KindConflict:
 			return api.SetNetworkPeers409JSONResponse(apiErr(err)), nil
 		}
-		return api.SetNetworkPeers500JSONResponse(apiErr(err)), nil
+		return nil, err
 	}
 	return api.SetNetworkPeers204Response{}, nil
 }
@@ -151,7 +151,7 @@ func (h *handlers) DeleteNetworkPeers(ctx context.Context, req api.DeleteNetwork
 		case app.KindConflict:
 			return api.DeleteNetworkPeers409JSONResponse(apiErr(err)), nil
 		}
-		return api.DeleteNetworkPeers500JSONResponse(apiErr(err)), nil
+		return nil, err
 	}
 	return api.DeleteNetworkPeers204Response{}, nil
 }
@@ -169,7 +169,7 @@ func (h *handlers) GetUnderlay(ctx context.Context, req api.GetUnderlayRequestOb
 		case app.KindConflict:
 			return api.GetUnderlay409JSONResponse(apiErr(err)), nil
 		}
-		return api.GetUnderlay500JSONResponse(apiErr(err)), nil
+		return nil, err
 	}
 	u := v.(*vmtool.Underlay)
 	return api.GetUnderlay200JSONResponse{Ip: u.IP, Dev: u.Dev}, nil

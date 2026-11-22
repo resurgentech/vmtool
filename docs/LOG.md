@@ -2692,3 +2692,44 @@ are appended, never edited in; a hook refuses rewrites.
   it in one change.
 - Commits: the path-prefix commit on `master` (this entry rides in it); not
   pushed. No tag.
+
+## 2026-11-22 — API 2.9.0: a machine-readable error code; a host that is down is `502`/`504`
+
+- Spec first: `spec/openapi/vmtool.yaml` `info.version` 2.8.0 -> 2.9.0.
+  `Error` gains an optional `code`: `not_found`, `conflict`, `bad_request`,
+  `unauthorized`, `workstation_only`, `store_unavailable`,
+  `host_unreachable`, `host_timeout`, `bad_gateway` or `internal`. Clients
+  branch on `code`, never on the text. `internal/api` regenerated (the new
+  `ErrorCode` enum renames the generated `CreateVMEventKind` constants to
+  `CreateVMEventKind*`; nothing referenced the old names).
+- Every per-host operation a workstation forwards (`/v1/hosts/{host}/...`,
+  except `openVMTunnel`, `openVMConsole`, `uploadImage` and `setVMComment`)
+  documents `502` (`HostUnreachable`) and `504` (`HostTimeout`).
+- `internal/remote` marks a call that got no answer as the new
+  `app.KindHostUnreachable`, or `app.KindHostTimeout` when it timed out
+  (`transportErr`); `OpenImageBlob`'s header timer now reports a timeout,
+  not "context canceled". A daemon that answered with a failure stays
+  `app.KindBadGateway`. The network span's silent-host check follows the
+  new kinds.
+- One mapping, `internal/server/errors.go`: handlers return the errors they
+  have no status of their own for, and the strict server's response error
+  handler writes `502 host_unreachable`, `504 host_timeout`, or `500
+  internal`; every hand-written `Error` body carries a code (the `401` gains
+  `unauthorized` with its text unchanged; a hypervisor's refusal of a
+  workstation-only operation is `workstation_only`). `execVM`'s ssh-to-guest
+  failure stays `502 bad_gateway`. `fetchImage` answers `502`/`504` when the
+  host never answered and no progress line was sent.
+- The CLI is unchanged: it runs `internal/app` and prints the error text.
+- Red: `TestForwardedOperationsReportAHostThatIsDown` (every forwarded
+  operation, against a closed port and a TLS server that never answers,
+  through a real `remote.Manager`): 500 with free text on every route.
+  Green after the change, with `TestCodeForKind`, `TestUnauthorizedBodyCode`,
+  `TestRefusalCodes`, `TestExecVMSSHFailureIsBadGateway`,
+  `TestWorkstationOnlyCode`; the version pins move to 2.9.0; the remote
+  timeout test expects `KindHostTimeout`; `just check` green.
+- Not covered: the `createVM` stream's error event keeps its `kind` and no
+  `code`; a host lost mid-stream is still an error line. `waitVMIP`'s
+  timeout case is not in the table (its client timeout is the wait plus
+  30 s).
+- Commits: the API 2.9.0 commit on `master` (this entry rides in it); not
+  pushed. No tag.

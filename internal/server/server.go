@@ -140,7 +140,7 @@ func chain(h *handlers, auth func(http.Handler) http.Handler) http.Handler {
 	}
 	// tunnelMux serves openVMTunnel itself (it takes over the connection);
 	// every other operation goes to the strict adapter.
-	mux := tunnelMux{ServerInterface: api.NewStrictHandler(h, []api.StrictMiddlewareFunc{noteOperation, h.decideStore}), h: h}
+	mux := tunnelMux{ServerInterface: api.NewStrictHandlerWithOptions(h, []api.StrictMiddlewareFunc{noteOperation, h.decideStore}, handlerOptions), h: h}
 	var next http.Handler = withMaxBytes(withRequest(api.HandlerFromMux(mux, http.NewServeMux())))
 	// A hypervisor refuses the workstation-only operations here, after auth
 	// and before the body is read or any handler runs.

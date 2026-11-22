@@ -214,9 +214,9 @@ func noRoom409(err error) error {
 // the cause, never the request headers, so the token cannot leak here.
 func (m *Manager) transportErr(op string, timeout time.Duration, err error) error {
 	if errors.Is(err, context.DeadlineExceeded) {
-		return fail(app.KindBadGateway, &timeoutError{msg: fmt.Sprintf("%s: %s timed out after %s", m.name, op, timeout)})
+		return fail(app.KindHostTimeout, &timeoutError{msg: fmt.Sprintf("%s: %s timed out after %s", m.name, op, timeout)})
 	}
-	return fail(app.KindBadGateway, fmt.Errorf("%s: %s: %w", m.name, op, err))
+	return fail(app.KindHostUnreachable, fmt.Errorf("%s: %s: %w", m.name, op, err))
 }
 
 // timeoutError is a call that got no answer within its timeout; the one

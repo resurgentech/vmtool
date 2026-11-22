@@ -73,12 +73,12 @@ func (c *console) finish(e ending) {
 // OpenVMConsole on the strict interface is never reached: tunnelMux serves
 // the route (a strict handler cannot take over the connection).
 func (h *handlers) OpenVMConsole(_ context.Context, _ api.OpenVMConsoleRequestObject) (api.OpenVMConsoleResponseObject, error) {
-	return api.OpenVMConsole500JSONResponse{Error: "openVMConsole needs a connection upgrade; served by tunnelMux"}, nil
+	return api.OpenVMConsole500JSONResponse{Code: statusCode(500), Error: "openVMConsole needs a connection upgrade; served by tunnelMux"}, nil
 }
 
 // OpenMachineConsole: see OpenVMConsole.
 func (h *handlers) OpenMachineConsole(_ context.Context, _ api.OpenMachineConsoleRequestObject) (api.OpenMachineConsoleResponseObject, error) {
-	return api.OpenMachineConsole500JSONResponse{Error: "openMachineConsole needs a connection upgrade; served by tunnelMux"}, nil
+	return api.OpenMachineConsole500JSONResponse{Code: statusCode(500), Error: "openMachineConsole needs a connection upgrade; served by tunnelMux"}, nil
 }
 
 func (t tunnelMux) OpenVMConsole(w http.ResponseWriter, r *http.Request, host api.HostName, name api.VMName, params api.OpenVMConsoleParams) {
@@ -109,7 +109,7 @@ func refuse(w http.ResponseWriter, status int, msg string, header ...string) {
 		w.Header().Set(header[i], header[i+1])
 	}
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(api.Error{Error: msg})
+	_ = json.NewEncoder(w).Encode(errBody(status, msg))
 }
 
 // consoleSize parses an optional cols/rows value: an integer in 1-65535.

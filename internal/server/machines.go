@@ -29,7 +29,7 @@ func toAPIMachine(info *app.MachineInfo) api.MachineInfo {
 func (h *handlers) ListMachines(ctx context.Context, _ api.ListMachinesRequestObject) (api.ListMachinesResponseObject, error) {
 	ms, err := h.svcFor(ctx).ListMachines(ctx)
 	if err != nil {
-		return api.ListMachines500JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
+		return nil, err
 	}
 	out := make([]api.MachineInfo, len(ms))
 	for i := range ms {
@@ -54,7 +54,7 @@ func (h *handlers) libvirtNameCheck() (app.Manager, func()) {
 
 func (h *handlers) AddMachine(ctx context.Context, req api.AddMachineRequestObject) (api.AddMachineResponseObject, error) {
 	if req.Body == nil {
-		return api.AddMachine400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: "request body required"}}, nil
+		return api.AddMachine400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Code: statusCode(400), Error: "request body required"}}, nil
 	}
 	in := app.AddMachineInput{
 		Name:       req.Body.Name,
@@ -78,7 +78,7 @@ func (h *handlers) AddMachine(ctx context.Context, req api.AddMachineRequestObje
 		case app.KindBadGateway:
 			return api.AddMachine502JSONResponse(apiErr(err)), nil
 		default:
-			return api.AddMachine500JSONResponse(apiErr(err)), nil
+			return nil, err
 		}
 	}
 	return api.AddMachine201JSONResponse(toAPIMachine(info)), nil
@@ -90,7 +90,7 @@ func (h *handlers) GetMachine(ctx context.Context, req api.GetMachineRequestObje
 		if kindOf(err) == app.KindNotFound {
 			return api.GetMachine404JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
 		}
-		return api.GetMachine500JSONResponse(apiErr(err)), nil
+		return nil, err
 	}
 	return api.GetMachine200JSONResponse(toAPIMachine(info)), nil
 }
@@ -100,7 +100,7 @@ func (h *handlers) RemoveMachine(ctx context.Context, req api.RemoveMachineReque
 		if kindOf(err) == app.KindNotFound {
 			return api.RemoveMachine404JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse(apiErr(err))}, nil
 		}
-		return api.RemoveMachine500JSONResponse(apiErr(err)), nil
+		return nil, err
 	}
 	return api.RemoveMachine204Response{}, nil
 }
@@ -114,7 +114,7 @@ func (h *handlers) RebootMachine(ctx context.Context, req api.RebootMachineReque
 		case app.KindBadGateway:
 			return api.RebootMachine502JSONResponse(apiErr(err)), nil
 		default:
-			return api.RebootMachine500JSONResponse(apiErr(err)), nil
+			return nil, err
 		}
 	}
 	return api.RebootMachine200JSONResponse(toAPIMachine(info)), nil
@@ -122,7 +122,7 @@ func (h *handlers) RebootMachine(ctx context.Context, req api.RebootMachineReque
 
 func (h *handlers) ExecMachine(ctx context.Context, req api.ExecMachineRequestObject) (api.ExecMachineResponseObject, error) {
 	if req.Body == nil || len(req.Body.Command) == 0 {
-		return api.ExecMachine400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: "command is required"}}, nil
+		return api.ExecMachine400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Code: statusCode(400), Error: "command is required"}}, nil
 	}
 	res, err := h.svcFor(ctx).ExecMachine(ctx, req.Name, req.Body.Command, stdinOf(req.Body.Stdin))
 	if err != nil {
@@ -134,7 +134,7 @@ func (h *handlers) ExecMachine(ctx context.Context, req api.ExecMachineRequestOb
 		case app.KindBadGateway:
 			return api.ExecMachine502JSONResponse(apiErr(err)), nil
 		default:
-			return api.ExecMachine500JSONResponse(apiErr(err)), nil
+			return nil, err
 		}
 	}
 	return api.ExecMachine200JSONResponse{ExitCode: res.ExitCode, Stdout: res.Stdout, Stderr: res.Stderr}, nil
@@ -142,7 +142,7 @@ func (h *handlers) ExecMachine(ctx context.Context, req api.ExecMachineRequestOb
 
 func (h *handlers) RunMachinePlaybook(ctx context.Context, req api.RunMachinePlaybookRequestObject) (api.RunMachinePlaybookResponseObject, error) {
 	if req.Body == nil || req.Body.Playbook == "" {
-		return api.RunMachinePlaybook400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Error: "playbook is required"}}, nil
+		return api.RunMachinePlaybook400JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{Code: statusCode(400), Error: "playbook is required"}}, nil
 	}
 	var extra map[string]string
 	if req.Body.ExtraVars != nil {
