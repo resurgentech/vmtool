@@ -214,7 +214,9 @@ just deploy veritech04      # build, certify, configure, start
 old or if `just prereqs <host>` has not run (no `vmtool` user or no
 `/opt/vmtool`). It copies the tracked files to
 `~/.cache/vmtool-deploy/src` on the host and builds there as your login user
-(nothing is built with sudo), issues the host's certificate, writes
+(nothing is built with sudo; the build is stamped with the checkout's commit,
+plus `+dirty` for a tracked change, so `vmtool inventory` shows it as the
+daemon's version), issues the host's certificate, writes
 `config.yml` (role `hypervisor`, the token's hash only; the token goes over
 ssh stdin, never in an argument and never through a sudo prompt) and then
 installs everything with a single `sudo`, which may ask for your password

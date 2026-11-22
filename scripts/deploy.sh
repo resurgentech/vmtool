@@ -25,7 +25,9 @@
 #   3. copy        git ls-files | tar over ssh into a fresh
 #                  ~/.cache/vmtool-deploy/src (tracked files only: no .env,
 #                  .machines, config.yml or tls/); stage/ is emptied too
-#   4. build       go build there as the login user into stage/vmtool
+#   4. build       go build there as the login user into stage/vmtool, stamped
+#                  with this checkout's HEAD (+dirty for a tracked change) so
+#                  the daemon reports it as its version
 #   5. cert        CERT_STAGE_ONLY=1 scripts/cert.sh <host> (into stage/tls;
 #                  on this machine cert.sh keeps tls/ in the checkout and the
 #                  pair is copied into stage/tls, the checkout's copy stays)
@@ -143,6 +145,23 @@ fi
 [[ -f $thin_src && -f $sudoers_src ]] || die "deploy/vmtool-thin or deploy/vmtool-thin.sudoers not found."
 [[ -f $net_src && -f $net_sudoers_src ]] || die "deploy/vmtool-net or deploy/vmtool-net.sudoers not found."
 fqdn="$host.$domain"
+
+# The build's revision, from this checkout: the copy built on the host has no
+# .git, so Go records no VCS revision there and `vmtool inventory` would show
+# the daemon as unknown. The copy takes the working tree, so a tracked change
+# makes it +dirty. The value lands in a remote shell command, so it must be
+# exactly a full hash with an optional +dirty. Outside a git checkout the build
+# is not stamped.
+ldflags=""
+if rev=$(git -C "$root" rev-parse HEAD 2>/dev/null); then
+  if [[ -n $(git -C "$root" status --porcelain --untracked-files=no 2>/dev/null) ]]; then
+    rev+="+dirty"
+  fi
+  [[ $rev =~ ^[0-9a-f]{40}(\+dirty)?$ ]] || die "git revision '$rev' of $root is not a 40-digit hash with an optional +dirty; not building with it."
+  ldflags=" -ldflags \"-X github.com/jaredeh/vmtool/internal/buildinfo.stamped=$rev\""
+else
+  echo "deploy: $root is not a git checkout; building without a revision stamp (the daemon will report its version as unknown)." >&2
+fi
 
 # This machine? The same test as cert.sh, which keeps tls/ here for it.
 local_name=$("$here/cert.sh" --local-name) || die "could not work out this machine's name."
@@ -272,7 +291,7 @@ git -C "$root" ls-files -z | tar -C "$root" --null -T - -czf - \
 
 # 4. Build there as the login user.
 echo "Building vmtool on $host"
-run "$lsh 'export PATH=$gobin:\$PATH; cd \"$base/src\" && GOTOOLCHAIN=auto go build -o \"$base/stage/vmtool\" ./cmd/vmtool'"
+run "$lsh 'export PATH=$gobin:\$PATH; cd \"$base/src\" && GOTOOLCHAIN=auto go build -o \"$base/stage/vmtool\"$ldflags ./cmd/vmtool'"
 
 # 5. Certificate into stage/tls (cert.sh drops the local key; no sudo there).
 #    On this machine cert.sh leaves the pair in tls/ of the checkout (the

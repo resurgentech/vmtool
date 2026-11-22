@@ -12,7 +12,11 @@ import (
 	"testing"
 )
 
-const deployTok = "feedfacefeedfacefeedfacefeedfacefeedfacefeedfacefeedfacefeedface"
+const deployRev = "0123456789abcdef0123456789abcdef01234567"
+
+const stampFlag = `-ldflags "-X github.com/jaredeh/vmtool/internal/buildinfo.stamped=`
+
+const deployTok ="feedfacefeedfacefeedfacefeedfacefeedfacefeedfacefeedfacefeedface"
 
 // sshRecord saves each ssh call's argv and stdin as ssh.<n>.argv and
 // ssh.<n>.stdin (n counts from 1), after the generic stub header appended
@@ -43,7 +47,16 @@ func newDeployEnv(t *testing.T, goAnswer string) *certEnv {
     exit 0 ;;
 esac`)
 	addStub(t, e.stub, "vmtool", `if [[ "$1 $2" == "config host" ]]; then echo "10.0.0.5 jared 9473"; fi`)
-	addStub(t, e.stub, "git", `printf 'cmd/vmtool/main.go\0go.mod\0'`)
+	// git answers ls-files, rev-parse HEAD (gitrev in the stub dir, else
+	// deployRev; gitrevfail: exit 128, not a checkout) and status --porcelain
+	// (gitstatus in the stub dir, else clean).
+	addStub(t, e.stub, "git", `case "$*" in
+  *rev-parse*)
+    if [[ -f $d/gitrevfail ]]; then echo "fatal: not a git repository" >&2; exit 128; fi
+    if [[ -f $d/gitrev ]]; then cat "$d/gitrev"; else echo `+deployRev+`; fi ;;
+  *status*) [[ -f $d/gitstatus ]] && cat "$d/gitstatus"; exit 0 ;;
+  *) printf 'cmd/vmtool/main.go\0go.mod\0' ;;
+esac`)
 	addStub(t, e.stub, "tar", `cat > "$d/tar.stdin"`)
 	addStub(t, e.stub, "curl", `cat > "$d/curl.stdin"; echo '{"version":"x"}'`)
 	addStub(t, e.stub, "sudo", `exit 1`)
@@ -144,7 +157,8 @@ func TestDeployGoCheckFails(t *testing.T) {
 			if !strings.Contains(r.stderr, want) {
 				t.Errorf("stderr lacks %q: %q", want, r.stderr)
 			}
-			for _, f := range []string{"tar.argv", "scp.argv", "git.argv", "bao.argv", "curl.argv"} {
+			// (git is asked for the revision before any ssh; tar is the copy.)
+			for _, f := range []string{"tar.argv", "scp.argv", "bao.argv", "curl.argv"} {
 				if _, err := os.Stat(filepath.Join(e.stub, f)); err == nil {
 					t.Errorf("%s recorded after a failed go check", f)
 				}
@@ -218,7 +232,7 @@ func TestDeployFlow(t *testing.T) {
 		findCall(t, calls, "go env GOVERSION"),
 		findCall(t, calls, "id vmtool >/dev/null 2>&1 && test -d /opt/vmtool"),
 		findCall(t, calls, `rm -rf "$HOME/.cache/vmtool-deploy/src" "$HOME/.cache/vmtool-deploy/stage"`),
-		findCall(t, calls, "go build -o "+stage+`/vmtool" ./cmd/vmtool`),
+		findCall(t, calls, "go build -o "+stage+`/vmtool" `+stampFlag+deployRev+`" ./cmd/vmtool`),
 		findCall(t, calls, `mkdir -p `+stage+`/tls"`),
 		findCall(t, calls, "config write --token-stdin --role hypervisor --name veritech01 --listen 0.0.0.0:9473 --tls-cert tls/veritech01.labtwo.crt --tls-key tls/veritech01.labtwo.key"),
 		findCall(t, calls, `cat > `+stage+`/vmtool-daemon.service"`),
@@ -413,7 +427,7 @@ func TestDeployNeedsPrereqs(t *testing.T) {
 			if r.code == 0 || !strings.Contains(r.stderr, c.want) {
 				t.Fatalf("want %q, got %d %q", c.want, r.code, r.stderr)
 			}
-			for _, f := range []string{"tar.argv", "git.argv", "scp.argv", "bao.argv", "curl.argv"} {
+			for _, f := range []string{"tar.argv", "scp.argv", "bao.argv", "curl.argv"} {
 				if _, err := os.Stat(filepath.Join(e.stub, f)); err == nil {
 					t.Errorf("%s called before the prereq check passed", f)
 				}
@@ -1696,5 +1710,75 @@ func TestDeployLocalListedEntryNoResolution(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(e.stub, "getent.argv")); err == nil {
 		t.Error("a listed entry was resolved")
+	}
+}
+
+// The build is stamped with the workstation's revision: the copy on the host
+// has no .git, so Go's own VCS stamp is absent there.
+func TestDeployStampsBuildRevision(t *testing.T) {
+	e := newDeployEnv(t, "go1.22.2\n")
+	if r := e.deploy(t, nil, "veritech01"); r.code != 0 {
+		t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
+	}
+	calls := sshCalls(t, e.stub)
+	i := findCall(t, calls, "go build")
+	if i >= 0 && !strings.Contains(calls[i].argv, stampFlag+deployRev+`" `) {
+		t.Errorf("build argv lacks the stamp %s: %q", deployRev, calls[i].argv)
+	}
+}
+
+func TestDeployStampsDirtyTree(t *testing.T) {
+	e := newDeployEnv(t, "go1.22.2\n")
+	os.WriteFile(filepath.Join(e.stub, "gitstatus"), []byte(" M internal/app/x.go\n"), 0o644)
+	if r := e.deploy(t, nil, "veritech01"); r.code != 0 {
+		t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
+	}
+	calls := sshCalls(t, e.stub)
+	i := findCall(t, calls, "go build")
+	if i >= 0 && !strings.Contains(calls[i].argv, stampFlag+deployRev+`+dirty" `) {
+		t.Errorf("build argv lacks the +dirty stamp: %q", calls[i].argv)
+	}
+	if st := readOr(t, filepath.Join(e.stub, "git.argv")); !strings.Contains(st, "--untracked-files=no") {
+		t.Errorf("status asked about untracked files: %q", st)
+	}
+}
+
+func TestDeployLocalStampsBuildRevision(t *testing.T) {
+	e, _, _ := newLocalEnv(t, "10.0.0.9 ops 9475")
+	if r := e.deploy(t, nil, "PLACEHOLDER-HOST"); r.code != 0 {
+		t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
+	}
+	if g := readOr(t, filepath.Join(e.stub, "go.argv")); !strings.Contains(g, "-ldflags -X github.com/jaredeh/vmtool/internal/buildinfo.stamped="+deployRev+" ./cmd/vmtool") {
+		t.Errorf("go argv lacks the stamp: %q", g)
+	}
+}
+
+func TestDeployMalformedRevisionStopsBeforeSSH(t *testing.T) {
+	for _, bad := range []string{"abc123\n", "0123456789abcdef0123456789abcdef0123456; rm -rf /\n", "0123456789ABCDEF0123456789ABCDEF01234567\n", "\n"} {
+		e := newDeployEnv(t, "go1.22.2\n")
+		os.WriteFile(filepath.Join(e.stub, "gitrev"), []byte(bad), 0o644)
+		r := e.deploy(t, nil, "veritech01")
+		if r.code == 0 {
+			t.Errorf("%q: deploy succeeded", bad)
+		}
+		if _, err := os.Stat(filepath.Join(e.stub, "ssh.argv")); err == nil {
+			t.Errorf("%q: ssh ran before the revision was refused", bad)
+		}
+	}
+}
+
+func TestDeployOutsideCheckoutBuildsUnstamped(t *testing.T) {
+	e := newDeployEnv(t, "go1.22.2\n")
+	os.WriteFile(filepath.Join(e.stub, "gitrevfail"), nil, 0o644)
+	r := e.deploy(t, nil, "veritech01")
+	if r.code != 0 {
+		t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
+	}
+	if !strings.Contains(r.stdout+r.stderr, "not a git checkout") {
+		t.Errorf("no one-line note: %s%s", r.stdout, r.stderr)
+	}
+	calls := sshCalls(t, e.stub)
+	if i := findCall(t, calls, "go build"); i >= 0 && strings.Contains(calls[i].argv, "-ldflags") {
+		t.Errorf("stamped outside a checkout: %q", calls[i].argv)
 	}
 }

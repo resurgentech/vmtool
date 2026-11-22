@@ -2479,3 +2479,24 @@ are appended, never edited in; a hook refuses rewrites.
   opened`; app `the network home was opened` (and a compile red on the new
   `ListAll` signature). Green; `just check` green.
 - Commits: the X1 commit on `clone-identity` (this entry rides in it).
+
+## 2026-11-22 — Y1 A deployed daemon reports its real build version
+
+- `internal/buildinfo`: package variable `stamped`, set only by `-ldflags
+  -X`; `Version()` is the module version, else the VCS revision, else the
+  stamp, else `unknown` (`from(bi, ok, stamp)`).
+- `scripts/deploy.sh`: before any ssh, `git -C <root> rev-parse HEAD` plus
+  `+dirty` when `git status --porcelain --untracked-files=no` lists a change,
+  checked against `^[0-9a-f]{40}(\+dirty)?$` (a bad value stops deploy);
+  the build (remote and local) runs with `-ldflags "-X
+  github.com/jaredeh/vmtool/internal/buildinfo.stamped=<rev>"`. Outside a
+  git checkout it builds unstamped with one stderr line. README one sentence.
+- Tests: `TestFromStamp`, `TestDeployStampsBuildRevision`,
+  `TestDeployStampsDirtyTree`, `TestDeployLocalStampsBuildRevision`,
+  `TestDeployMalformedRevisionStopsBeforeSSH`,
+  `TestDeployOutsideCheckoutBuildsUnstamped`; the stub git answers
+  `rev-parse` and `status`; two tests no longer list `git.argv` as uncalled.
+- Red: `stamp, no vcs: "unknown", want "deadbeef+dirty"`; deploy: no ssh
+  call containing the `-ldflags` build. Green; `just check` green.
+- Rollout: the daemons show their revision after their next `just deploy`.
+- Commits: the Y1 commit on `clone-identity` (this entry rides in it).
