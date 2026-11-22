@@ -2885,3 +2885,34 @@ are appended, never edited in; a hook refuses rewrites.
   check` green.
 - Commits: the CLI templates/images commit on `master` (this entry rides
   in it); not pushed. No tag.
+
+## 2026-11-22 — CLI: `--json` for net, metal and config; every command conforms
+
+- `net create` and `net show` print the API's `NetworkInfo` (`show` adds
+  `orphaned` when reservations it could not remove remain); `net attach`
+  the API's `NetworkAttachment` plus `vm`; `net detach` `{vm, detached}`;
+  `net delete` `{network, host, registered, members, left}`; `net join`
+  `{host, network, vni, home, registered, lan_ip, lan_dev, peers,
+  skipped}`; `net leave` `{host, network, skipped}`.
+- `metal list` `{machines}` and `metal info`, `add`, `reboot` the API's
+  `MachineInfo`; `metal rm` `{removed}`; `metal playbook` `{machine,
+  playbook, completed}`; `metal exec` `{exit_code, stdout, stderr}`, still
+  exiting with the remote code, `-t` with `--json` a usage error. `metal
+  ssh` is interactive: with `--json` it exits 2. Progress and ansible
+  output go to stderr under `--json`; no password or key is printed.
+- `config host` `{name, address, ssh_user, port}`, `host-vms` `{name,
+  vms}`, `server-url` `{url}` (empty with no store), `set-host` `{host,
+  file}`, `write` `{wrote}`; no token or hash on any stream (a test pins
+  it).
+- Without `--json` every command prints as before. Each command's help
+  gains an example.
+- `pendingJSON` is gone: `TestCLIContract` holds all 59 commands but
+  cobra's own `help` and `completion`. Tests:
+  `internal/cli/clijson_lm7_test.go`, `clijson_lm7_net_test.go` (join,
+  leave and a registered delete against the real store in process).
+- README "Usage" gains a `--json` paragraph pointing to `docs/CLI.md`.
+- Red: the 20 taken off the list first: no example, human text on stdout,
+  `metal ssh` not marked. Green after the change, 59 conform; `just
+  check` green.
+- Commits: the CLI net/metal/config commit on `master` (this entry rides
+  in it); not pushed. No tag.

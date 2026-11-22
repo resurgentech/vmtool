@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/resurgentech/vmtool/internal/api"
 	"github.com/resurgentech/vmtool/internal/app"
 	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
@@ -56,6 +57,11 @@ make is refused.
 
   vmtool net attach hv1/web net1
   vmtool net attach hv1/web net2 --ip 10.77.2.50`,
+		Example: `  vmtool net attach hv1/web net1
+  vmtool net attach --json hv1/web net2 --ip 10.77.2.50
+
+  Tip: with --json stdout is {"vm", "network", "mac", "ip"}, the API's
+  NetworkAttachment with the VM; ip is empty when the card has no reservation.`,
 		Args: cobra.ExactArgs(2),
 	}
 	cmd.Flags().StringVar(&ip, "ip", "", "the fixed address, inside the network's subnet (default: the next free address of its DHCP range)")
@@ -63,6 +69,9 @@ make is refused.
 		a, err := e.service("").AttachNetwork(cmd.Context(), m, ref, args[1], ip)
 		if err != nil {
 			return err
+		}
+		if jsonMode(cmd) {
+			return emit(cmd, netAttachJSON{VM: ref.String(), NetworkAttachment: api.NetworkAttachment{Network: a.Network, Mac: a.MAC, Ip: a.IP}})
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "VM %q attached to network %q\n", ref.String(), a.Network)
 		writeCards(cmd.OutOrStdout(), []vmtool.NetAttachment{*a})
@@ -80,11 +89,19 @@ when the VM is running, from the config only when it is shut off), then its
 reservation. Name the card by its MAC instead when the VM has more than one on
 the network. If the reservation cannot be removed the card is put back. The
 VM's own first card is never removed by this command.`,
+		Example: `  vmtool net detach hv1/web net1
+  vmtool net detach --json hv1/web 52:54:00:00:00:01
+
+  Tip: with --json stdout is {"vm", "detached"}; detached is the network or
+  MAC as given.`,
 		Args: cobra.ExactArgs(2),
 	}
 	cmd.RunE = withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
 		if err := e.service("").DetachNetwork(cmd.Context(), m, ref, args[1]); err != nil {
 			return err
+		}
+		if jsonMode(cmd) {
+			return emit(cmd, map[string]string{"vm": ref.String(), "detached": args[1]})
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "VM %q detached from %q\n", ref.String(), args[1])
 		return nil
@@ -129,6 +146,11 @@ With no store (or one that does not answer), nothing is registered: the host
 numbers the bridge itself (1 to 9999) and takes --subnet, or the first /24 of
 10.77.0.0/16 that no libvirt network or route on the host uses; an overlap is
 refused.`,
+		Example: `  vmtool net create hv1 net1
+  vmtool net create --json hv1 net2 --subnet 10.77.2.0/24 --domain lab.example
+
+  Tip: with --json stdout is the API's NetworkInfo of the new network (name,
+  bridge, vni, subnet, gateway, domain, mtu, dhcp_start, dhcp_end, ...).`,
 		Args: cobra.ExactArgs(2),
 	}
 	cmd.Flags().StringVar(&subnet, "subnet", "", "the network's /24, such as 10.77.1.0/24 (default: the first free /24 of 10.77.0.0/16)")
@@ -137,6 +159,9 @@ refused.`,
 		n, err := e.service("").CreateNetworkOnHost(cmd.Context(), args[0], m, args[1], subnet, domain)
 		if err != nil {
 			return err
+		}
+		if jsonMode(cmd) {
+			return emit(cmd, apiNetwork(n))
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "Network %q created on %s\n", n.Name, args[0])
 		writeNetwork(cmd.OutOrStdout(), n)
@@ -168,12 +193,22 @@ was done; run it again after fixing that: every step can be repeated.
 With a store configured that does not answer, the delete is refused (the store
 is needed to delete a network that may be registered; try again). With no
 store configured, only the host's network is removed.`,
+		Example: `  vmtool net delete hv1 net1
+  vmtool net delete --json hv1 net1
+
+  Tip: with --json stdout is {"network", "host", "registered", "members",
+  "left"}: members are the member hosts that removed their network, left the
+  lines for members that did not answer.`,
 		Args: cobra.ExactArgs(2),
 	}
 	cmd.RunE = withNetHost(e, func(m app.Manager, cmd *cobra.Command, args []string) error {
 		res, err := e.service("").DeleteNetworkOnHost(cmd.Context(), args[0], m, args[1])
 		if err != nil {
 			return err
+		}
+		if jsonMode(cmd) {
+			return emit(cmd, netDeleteJSON{Network: res.Network, Host: res.Host, Registered: res.Registered,
+				Members: nonNil(res.Members), Left: nonNil(res.Left)})
 		}
 		writeDelete(cmd.OutOrStdout(), res)
 		return nil
@@ -199,12 +234,20 @@ func netShowCmd(e *env) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "show <host> <name>",
 		Short: "Show one libvirt network on a host",
-		Args:  cobra.ExactArgs(2),
+		Example: `  vmtool net show hv1 net1
+  vmtool net show --json hv1 net1
+
+  Tip: with --json stdout is the API's NetworkInfo; a vmtool network's
+  orphaned reservations that could not be removed are listed under "orphaned".`,
+		Args: cobra.ExactArgs(2),
 	}
 	cmd.RunE = withNetHost(e, func(m app.Manager, cmd *cobra.Command, args []string) error {
 		show, err := e.service("").ShowNetwork(cmd.Context(), args[0], m, args[1])
 		if err != nil {
 			return err
+		}
+		if jsonMode(cmd) {
+			return emit(cmd, netShowObject(show))
 		}
 		writeNetworkShow(cmd.OutOrStdout(), show)
 		return nil
@@ -309,6 +352,12 @@ the LAN when ufw is active).
 
   vmtool net join hv2 net1
   vmtool net join hv2 lab --home hv1   # a network made without a store`,
+		Example: `  vmtool net join hv2 net1
+  vmtool net join --json hv2 net1
+
+  Tip: with --json stdout is {"host", "network", "vni", "home", "registered",
+  "lan_ip", "lan_dev", "peers", "skipped"}: peers and lan_* as the API's
+  NetworkPeers, skipped the lines for members that did not answer.`,
 		Args: cobra.ExactArgs(2),
 	}
 	cmd.Flags().StringVar(&home, "home", "", "the network's home host; needed only when the network is not in the registry yet")
@@ -316,6 +365,10 @@ the LAN when ufw is active).
 		res, err := e.service("").JoinNetwork(cmd.Context(), args[0], args[1], home)
 		if err != nil {
 			return err
+		}
+		if jsonMode(cmd) {
+			return emit(cmd, netJoinJSON{Host: res.Host, Network: res.Network, VNI: res.VNI, Home: res.Home, Registered: res.Registered,
+				NetworkPeers: api.NetworkPeers{LanIp: res.LanIP, LanDev: res.LanDev, Peers: nonNil(res.Peers)}, Skipped: nonNil(res.Skipped)})
 		}
 		writeJoin(cmd.OutOrStdout(), res)
 		return nil
@@ -332,12 +385,20 @@ network and its registry entry, and every other member that answers gets the
 shorter peer list. Refused while VMs of <host> have a card on the network
 (detach it first: vmtool net detach), and for the network's home (delete the
 network instead). Needs the store.`,
+		Example: `  vmtool net leave hv2 net1
+  vmtool net leave --json hv2 net1
+
+  Tip: with --json stdout is {"host", "network", "skipped"}; skipped are the
+  lines for members that did not answer.`,
 		Args: cobra.ExactArgs(2),
 	}
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		res, err := e.service("").LeaveNetwork(cmd.Context(), args[0], args[1])
 		if err != nil {
 			return err
+		}
+		if jsonMode(cmd) {
+			return emit(cmd, netLeaveJSON{Host: res.Host, Network: res.Network, Skipped: nonNil(res.Skipped)})
 		}
 		writeLeave(cmd.OutOrStdout(), res)
 		return nil
@@ -366,4 +427,108 @@ func writeLeave(w io.Writer, r *app.LeaveResult) {
 	for _, l := range r.Skipped {
 		fmt.Fprintln(w, "Skipped:  ", l)
 	}
+}
+
+// apiNetwork is a network as the REST API's NetworkInfo (the server builds
+// the same from the same fields).
+func apiNetwork(n *vmtool.NetworkInfo) api.NetworkInfo {
+	out := api.NetworkInfo{Name: n.Name, Vmtool: n.Vmtool, Active: n.Active, Autostart: n.Autostart, Vms: n.VMs}
+	if out.Vms == nil {
+		out.Vms = []string{}
+	}
+	str := func(s string) *string {
+		if s == "" {
+			return nil
+		}
+		return &s
+	}
+	out.Bridge = str(n.Bridge)
+	out.Forward = str(n.Forward)
+	out.Subnet = str(n.Subnet)
+	out.Gateway = str(n.Gateway)
+	out.Domain = str(n.Domain)
+	out.DhcpStart = str(n.DHCPStart)
+	out.DhcpEnd = str(n.DHCPEnd)
+	if n.MTU > 0 {
+		m := n.MTU
+		out.Mtu = &m
+	}
+	if n.Vmtool {
+		v := int(n.VNI)
+		out.Vni = &v
+	}
+	if len(n.Reservations) > 0 {
+		rs := make([]api.Reservation, len(n.Reservations))
+		for i, r := range n.Reservations {
+			rs[i] = api.Reservation{Network: r.Network, Mac: r.MAC, Ip: r.IP, Name: r.Name}
+		}
+		out.Reservations = &rs
+	}
+	return out
+}
+
+// nonNil is s, or an empty slice for nil, so a list encodes as [] and never null.
+func nonNil(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
+}
+
+// netAttachJSON is `net attach --json`: the API's NetworkAttachment and the VM.
+type netAttachJSON struct {
+	VM string `json:"vm"`
+	api.NetworkAttachment
+}
+
+// netDeleteJSON is `net delete --json`.
+type netDeleteJSON struct {
+	Network    string   `json:"network"`
+	Host       string   `json:"host"`
+	Registered bool     `json:"registered"`
+	Members    []string `json:"members"`
+	Left       []string `json:"left"`
+}
+
+// netJoinJSON is `net join --json`: the API's NetworkPeers (the joined host's
+// LAN address and interface, and the peers it floods to) with what the join
+// did.
+type netJoinJSON struct {
+	Host       string `json:"host"`
+	Network    string `json:"network"`
+	VNI        uint32 `json:"vni"`
+	Home       string `json:"home"`
+	Registered bool   `json:"registered"`
+	api.NetworkPeers
+	Skipped []string `json:"skipped"`
+}
+
+// netLeaveJSON is `net leave --json`.
+type netLeaveJSON struct {
+	Host    string   `json:"host"`
+	Network string   `json:"network"`
+	Skipped []string `json:"skipped"`
+}
+
+// netShowJSON is `net show --json`: the API's NetworkInfo and, when the
+// network has orphaned reservations that could not be removed, them under
+// orphaned.
+type netShowJSON struct {
+	api.NetworkInfo
+	Orphaned []orphanJSON `json:"orphaned,omitempty"`
+}
+
+type orphanJSON struct {
+	Ip   string `json:"ip"`
+	Mac  string `json:"mac"`
+	Vm   string `json:"vm"`
+	Host string `json:"host"`
+}
+
+func netShowObject(s *app.NetworkShow) netShowJSON {
+	out := netShowJSON{NetworkInfo: apiNetwork(s.Info)}
+	for _, o := range s.Orphans {
+		out.Orphaned = append(out.Orphaned, orphanJSON{Ip: o.Ip, Mac: o.Mac, Vm: o.Vm, Host: o.Host})
+	}
+	return out
 }

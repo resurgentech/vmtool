@@ -815,6 +815,12 @@ just install        # build, cert, config.yml, systemd unit (vmtool server over 
 The command line's conventions (`--json`, the error object, exit codes, the agent tips in `vmtool --help`) are
 in [docs/CLI.md](docs/CLI.md).
 
+Every command except the interactive ones (`i`, `ssh`, `tunnel`, `server` and `metal ssh`) takes `--json` and
+prints exactly one JSON object on stdout (lists under a named key); progress and human text go to stderr. An
+error is `{"error":{"code","message"}}` on stderr. Exit codes: 0 success, 1 error, 2 usage; `exec` and
+`metal exec` exit with the remote command's code. An interactive command given `--json` exits 2. Details and the
+shape of each result are in [docs/CLI.md](docs/CLI.md).
+
 ### A host's default pool for new VM disks (`default_pool`)
 
 When a request names no pool (the CLI and the TUI's "(host default)" send

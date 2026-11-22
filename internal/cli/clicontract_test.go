@@ -21,31 +21,6 @@ import (
 // TestCLIContract walks the real tree, so a new command is checked without
 // being listed anywhere.
 
-// pendingJSON are the commands not yet converted. A command on it that
-// already conforms fails the test, so the list only shrinks.
-var pendingJSON = map[string]bool{
-	"vmtool config host":       true,
-	"vmtool config host-vms":   true,
-	"vmtool config server-url": true,
-	"vmtool config set-host":   true,
-	"vmtool config write":      true,
-	"vmtool metal add":         true,
-	"vmtool metal exec":        true,
-	"vmtool metal info":        true,
-	"vmtool metal list":        true,
-	"vmtool metal playbook":    true,
-	"vmtool metal reboot":      true,
-	"vmtool metal rm":          true,
-	"vmtool metal ssh":         true,
-	"vmtool net attach":        true,
-	"vmtool net create":        true,
-	"vmtool net delete":        true,
-	"vmtool net detach":        true,
-	"vmtool net join":          true,
-	"vmtool net leave":         true,
-	"vmtool net show":          true,
-}
-
 // cobraOwn are the commands cobra adds itself (help and shell completion):
 // they are cobra's, not vmtool's, and are outside the convention.
 func cobraOwn(path string) bool {
@@ -231,11 +206,6 @@ func TestCLIContract(t *testing.T) {
 			t.Errorf("%s defines its own --json", c.CommandPath())
 		}
 	})
-	for p := range pendingJSON {
-		if _, ok := cmds[p]; !ok {
-			t.Errorf("pendingJSON names %q, which is not a runnable command", p)
-		}
-	}
 	for p := range jsonCases {
 		if _, ok := cmds[p]; !ok {
 			t.Errorf("jsonCases names %q, which is not a runnable command", p)
@@ -251,18 +221,12 @@ func TestCLIContract(t *testing.T) {
 		if cobraOwn(p) {
 			continue
 		}
-		bad := conforms(t, byPath[p], cmds[p])
-		switch {
-		case pendingJSON[p] && len(bad) == 0:
-			t.Errorf("%s conforms: take it off pendingJSON", p)
-		case !pendingJSON[p] && len(bad) > 0:
+		if bad := conforms(t, byPath[p], cmds[p]); len(bad) > 0 {
 			t.Errorf("%s does not conform:\n  %s", p, strings.Join(bad, "\n  "))
 		}
-		if !pendingJSON[p] {
-			checked++
-		}
+		checked++
 	}
-	t.Logf("%d commands conform, %d pending", checked, len(pendingJSON))
+	t.Logf("%d commands conform (every command but cobra's own)", checked)
 }
 
 // Under --json the token gate's refusal is the error object on stderr, with

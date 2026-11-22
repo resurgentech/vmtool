@@ -28,7 +28,12 @@ func configCmd(dirFn func() (string, error)) *cobra.Command {
 	write := &cobra.Command{
 		Use:   "write",
 		Short: "Create or update config.yml, setting token_sha256 from the token",
-		Args:  cobra.NoArgs,
+		Example: `  vmtool config write --name ws
+  printf '%s\n' "$TOKEN" | vmtool config write --json --token-stdin --role hypervisor
+
+  Tip: with --json stdout is {"wrote": "config.yml"}. The token is read from
+  VMTOOL_TOKEN, .env or --token-stdin and is never printed, nor is its hash.`,
+		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 			dir, err := dirFn()
 			if err != nil {
@@ -46,6 +51,9 @@ func configCmd(dirFn func() (string, error)) *cobra.Command {
 			}
 			if err := config.Write(dir, token, opts); err != nil {
 				return err
+			}
+			if jsonMode(c) {
+				return emit(c, map[string]string{"wrote": config.FileName})
 			}
 			fmt.Fprintf(c.OutOrStdout(), "wrote %s\n", config.FileName)
 			return nil
@@ -65,7 +73,12 @@ func configCmd(dirFn func() (string, error)) *cobra.Command {
 	serverURL := &cobra.Command{
 		Use:   "server-url",
 		Short: "Print this client's server.url (nothing when it has no store)",
-		Args:  cobra.NoArgs,
+		Example: `  vmtool config server-url
+  vmtool config server-url --json
+
+  Tip: with --json stdout is {"url": "<server.url>"}; url is empty when the
+  client has no store.`,
+		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 			dir, err := dirFn()
 			if err != nil {
@@ -74,6 +87,13 @@ func configCmd(dirFn func() (string, error)) *cobra.Command {
 			cfg, err := config.Load(dir)
 			if err != nil {
 				return err
+			}
+			if jsonMode(c) {
+				url := ""
+				if cfg.StoreConfigured() {
+					url = cfg.Server.URL
+				}
+				return emit(c, map[string]string{"url": url})
 			}
 			if cfg.StoreConfigured() {
 				fmt.Fprintln(c.OutOrStdout(), cfg.Server.URL)
@@ -85,7 +105,12 @@ func configCmd(dirFn func() (string, error)) *cobra.Command {
 	host := &cobra.Command{
 		Use:   "host <name>",
 		Short: "Print \"address ssh_user port\" for a configured host",
-		Args:  cobra.ExactArgs(1),
+		Example: `  vmtool config host hv1
+  vmtool config host --json hv1
+
+  Tip: with --json stdout is {"name", "address", "ssh_user", "port"}; port is
+  the daemon's default when the host has none.`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			dir, err := dirFn()
 			if err != nil {
@@ -103,6 +128,9 @@ func configCmd(dirFn func() (string, error)) *cobra.Command {
 			if port == 0 {
 				port = config.DefaultPort
 			}
+			if jsonMode(c) {
+				return emit(c, map[string]any{"name": args[0], "address": h.Address, "ssh_user": h.SSHUser, "port": port})
+			}
 			fmt.Fprintf(c.OutOrStdout(), "%s %s %d\n", h.Address, h.SSHUser, port)
 			return nil
 		},
@@ -111,7 +139,11 @@ func configCmd(dirFn func() (string, error)) *cobra.Command {
 	hostVMs := &cobra.Command{
 		Use:   "host-vms <name>",
 		Short: "Print \"true\" or \"false\": the client's hosts.<name>.vms (false for a network home)",
-		Args:  cobra.ExactArgs(1),
+		Example: `  vmtool config host-vms hv1
+  vmtool config host-vms --json hv1
+
+  Tip: with --json stdout is {"name", "vms"}; vms is false for a network home.`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			dir, err := dirFn()
 			if err != nil {
@@ -124,6 +156,9 @@ func configCmd(dirFn func() (string, error)) *cobra.Command {
 			h, ok := cfg.Hosts[args[0]]
 			if !ok {
 				return fmt.Errorf("unknown host %q in %s", args[0], config.FileName)
+			}
+			if jsonMode(c) {
+				return emit(c, map[string]any{"name": args[0], "vms": h.HoldsVMs()})
 			}
 			fmt.Fprintln(c.OutOrStdout(), h.HoldsVMs())
 			return nil
@@ -138,7 +173,12 @@ func configCmd(dirFn func() (string, error)) *cobra.Command {
 	setHost := &cobra.Command{
 		Use:   "set-host <name>",
 		Short: "Add or replace one hosts: entry in config.yml, keeping everything else",
-		Args:  cobra.ExactArgs(1),
+		Example: `  vmtool config set-host hv1 --address 192.0.2.11 --ssh-user ubuntu
+  vmtool config set-host --json hv1 --vms=false
+
+  Tip: with --json stdout is {"host", "file"}: the host entry written and the
+  file it is in.`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			dir, err := dirFn()
 			if err != nil {
@@ -152,6 +192,9 @@ func configCmd(dirFn func() (string, error)) *cobra.Command {
 				if err := config.SetHostVMs(dir, args[0], shVMs); err != nil {
 					return err
 				}
+				if jsonMode(c) {
+					return emit(c, map[string]string{"host": args[0], "file": config.FileName})
+				}
 				fmt.Fprintf(c.OutOrStdout(), "set host %s vms in %s\n", args[0], config.FileName)
 				return nil
 			}
@@ -164,6 +207,9 @@ func configCmd(dirFn func() (string, error)) *cobra.Command {
 			}
 			if err := config.SetHost(dir, args[0], sh); err != nil {
 				return err
+			}
+			if jsonMode(c) {
+				return emit(c, map[string]string{"host": args[0], "file": config.FileName})
 			}
 			fmt.Fprintf(c.OutOrStdout(), "set host %s in %s\n", args[0], config.FileName)
 			return nil
