@@ -2579,3 +2579,34 @@ are appended, never edited in; a hook refuses rewrites.
   times, want 5`; lock file truncated by `unlink`. Green; `just check` green.
 - Hosts need `just deploy` (helper) for the fix to take effect.
 - Commits: the Z2 commit on `clone-identity` (this entry rides in it).
+
+## 2026-11-22 — Z3 The link helper's `report` stops using the crashing dump
+
+- Cause (corrects Z2's record): iproute2 6.1.0's detailed link dump
+  (`ip -j -d link show type vxlan`, and any `-d` dump without `dev`)
+  segfaults every time a VXLAN device exists, so `report` had never
+  succeeded on a real host with a link; Z2's retry could not help. Second
+  defect: `ParseNetReport` read each fdb entry's device from `dev`, but
+  `bridge -j fdb show` prints it as `ifname`, so no peer was ever read.
+- `deploy/vmtool-net` `report`: lists names with `ip -j link show type
+  vxlan` (no `-d`), keeps only names matching `^vx[0-9]+$` (once each),
+  runs `ip -j -d link show dev <name>` for each and joins the objects into
+  one array; a device gone between the calls (query fails and it is not in
+  /sys/class/net) is skipped; a query output that is not one array of
+  objects, or an fdb listing that is not an array, is refused so the JSON
+  stays well-formed. Under Z2's shared lock and retry. No new verb, no
+  sudoers change, no new tool (bash builtins only).
+- `pkg/vmtool/netlink.go`: `ParseNetReport` reads an fdb entry's device
+  from `ifname`, else `dev`.
+- `spec/README.md`: `report` described (Z3).
+- Tests: real veritech03 samples (`TestParseNetReportRealSample`,
+  `...RealSampleNotVmtoolName`, `...FDBDevField`); helper with stub `ip`
+  that exits 139 on any detailed dump (`TestNetReport`, `...TwoDevices`,
+  `...NoDevices`, `...DeviceGone`, `...OnlyVxNames`, `...DeviceQueryFails`,
+  `...BadDeviceOutput`); shape test `TestNoDetailedLinkDump` over
+  `deploy/`, `scripts/*.sh`, `pkg/vmtool`.
+- Red: parser peers `[]` for the real fdb lines; every report test
+  `cannot list the links` (stub 139); shape test flagged
+  `deploy/vmtool-net:207`. Green; `just check` green.
+- Hosts need `just deploy` (helper and daemon) for the fix to take effect.
+- Commits: the Z3 commit on `clone-identity` (this entry rides in it).

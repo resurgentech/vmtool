@@ -168,15 +168,12 @@ func TestNetReportRetries(t *testing.T) {
 		e := newNetEnv(t)
 		e.write("crash-"+tool+".txt", "1")
 		r := e.ok("report")
-		want := `{"links":` + netReportLinks + `,"fdb":` + netReportFDB + "}\n"
-		if r.stdout != want {
-			t.Errorf("%s: stdout %q, want %q", tool, r.stdout, want)
-		}
+		wantReport(t, r.stdout, netReportLinks, netReportFDB)
 	}
 	e := newNetEnv(t)
 	e.write("crash-ip.txt", "4")
 	e.ok("report")
-	if n := strings.Count(e.calls(), "ip -j -d link show type vxlan\n"); n != 5 {
+	if n := strings.Count(e.calls(), "ip -j link show type vxlan\n"); n != 5 {
 		t.Errorf("ip listing ran %d times, want 5", n)
 	}
 }

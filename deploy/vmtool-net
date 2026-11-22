@@ -23,7 +23,8 @@
 #                                          exactly the PEERs, master it to
 #                                          BRIDGE, bring it up; idempotent
 #   unlink VNI                             remove vx<VNI> (none: success)
-#   report                                 {"links":<ip JSON>,"fdb":<bridge JSON>}
+#   report                                 {"links":[<ip JSON of each vx<N>>],
+#                                           "fdb":<bridge JSON>}
 #
 # VNI is 1..16777215, decimal, no leading zero. BRIDGE must be vmt- plus six
 # lowercase hex digits equal to the VNI, and exist as a bridge. LOCAL_IP and
@@ -39,9 +40,12 @@
 # their whole run, so two callers never interleave; report holds it shared, so
 # it never sees a device another call is half-way through making. The lock
 # file is opened without truncating, and a path that is a symlink or not a
-# regular file is refused. report runs each of its two listings up to 5 times
-# (0.2 s apart) when one exits non-zero: ip has been seen to crash (SIGSEGV)
-# listing links while a device is being made.
+# regular file is refused. report never runs ip's detailed dump (-d with type,
+# or without dev): iproute2 6.1 crashes on it (SIGSEGV)
+# whenever a VXLAN device exists. It lists the VXLAN names without -d, keeps
+# only vx<digits>, asks each with ip -j -d link show dev vx<N> and joins the
+# objects; a device gone between the two calls is skipped. It runs each
+# listing and each query up to 5 times (0.2 s apart) when one exits non-zero.
 set -euo pipefail
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
@@ -204,9 +208,36 @@ case "$verb" in
   report)
     (( nargs == 0 )) || die "report: wrong number of arguments"
     take_lock -s
-    list_retry links ip -j -d link show type vxlan || die "cannot list the links"
+    # ip's detailed dump (-d with type, or without dev) segfaults in
+    # iproute2 6.1 whenever a VXLAN device exists, so: the names without
+    # -d, then each device on its own. The listing is untrusted text: only a
+    # name matching ^vx[0-9]+$ is ever passed to ip, once.
+    list_retry names ip -j link show type vxlan || die "cannot list the links"
+    links= seen=' '
+    rest=$names
+    ifname_re='"ifname":"([^"]*)"'
+    while [[ $rest =~ $ifname_re ]]; do
+      name=${BASH_REMATCH[1]}
+      rest=${rest#*"${BASH_REMATCH[0]}"}
+      [[ $name =~ ^vx[0-9]+$ ]] || continue
+      [[ $seen != *" $name "* ]] || continue
+      seen+="$name "
+      if ! one=$(ip -j -d link show dev "$name" 2>/dev/null); then
+        # Gone since the listing: skipped. Still there: tried again.
+        [[ -e $sysnet/$name ]] || continue
+        if ! list_retry one ip -j -d link show dev "$name"; then
+          [[ -e $sysnet/$name ]] || continue
+          die "cannot list the links"
+        fi
+      fi
+      # One array of objects, joined into one array; anything else is refused
+      # so the printed JSON stays well-formed.
+      [[ $one =~ ^\[(\{.*\})\][[:space:]]*$ ]] || die "cannot list the links"
+      links+=${links:+,}${BASH_REMATCH[1]}
+    done
     list_retry fdb bridge -j fdb show || die "cannot list the flood entries"
-    printf '{"links":%s,"fdb":%s}\n' "$links" "$fdb"
+    [[ $fdb =~ ^\[.*\][[:space:]]*$ ]] || die "cannot list the flood entries"
+    printf '{"links":[%s],"fdb":%s}\n' "$links" "$fdb"
     ;;
   *)
     die "unknown verb"

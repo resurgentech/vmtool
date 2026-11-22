@@ -142,10 +142,12 @@ func (n *NetHelper) Report() ([]NetLink, error) {
 
 var netDeviceRE = regexp.MustCompile(`^vx([1-9][0-9]{0,7})$`)
 
-// ParseNetReport reads the helper's report ({"links": ip -j -d link show
-// type vxlan, "fdb": bridge -j fdb show}). Only devices named vx<N> whose
-// VXLAN id is N are kept, sorted by VNI; a flood entry is one with the
-// all-zero MAC on such a device.
+// ParseNetReport reads the helper's report ({"links": the objects of
+// `ip -j -d link show dev vx<N>` for each VXLAN device, "fdb": bridge -j fdb
+// show}). Only devices named vx<N> whose VXLAN id is N are kept, sorted by
+// VNI; a flood entry is one with the all-zero MAC on such a device. bridge's
+// full listing names an entry's device in ifname (real iproute2 6.1 output);
+// dev is read when ifname is absent.
 func ParseNetReport(b []byte) ([]NetLink, error) {
 	var rep struct {
 		Links []struct {
@@ -162,9 +164,10 @@ func ParseNetReport(b []byte) ([]NetLink, error) {
 			} `json:"linkinfo"`
 		} `json:"links"`
 		FDB []struct {
-			MAC string `json:"mac"`
-			Dev string `json:"dev"`
-			Dst string `json:"dst"`
+			MAC    string `json:"mac"`
+			Ifname string `json:"ifname"`
+			Dev    string `json:"dev"`
+			Dst    string `json:"dst"`
 		} `json:"fdb"`
 	}
 	if err := json.Unmarshal(b, &rep); err != nil {
@@ -189,7 +192,11 @@ func ParseNetReport(b []byte) ([]NetLink, error) {
 		out = append(out, NetLink{VNI: uint32(id), Device: l.Ifname, Bridge: l.Master, Local: l.Linkinfo.Data.Local, Dev: dev})
 	}
 	for _, e := range rep.FDB {
-		i, ok := idx[e.Dev]
+		dev := e.Ifname
+		if dev == "" {
+			dev = e.Dev
+		}
+		i, ok := idx[dev]
 		if !ok || e.MAC != "00:00:00:00:00:00" || e.Dst == "" {
 			continue
 		}

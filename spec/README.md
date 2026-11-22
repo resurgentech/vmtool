@@ -953,6 +953,11 @@ their LAN addresses, so joining needs the store.
     reads the helper's report and links only when the device differs, because
     the helper re-makes a device whose settings differ, which drops the
     network's cross-host traffic for a moment; one that matches is kept, Z1).
+    The helper's `report` lists the VXLAN devices' names without `-d`, asks
+    each `vx<N>` on its own (`ip -j -d link show dev vx<N>`; a device gone
+    in between is skipped) and adds `bridge -j fdb show`, whose entries name
+    their device in `ifname`; it never runs ip's detailed dump, which
+    iproute2 6.1 crashes on whenever a VXLAN device exists (Z3).
     `404` for an unknown network, `409` for one that is not vmtool's, `400` for an argument the helper would refuse; `DELETE` of
     the same path (`deleteNetworkPeers`) removes the device.
   - `GET /v1/hosts/{host}/underlay?to=IP` (`getUnderlay`) runs `ip route get`

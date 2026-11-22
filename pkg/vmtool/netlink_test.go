@@ -123,6 +123,74 @@ func TestParseNetReport(t *testing.T) {
 	}
 }
 
+// Real output captured on veritech03 (kernel 7.0.0-43, iproute2 6.1.0) for a
+// throwaway device vxtest9, 2026-11-22: `ip -j -d link show dev vxtest9`
+// (a one-element array, no top-level link, no master) and four lines of
+// `bridge -j fdb show` (the full listing names the device in ifname, never
+// dev): two flood entries and two other neighbours.
+const (
+	realPerDevice = `[{"ifindex":19,"ifname":"vxtest9","flags":["BROADCAST","MULTICAST"],"mtu":1450,"qdisc":"noop","operstate":"DOWN","linkmode":"DEFAULT","group":"default","txqlen":1000,"link_type":"ether","address":"f6:2e:14:3d:d7:89","broadcast":"ff:ff:ff:ff:ff:ff","promiscuity":0,"allmulti":0,"min_mtu":68,"max_mtu":65535,"linkinfo":{"info_kind":"vxlan","info_data":{"id":4242,"local":"192.168.42.53","link":"enp97s0np0","port_range":{"low":0,"high":0},"port":4789,"learning":true,"ttl":0,"df":"unset","ageing":300,"udp_csum":true,"udp_zero_csum6_tx":false,"udp_zero_csum6_rx":false}},"inet6_addr_gen_mode":"eui64","num_tx_queues":1,"num_rx_queues":1,"gso_max_size":65536,"gso_max_segs":65535,"tso_max_size":524280,"tso_max_segs":65535,"gro_max_size":65536}]`
+	realFDB       = `{"mac":"00:00:00:00:00:00","ifname":"vxtest9","dst":"192.168.42.3","flags":["self"],"state":"permanent"},
+{"mac":"00:00:00:00:00:00","ifname":"vxtest9","dst":"192.168.42.54","flags":["self"],"state":"permanent"},
+{"mac":"33:33:00:00:00:01","ifname":"eno1","flags":["self"],"state":"permanent"},
+{"mac":"52:54:00:89:2f:25","ifname":"virbr0","vlan":1,"flags":[],"master":"virbr0","state":"permanent"}`
+	// realMastered is realPerDevice as it reads once the device is attached to
+	// a bridge: top-level master and the slave kind (derived, not captured).
+	realMastered = `[{"ifindex":21,"ifname":"vx10001","flags":["BROADCAST","MULTICAST","UP","LOWER_UP"],"mtu":1450,"qdisc":"noqueue","master":"vmt-002711","operstate":"UNKNOWN","linkmode":"DEFAULT","group":"default","txqlen":1000,"link_type":"ether","address":"f6:2e:14:3d:d7:8a","broadcast":"ff:ff:ff:ff:ff:ff","promiscuity":1,"allmulti":1,"min_mtu":68,"max_mtu":65535,"linkinfo":{"info_kind":"vxlan","info_data":{"id":10001,"local":"192.168.42.53","link":"enp97s0np0","port_range":{"low":0,"high":0},"port":4789,"learning":true,"ttl":0,"df":"unset","ageing":300,"udp_csum":true,"udp_zero_csum6_tx":false,"udp_zero_csum6_rx":false},"info_slave_kind":"bridge","info_slave_data":{"state":"forwarding","priority":32,"cost":100}},"inet6_addr_gen_mode":"eui64","num_tx_queues":1,"num_rx_queues":1,"gso_max_size":65536,"gso_max_segs":65535,"tso_max_size":524280,"tso_max_segs":65535,"gro_max_size":65536}]`
+)
+
+// realReport joins per-device arrays and fdb lines as the helper's report does.
+func realReport(perDevice []string, fdb string) string {
+	var objs []string
+	for _, p := range perDevice {
+		objs = append(objs, strings.TrimSuffix(strings.TrimPrefix(p, "["), "]"))
+	}
+	return `{"links":[` + strings.Join(objs, ",") + `],"fdb":[` + fdb + `]}`
+}
+
+// The real sample as captured: its name is not vmtool's (vx<N>), so nothing
+// is kept, and it parses.
+func TestParseNetReportRealSampleNotVmtoolName(t *testing.T) {
+	got, err := ParseNetReport([]byte(realReport([]string{realPerDevice}, realFDB)))
+	if err != nil || len(got) != 0 {
+		t.Fatalf("links = %+v, err %v; want none", got, err)
+	}
+}
+
+// The real sample with only the name changed to vmtool's form: the underlay
+// interface comes from info_data.link (no top-level link), and the flood
+// entries are read from bridge's ifname field; the other neighbours are not
+// peers. The mastered variant gives its bridge.
+func TestParseNetReportRealSample(t *testing.T) {
+	per := strings.ReplaceAll(realPerDevice, "vxtest9", "vx4242")
+	fdb := strings.ReplaceAll(realFDB, "vxtest9", "vx4242") + ",\n" +
+		`{"mac":"00:00:00:00:00:00","ifname":"vx10001","dst":"192.168.42.54","flags":["self"],"state":"permanent"}`
+	got, err := ParseNetReport([]byte(realReport([]string{per, realMastered}, fdb)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []NetLink{
+		{VNI: 4242, Device: "vx4242", Local: "192.168.42.53", Dev: "enp97s0np0", Peers: []string{"192.168.42.3", "192.168.42.54"}},
+		{VNI: 10001, Device: "vx10001", Bridge: "vmt-002711", Local: "192.168.42.53", Dev: "enp97s0np0", Peers: []string{"192.168.42.54"}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("links = %+v\nwant    %+v", got, want)
+	}
+}
+
+// An fdb entry that names its device in dev (no ifname) is still read.
+func TestParseNetReportFDBDevField(t *testing.T) {
+	per := strings.ReplaceAll(realPerDevice, "vxtest9", "vx4242")
+	got, err := ParseNetReport([]byte(realReport([]string{per},
+		`{"mac":"00:00:00:00:00:00","dev":"vx4242","dst":"192.168.42.3"},{"mac":"00:00:00:00:00:00","ifname":"vx4242","dev":"vx4242","dst":"192.168.42.54"}`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || !reflect.DeepEqual(got[0].Peers, []string{"192.168.42.3", "192.168.42.54"}) {
+		t.Fatalf("links = %+v", got)
+	}
+}
+
 func TestParseNetReportEmptyAndBad(t *testing.T) {
 	got, err := ParseNetReport([]byte(`{"links":[],"fdb":[]}`))
 	if err != nil || len(got) != 0 {

@@ -2,9 +2,11 @@ package scripts_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -24,11 +26,17 @@ const (
 	netPauseTok = "retry_pause=0.2"
 )
 
-// netReportLinks and netReportFDB are what the stub ip and bridge print for
-// report (ip -j -d link show type vxlan; bridge -j fdb show).
+// What the stub ip and bridge print for report. The name listing (ip -j link
+// show type vxlan, no -d) and the fdb line are shaped like real output from
+// veritech03 (iproute2 6.1.0); each device's detail comes from ip -j -d link
+// show dev <name>, a one-element array. A detailed dump (-d without dev)
+// exits 139, as the real ip does whenever a VXLAN device exists.
 const (
-	netReportLinks = `[{"ifname":"vx10001","master":"vmt-002711"}]`
-	netReportFDB   = `[{"mac":"00:00:00:00:00:00","dev":"vx10001","dst":"192.0.2.12"}]`
+	netReportNames = `[{"ifindex":19,"ifname":"vx10001","flags":["BROADCAST","MULTICAST"],"mtu":1450,"qdisc":"noop","operstate":"DOWN","linkmode":"DEFAULT","group":"default","txqlen":1000,"link_type":"ether","address":"f6:2e:14:3d:d7:89","broadcast":"ff:ff:ff:ff:ff:ff"}]`
+	netDev10001    = `{"ifindex":19,"ifname":"vx10001","master":"vmt-002711","linkinfo":{"info_kind":"vxlan","info_data":{"id":10001,"local":"192.0.2.11","link":"eth-test","port":4789}}}`
+	netDev10003    = `{"ifindex":23,"ifname":"vx10003","master":"vmt-002713","linkinfo":{"info_kind":"vxlan","info_data":{"id":10003,"local":"192.0.2.11","link":"eth-test","port":4789}}}`
+	netReportLinks = `[` + netDev10001 + `]`
+	netReportFDB   = `[{"mac":"00:00:00:00:00:00","ifname":"vx10001","dst":"192.0.2.12","flags":["self"],"state":"permanent"}]`
 )
 
 type netEnv struct {
@@ -57,13 +65,26 @@ func newNetEnv(t *testing.T) *netEnv {
 	body := `echo "$(basename "$0") $*" >> "$d/calls"
 if [[ -f $d/fail.txt ]] && grep -qF -- "$(cat "$d/fail.txt")" <<<"$*"; then exit 1; fi
 # n.txt: the first n calls of a listing exit 139 (a crash), then it works.
-if [[ "$*" == "-j -d link show type vxlan" || "$*" == "-j fdb show" ]] && [[ -f $d/crash-$(basename "$0").txt ]]; then
-  n=$(cat "$d/crash-$(basename "$0").txt")
-  if (( n > 0 )); then echo $((n-1)) > "$d/crash-$(basename "$0").txt"; exit 139; fi
+# crash-ip.txt counts the name listing, crash-dev.txt the per-device query.
+c=
+[[ "$*" == "-j link show type vxlan" || "$*" == "-j fdb show" ]] && c=$d/crash-$(basename "$0").txt
+[[ "$*" == "-j -d link show dev "* ]] && c=$d/crash-dev.txt
+if [[ -n $c && -f $c ]]; then
+  n=$(cat "$c")
+  if (( n > 0 )); then echo $((n-1)) > "$c"; exit 139; fi
 fi`
 	// show.txt and fdbdev.txt are what ip -d -o link show dev vx10001 and
 	// bridge fdb show dev vx10001 print for a device that already exists.
-	addStub(t, stub, "ip", body+"\n"+`[[ "$*" == "-j -d link show type vxlan" ]] && cat "$d/links.json"
+	// names.json is the name listing; dev-<name>.json what ip -j -d link show
+	// dev <name> prints (no file: the device does not exist). Any detailed
+	// dump crashes (139), like iproute2 6.1 with a VXLAN device present.
+	addStub(t, stub, "ip", body+"\n"+`a=" $* "
+if [[ $a == *" -d "* && $a == *" show "* && $a != *" show dev "* ]]; then exit 139; fi
+[[ "$*" == "-j link show type vxlan" ]] && cat "$d/names.json"
+if [[ "$*" == "-j -d link show dev "* ]]; then
+  n=${!#}
+  if [[ -f $d/dev-$n.json ]]; then cat "$d/dev-$n.json"; else echo "Device \"$n\" does not exist." >&2; exit 1; fi
+fi
 [[ "$*" == "-d -o link show dev vx10001" && -f $d/show.txt ]] && cat "$d/show.txt"; true`)
 	addStub(t, stub, "bridge", body+"\n"+`[[ "$*" == "-j fdb show" ]] && cat "$d/fdb.json"
 [[ "$*" == "fdb show dev vx10001" && -f $d/fdbdev.txt ]] && cat "$d/fdbdev.txt"; true`)
@@ -95,7 +116,8 @@ fi`
 		t.Fatal(err)
 	}
 	e := &netEnv{t: t, stub: stub, sys: sys, script: script, lock: lock}
-	e.write("links.json", netReportLinks)
+	e.write("names.json", netReportNames)
+	e.write("dev-vx10001.json", "["+netDev10001+"]\n")
 	e.write("fdb.json", netReportFDB)
 	return e
 }
@@ -240,14 +262,195 @@ func TestNetUnlinkAbsent(t *testing.T) {
 	e.wantCalls("")
 }
 
+// wantReport: stdout is exactly the report of links and fdb, and well-formed
+// JSON.
+func wantReport(t *testing.T, stdout, links, fdb string) {
+	t.Helper()
+	want := `{"links":` + links + `,"fdb":` + fdb + "}\n"
+	if stdout != want {
+		t.Errorf("stdout %q\nwant   %q", stdout, want)
+	}
+	if !json.Valid([]byte(stdout)) {
+		t.Errorf("stdout is not well-formed JSON: %q", stdout)
+	}
+}
+
+// Z3: report lists the names without -d, then asks each device on its own;
+// the detailed dump (which crashes the real ip) is never run.
 func TestNetReport(t *testing.T) {
 	e := newNetEnv(t)
 	r := e.ok("report")
-	want := `{"links":` + netReportLinks + `,"fdb":` + netReportFDB + "}\n"
-	if r.stdout != want {
-		t.Errorf("stdout %q, want %q", r.stdout, want)
+	wantReport(t, r.stdout, netReportLinks, netReportFDB)
+	e.wantCalls("ip -j link show type vxlan\nip -j -d link show dev vx10001\nbridge -j fdb show\n")
+}
+
+// Two devices: their objects joined into one array, in listing order.
+func TestNetReportTwoDevices(t *testing.T) {
+	e := newNetEnv(t)
+	e.write("names.json", `[{"ifindex":19,"ifname":"vx10001","mtu":1450},{"ifindex":23,"ifname":"vx10003","mtu":1450}]`)
+	e.write("dev-vx10003.json", "["+netDev10003+"]\n")
+	r := e.ok("report")
+	wantReport(t, r.stdout, `[`+netDev10001+`,`+netDev10003+`]`, netReportFDB)
+	e.wantCalls("ip -j link show type vxlan\nip -j -d link show dev vx10001\nip -j -d link show dev vx10003\nbridge -j fdb show\n")
+}
+
+// No VXLAN device: an empty links array.
+func TestNetReportNoDevices(t *testing.T) {
+	e := newNetEnv(t)
+	e.write("names.json", "[]\n")
+	r := e.ok("report")
+	wantReport(t, r.stdout, `[]`, netReportFDB)
+	e.wantCalls("ip -j link show type vxlan\nbridge -j fdb show\n")
+}
+
+// A device gone between the listing and its own query is skipped.
+func TestNetReportDeviceGone(t *testing.T) {
+	e := newNetEnv(t)
+	e.write("names.json", `[{"ifname":"vx10005"},{"ifname":"vx10001"}]`)
+	r := e.ok("report")
+	wantReport(t, r.stdout, netReportLinks, netReportFDB)
+	e.wantCalls("ip -j link show type vxlan\nip -j -d link show dev vx10005\nip -j -d link show dev vx10001\nbridge -j fdb show\n")
+}
+
+// Only names of the form vx<digits> are ever passed to ip, once each; any
+// other name in the listing (other VXLAN devices, or text that is not a name)
+// is ignored and the output stays well-formed.
+func TestNetReportOnlyVxNames(t *testing.T) {
+	e := newNetEnv(t)
+	e.write("names.json", `[{"ifname":"vxlan0"},{"ifname":"vx10001"},{"ifname":"-d"},{"ifname":"vx1 type"},`+
+		`{"ifname":"x\",\"ifname\":\"vx10003"},{"ifname":"vx10001"},{"ifname":"VX7"},{"ifname":"vx"}]`)
+	e.write("dev-vx10003.json", "["+netDev10003+"]\n")
+	r := e.ok("report")
+	wantReport(t, r.stdout, netReportLinks, netReportFDB)
+	e.wantCalls("ip -j link show type vxlan\nip -j -d link show dev vx10001\nbridge -j fdb show\n")
+}
+
+// A device that exists but whose query keeps failing is an error, not a
+// silent gap; one crash of the query is retried.
+func TestNetReportDeviceQueryFails(t *testing.T) {
+	e := newNetEnv(t)
+	if err := os.MkdirAll(filepath.Join(e.sys, "vx10001"), 0o755); err != nil {
+		t.Fatal(err)
 	}
-	e.wantCalls("ip -j -d link show type vxlan\nbridge -j fdb show\n")
+	e.write("crash-dev.txt", "1")
+	r := e.ok("report")
+	wantReport(t, r.stdout, netReportLinks, netReportFDB)
+
+	e = newNetEnv(t)
+	if err := os.MkdirAll(filepath.Join(e.sys, "vx10001"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	e.write("crash-dev.txt", "99")
+	r = e.run("report")
+	if r.code == 0 || r.stderr != "vmtool-net: cannot list the links\n" || r.stdout != "" {
+		t.Errorf("exit %d stdout %q stderr %q", r.code, r.stdout, r.stderr)
+	}
+}
+
+// ipDetailRE finds an ip invocation with options (one of them -d, -details or
+// a bundle with d) followed by link show and whatever comes after it.
+var ipDetailRE = regexp.MustCompile(`\bip((?:\s+-{1,2}[0-9A-Za-z]+)+)\s+link\s+show\b([^\n]*)`)
+
+// detailedDump reports whether line runs ip's detailed link listing in dump
+// form (with type, or without dev): the form that crashes iproute2 6.1 when a
+// VXLAN device exists. The per-device form (show dev X) is fine.
+func detailedDump(line string) bool {
+	for _, m := range ipDetailRE.FindAllStringSubmatch(line, -1) {
+		detail := false
+		for _, f := range strings.Fields(m[1]) {
+			if f == "-details" || f == "--details" || (!strings.HasPrefix(f, "--") && strings.Contains(f, "d")) {
+				detail = true
+			}
+		}
+		if !detail {
+			continue
+		}
+		rest := strings.TrimSpace(m[2])
+		if !strings.HasPrefix(rest, "dev ") || strings.Contains(rest, " type ") {
+			return true
+		}
+	}
+	return false
+}
+
+func TestDetailedDumpShape(t *testing.T) {
+	for line, want := range map[string]bool{
+		`list_retry links ip -j -d link show type vxlan || die`: true,
+		`ip -d link show`:                       true,
+		`ip -j -d link show | x`:                true,
+		`ip -details link show type vxlan`:      true,
+		`ip -jd link show`:                      true,
+		`// ip -j -d link show type vxlan`:      true,
+		`show=$(ip -d -o link show dev "$vx")`:  false,
+		`one=$(ip -j -d link show dev "$name")`: false,
+		`ip -j link show type vxlan`:            false,
+		`ip -o link show`:                       false,
+		`ip -d link show dev vx1 type vxlan`:    true,
+	} {
+		if got := detailedDump(line); got != want {
+			t.Errorf("%q: %v, want %v", line, got, want)
+		}
+	}
+}
+
+// Z3: no detailed link dump is left in the helper, the deploy scripts or
+// pkg/vmtool (iproute2 6.1 segfaults on it whenever a VXLAN device exists).
+func TestNoDetailedLinkDump(t *testing.T) {
+	var files []string
+	for _, root := range []string{"../deploy", "../pkg/vmtool"} {
+		err := filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if !d.IsDir() {
+				files = append(files, p)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	sh, err := filepath.Glob("*.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	files = append(files, sh...)
+	if len(files) < 3 {
+		t.Fatalf("scanned only %v", files)
+	}
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, line := range strings.Split(string(b), "\n") {
+			if detailedDump(line) {
+				t.Errorf("%s:%d: detailed link dump: %s", f, i+1, strings.TrimSpace(line))
+			}
+		}
+	}
+}
+
+// Output of a query that is not one array of objects is refused, so the
+// printed JSON is never malformed.
+func TestNetReportBadDeviceOutput(t *testing.T) {
+	for _, body := range []string{"", "[]", "garbage", `[{"ifname":"vx10001"}`, `{"ifname":"vx10001"}`} {
+		e := newNetEnv(t)
+		e.write("dev-vx10001.json", body)
+		r := e.run("report")
+		if r.code == 0 || r.stderr != "vmtool-net: cannot list the links\n" || r.stdout != "" {
+			t.Errorf("%q: exit %d stdout %q stderr %q", body, r.code, r.stdout, r.stderr)
+		}
+	}
+	for _, body := range []string{"", "garbage"} {
+		e := newNetEnv(t)
+		e.write("fdb.json", body)
+		r := e.run("report")
+		if r.code == 0 || r.stderr != "vmtool-net: cannot list the flood entries\n" || r.stdout != "" {
+			t.Errorf("fdb %q: exit %d stdout %q stderr %q", body, r.code, r.stdout, r.stderr)
+		}
+	}
 }
 
 func TestNetRefusals(t *testing.T) {
