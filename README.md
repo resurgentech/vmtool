@@ -812,6 +812,9 @@ just install        # build, cert, config.yml, systemd unit (vmtool server over 
 ./vmtool server                                         # HTTPS REST on 127.0.0.1:9473; GET / is Swagger UI
 ```
 
+The command line's conventions (`--json`, the error object, exit codes, the agent tips in `vmtool --help`) are
+in [docs/CLI.md](docs/CLI.md).
+
 ### A host's default pool for new VM disks (`default_pool`)
 
 When a request names no pool (the CLI and the TUI's "(host default)" send

@@ -30,15 +30,18 @@ func Execute() error {
 	if err != nil {
 		return err
 	}
-	err = newRootCmd(&env{dir: dir}).Execute()
-	if err == nil {
+	code, err := run(newRootCmd(&env{dir: dir}), os.Args[1:], os.Stderr)
+	switch {
+	case code == exitOK:
 		return nil
+	case code == exitError && err != nil:
+		// main prints it and exits 1, as it always has.
+		return err
 	}
-	var remote remoteExitError
-	if errors.As(err, &remote) {
-		os.Exit(remote.code)
-	}
-	return err
+	// A usage error (2), a remote command's own status, or an error already
+	// printed as the JSON error object.
+	os.Exit(code)
+	return nil
 }
 
 // env is what the root command shares with its subcommands.
@@ -226,11 +229,40 @@ func newRootCmd(e *env) *cobra.Command {
 Every command except help, completion and 'config write' needs config.yml in
 the working directory and VMTOOL_TOKEN (environment, else .env) matching its
 token_sha256. 'server' needs config.yml with token_sha256 but no local token;
-it checks the bearer token of every request instead.`,
+it checks the bearer token of every request instead.
+
+Agent tips:
+  - Use --json: every command that is not interactive prints exactly one JSON
+    object on stdout (lists under a named key); human text and progress go to
+    stderr. An error is {"error":{"code":"...","message":"..."}} on stderr,
+    with the same codes as the REST API. Exit codes: 0 success, 1 error,
+    2 usage; exec exits with the remote command's code. See docs/CLI.md.
+  - create blocks until the VM has an address and answers SSH
+    (ip_wait_seconds and ssh_wait_seconds in config.yml, 120 s each by
+    default; --no-wait returns once it starts). playbook, migrate-disk,
+    resize-disk, images push/pull and templates export block until done.
+  - Keys: the token is VMTOOL_TOKEN from the environment, else from .env in
+    the working directory ('just token-fetch' fetches it); the store's token
+    is VMTOOL_SERVER_TOKEN, found the same way.
+  - Interactive (no --json; with it they exit 2): i, ssh, tunnel, server and
+    metal ssh.
+  - Nothing prompts; each command's own help has its tips and examples.
+
+  vmtool --json list
+  vmtool create --help`,
 		// The token gate. No subcommand defines its own PersistentPreRun(E)
 		// (cobra would run only the nearest one); TestGateEveryCommand checks
 		// every command in the tree is refused without a valid token.
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+			if jsonMode(cmd) {
+				if cmd.Annotations[annotationInteractive] == "true" {
+					return usageError(errors.New(interactiveRefusal))
+				}
+			} else {
+				// run silenced cobra for an argument that looked like --json
+				// but belongs to another program (after exec's target).
+				cmd.Root().SilenceErrors, cmd.Root().SilenceUsage = false, false
+			}
 			if exemptFromGate(cmd) {
 				return nil
 			}
@@ -286,6 +318,8 @@ it checks the bearer token of every request instead.`,
 		serverCmd(e),
 		configCmd(func() (string, error) { return e.dir, nil }),
 	)
+	root.PersistentFlags().Bool(jsonFlagName, false, "print the result as one JSON object on stdout, and an error as one on stderr (see docs/CLI.md)")
+	markRunErrors(root)
 	return root
 }
 

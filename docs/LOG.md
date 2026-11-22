@@ -2783,3 +2783,41 @@ are appended, never edited in; a hook refuses rewrites.
   against the new store leaves `templates_reported: false`.
 - Commits: the API 2.10.0 commit on `master` (this entry rides in it); not
   pushed. No tag.
+
+## 2026-11-22 — CLI: the `--json` output layer, agent tips, and the convention's tree test
+
+- `docs/CLI.md` (new): the command-line convention this tool follows
+  (`--json` prints one object on stdout, the error object on stderr, exit
+  codes 0/1/2/75, help, interactive commands, conformance), then vmtool's
+  notes: the error codes are the REST API's `Error.code` values; exit 2 is
+  usage; `exec` exits with the remote code; vmtool never exits 75; the
+  interactive commands are `i`, `ssh`, `tunnel`, `server` and `metal ssh`.
+  README "Usage" links it.
+- `internal/cli/out.go` (new): `--json` is a root persistent flag;
+  `jsonMode`, `emit` (one object, refused if not an object), `humanOut`
+  (stderr in JSON mode), `fail` (an error with its code). `run` prints an
+  error once: with `--json` as `{"error":{"code","message"}}` on stderr;
+  without it as before (main prints the line, exit 1). Every RunE's error
+  is marked, so an error cobra returns while parsing is told apart: a usage
+  error now exits 2 (before: 1), with the same text. The gate's refusal is
+  `unauthorized`; an `app.Error` takes the code of its kind, as in the
+  REST server. A command marked `interactive` exits 2 with "interactive
+  command; no --json" under `--json`, before the gate.
+- Root help gains "Agent tips" (use `--json`; what blocks and how long;
+  where the token comes from; which commands are interactive) and examples.
+- `vmtool inventory` moves onto the layer: its own `--json` flag is gone
+  (the root's takes its place, same output) and its help has examples.
+- `internal/cli/clicontract_test.go` (new): `TestCLIContract` walks the real
+  tree (`rootFor`, `walk`); every runnable command but cobra's `help` and
+  `completion` must have help on stdout, exit 0, with usage and an example
+  line, and either be interactive and refuse `--json`, or have a case in
+  `jsonCases` whose real run against fakes prints exactly one JSON object
+  on stdout and nothing on the process's real stdout. The 58 commands not
+  yet converted are on `pendingJSON`; one that conforms fails the test.
+  Also `TestJSONGateRefusal`, `TestHumanGateRefusalUnchanged`,
+  `TestUsageExitCode`, `TestJSONCommandError`, `TestRootHelpAgentTips`.
+- Red: the new tests against a stub `run` (no flag, no error object, usage
+  exits 1, no tips). Green after the change; the existing CLI tests pass
+  unchanged; `just check` green.
+- Commits: the CLI output-layer commit on `master` (this entry rides in it);
+  not pushed. No tag.

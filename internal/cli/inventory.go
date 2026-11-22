@@ -1,8 +1,6 @@
 package cli
 
 import (
-	"encoding/json"
-
 	"github.com/resurgentech/vmtool/internal/app"
 
 	"github.com/spf13/cobra"
@@ -12,7 +10,6 @@ func inventoryCmd(e *env) *cobra.Command {
 	var (
 		host string
 		gone bool
-		asJS bool
 	)
 	cmd := &cobra.Command{
 		Use:   "inventory",
@@ -56,6 +53,9 @@ reporting. --json includes them.
 
 Needs the store (a server: block in config.yml and VMTOOL_SERVER_TOKEN); with
 none, or one that does not answer, it says so and exits 1.`,
+		Example: `  vmtool inventory
+  vmtool inventory --host hv1 --gone
+  vmtool inventory --json`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Flags parsed: a failure from here is the store's, not a usage error.
@@ -64,16 +64,13 @@ none, or one that does not answer, it says so and exits 1.`,
 			if err != nil {
 				return err
 			}
-			if asJS {
-				enc := json.NewEncoder(cmd.OutOrStdout())
-				enc.SetIndent("", "  ")
-				return enc.Encode(inv)
+			if jsonMode(cmd) {
+				return emit(cmd, inv)
 			}
 			return app.WriteInventory(cmd.OutOrStdout(), inv, gone)
 		},
 	}
 	cmd.Flags().StringVar(&host, "host", "", "only this host's row, VMs and templates (machines are always listed)")
 	cmd.Flags().BoolVar(&gone, "gone", false, "also list VMs their host no longer has, with when they are removed")
-	cmd.Flags().BoolVar(&asJS, "json", false, "print the inventory as JSON")
 	return cmd
 }
