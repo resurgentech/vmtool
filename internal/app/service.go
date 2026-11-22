@@ -153,7 +153,7 @@ type ProgressEvent struct {
 	Status string
 	Detail string
 	Output string
-	// Sent and Total are bytes, for stage "upload" status "progress".
+	// Sent and Total are bytes, for stages "upload", "fetch" and "relay", status "progress".
 	Sent, Total int64
 	// ElapsedMS is the milliseconds since the operation began, set by
 	// CreateVM on every event it emits (API 2.4.0 ProgressEvent.elapsed_ms).
@@ -248,7 +248,7 @@ func (s *Service) now() time.Time {
 
 // stamped wraps f so every event carries ElapsedMS, the milliseconds since
 // this call. The stamp is this machine's: an event relayed from a daemon
-// (the fetch progress mapped to "upload" events) gets the time on the clock
+// (the fetch progress mapped to "fetch" events) gets the time on the clock
 // that is timing the create, not the daemon's. A nil f stays nil.
 func (s *Service) stamped(f ProgressFunc) ProgressFunc {
 	if f == nil {

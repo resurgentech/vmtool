@@ -12,7 +12,7 @@ func TestUploadProgressRetitlesLog(t *testing.T) {
 	m := initialModel(nil, "jetfire", "ansible/playbooks", "ansible/inventory.yml")
 	idx := m.addLog("creating veritech01/web...")
 	ev := app.ProgressEvent{Stage: "upload", Status: "progress", Sent: 3 << 20, Total: 12 << 20}
-	title := uploadTitle("veritech01/web", ev)
+	title := transferTitle("veritech01/web", ev)
 	if title != "creating veritech01/web: uploading image 25% (3 / 12 MiB)" {
 		t.Fatalf("title %q", title)
 	}
@@ -21,10 +21,10 @@ func TestUploadProgressRetitlesLog(t *testing.T) {
 	if m.log[idx].title != title {
 		t.Fatalf("log title %q", m.log[idx].title)
 	}
-	if uploadTitle("x", app.ProgressEvent{Stage: "clone", Status: "done"}) != "" {
+	if transferTitle("x", app.ProgressEvent{Stage: "clone", Status: "done"}) != "" {
 		t.Error("non-upload event titled")
 	}
-	if !strings.Contains(uploadTitle("x", app.ProgressEvent{Stage: "upload", Status: "hash"}), "hashing") {
+	if !strings.Contains(transferTitle("x", app.ProgressEvent{Stage: "upload", Status: "hash"}), "hashing") {
 		t.Error("hash event not shown")
 	}
 	// A finished entry is not retitled by a late progress message.
@@ -50,3 +50,12 @@ func TestSvcLocalImages(t *testing.T) {
 type imgFake struct{ app.Manager }
 
 func (imgFake) ImagePath(n string) (string, error) { return "/pool/" + n, nil }
+
+func TestTransferTitleWordsByStage(t *testing.T) {
+	for stage, word := range map[string]string{"fetch": "fetching image", "relay": "relaying image", "upload": "uploading image"} {
+		got := transferTitle("x", app.ProgressEvent{Stage: stage, Status: "progress", Sent: 1 << 20, Total: 4 << 20})
+		if want := "creating x: " + word + " 25% (1 / 4 MiB)"; got != want {
+			t.Errorf("%s: %q, want %q", stage, got, want)
+		}
+	}
+}

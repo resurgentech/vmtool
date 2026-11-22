@@ -2500,3 +2500,28 @@ are appended, never edited in; a hook refuses rewrites.
   call containing the `-ldflags` build. Green; `just check` green.
 - Rollout: the daemons show their revision after their next `just deploy`.
 - Commits: the Y1 commit on `clone-identity` (this entry rides in it).
+
+## 2026-11-22 — Y2 The host's fetch from the store is not called an upload
+
+- API 2.8.0: `ProgressEvent.stage` gains `fetch` (the host downloading from
+  the store) and `relay` (this machine streaming the store's bytes to the
+  host); `upload` stays this machine sending its own copy. `internal/api`
+  regenerated.
+- `internal/app/fetch.go`: the fetch path emits `fetch`, the relay path
+  `relay`; `noteUpload` becomes `noteStage(in, stage, line)` so each notice
+  sits under its own stage (store-unreachable notices under `fetch`, relay
+  notices under `relay`, the "not in the store" hint under `upload`). A
+  fallback shows the stages that ran, each timed under its own name.
+- CLI `imageTransferProgress` prints `fetching:` / `relaying:` /
+  `uploading:` (also used by `templates export --push`, still `uploading:`);
+  TUI `transferTitle` likewise. Done lines unchanged. README store steps and
+  `spec/README.md` name the stages. Daemons need no redeploy.
+- Tests: `TestSyncStoreStageNames`, `TestTransferProgressWordsByStage`,
+  `TestTimingsLineNamesTransferStages`, `TestTransferTitleWordsByStage`,
+  `TestCreateStreamCarriesTransferStageNames`; version pins 2.8.0
+  (`internal/server`); `internal/remote/createfetch_test.go` follows the
+  rename.
+- Red: `fetch: stages [upload]`, `fallback: stages [upload]`; CLI
+  `"\ruploading:  25% …", want "\rfetching:  25% …"`. Green; `just check`
+  green.
+- Commits: the Y2 commit on `clone-identity` (this entry rides in it).

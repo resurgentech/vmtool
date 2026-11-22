@@ -432,10 +432,27 @@ func (e *env) libvirtNameCheck() (app.Manager, func()) {
 	return m, release
 }
 
-// uploadProgress renders create's image-upload events on stderr as one
-// updating line; it reports whether it handled ev.
-func uploadProgress(w io.Writer, ev app.ProgressEvent) bool {
-	if ev.Stage != "upload" {
+// transferWord is the progress word of an image-transfer stage: the host
+// fetching from the store, this machine relaying the store's bytes, or this
+// machine uploading its own copy. "" for any other stage.
+func transferWord(stage string) string {
+	switch stage {
+	case "fetch":
+		return "fetching"
+	case "relay":
+		return "relaying"
+	case "upload":
+		return "uploading"
+	}
+	return ""
+}
+
+// imageTransferProgress renders create's image-transfer events (stages fetch,
+// relay and upload) on stderr as one updating line; it reports whether it
+// handled ev.
+func imageTransferProgress(w io.Writer, ev app.ProgressEvent) bool {
+	word := transferWord(ev.Stage)
+	if word == "" {
 		return false
 	}
 	switch ev.Status {
@@ -447,7 +464,7 @@ func uploadProgress(w io.Writer, ev app.ProgressEvent) bool {
 		if ev.Total > 0 {
 			pct = ev.Sent * 100 / ev.Total
 		}
-		fmt.Fprintf(w, "\ruploading: %3d%% (%d / %d MiB)", pct, ev.Sent>>20, ev.Total>>20)
+		fmt.Fprintf(w, "\r%s: %3d%% (%d / %d MiB)", word, pct, ev.Sent>>20, ev.Total>>20)
 		if ev.Sent >= ev.Total {
 			fmt.Fprintln(w)
 		}
@@ -619,7 +636,7 @@ removes the reservations.
 				Comment:         comment,
 				OnProgress: func(ev app.ProgressEvent) {
 					evs = append(evs, ev)
-					if uploadProgress(os.Stderr, ev) {
+					if imageTransferProgress(os.Stderr, ev) {
 						return
 					}
 					if ev.Output != "" {

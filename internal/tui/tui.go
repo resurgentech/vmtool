@@ -144,10 +144,18 @@ type progressMsg struct {
 	title  string
 }
 
-// uploadTitle is a log title for an upload progress event, or "" when ev is
-// not one.
-func uploadTitle(name string, ev app.ProgressEvent) string {
-	if ev.Stage != "upload" {
+// transferTitle is a log title for an image-transfer progress event (stage
+// fetch, relay or upload), or "" when ev is not one.
+func transferTitle(name string, ev app.ProgressEvent) string {
+	var verb string
+	switch ev.Stage {
+	case "fetch":
+		verb = "fetching"
+	case "relay":
+		verb = "relaying"
+	case "upload":
+		verb = "uploading"
+	default:
 		return ""
 	}
 	switch ev.Status {
@@ -158,7 +166,7 @@ func uploadTitle(name string, ev app.ProgressEvent) string {
 		if ev.Total > 0 {
 			pct = ev.Sent * 100 / ev.Total
 		}
-		return fmt.Sprintf("creating %s: uploading image %d%% (%d / %d MiB)", name, pct, ev.Sent>>20, ev.Total>>20)
+		return fmt.Sprintf("creating %s: %s image %d%% (%d / %d MiB)", name, verb, pct, ev.Sent>>20, ev.Total>>20)
 	}
 	return ""
 }
@@ -1064,7 +1072,7 @@ func (m model) submitCreate() (tea.Model, tea.Cmd) {
 	return m, func() tea.Msg {
 		var buf strings.Builder
 		in.OnProgress = func(ev app.ProgressEvent) {
-			if t := uploadTitle(name, ev); t != "" {
+			if t := transferTitle(name, ev); t != "" {
 				m.send.Send(progressMsg{logIdx: logIdx, title: t})
 				return
 			}

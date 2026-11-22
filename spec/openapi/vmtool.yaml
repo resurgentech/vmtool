@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: vmtool API
-  version: 2.7.0
+  version: 2.8.0
   description: >
     HTTP surface of `vmtool server`. Spec-first: models, stdlib ServerInterface,
     embedded spec, and a test client are generated from this file. Metal and
@@ -2606,12 +2606,12 @@ components:
         to a request that asks for `application/x-ndjson` (API 2.6.0).
       required: [stage, status]
       properties:
-        stage: { type: string, description: "clone, resize, extra_disk, network, start, write_inventory, wait_ip, wait_ssh, grow_disk, playbook, reboot, upload, credentials" }
+        stage: { type: string, description: "clone, resize, extra_disk, network, start, write_inventory, wait_ip, wait_ssh, grow_disk, playbook, reboot, upload, fetch, relay, credentials. `upload` is this machine sending its own copy of the image to the host; `fetch` is the host downloading it from the store; `relay` is this machine streaming the store's copy to the host (`fetch` and `relay` are API 2.8.0; before, both were reported as `upload`)" }
         status: { type: string, description: "start, done, error, progress, hash or notice" }
         detail: { type: string }
         output: { type: string, description: "captured tool output, for a failed or finished step" }
-        sent: { type: integer, format: int64, description: "upload: bytes sent so far" }
-        total: { type: integer, format: int64, description: "upload: bytes expected" }
+        sent: { type: integer, format: int64, description: "upload, fetch or relay: bytes transferred so far" }
+        total: { type: integer, format: int64, description: "upload, fetch or relay: bytes expected" }
         elapsed_ms:
           type: integer
           format: int64

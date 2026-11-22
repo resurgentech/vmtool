@@ -107,15 +107,15 @@ func TestCreateFetchTicketOnlyInRequestBody(t *testing.T) {
 	}
 	var progress *app.ProgressEvent
 	for i := range events {
-		if events[i].Stage == "upload" && events[i].Status == "progress" {
+		if events[i].Stage == "fetch" && events[i].Status == "progress" {
 			progress = &events[i]
 		}
 	}
 	if progress == nil || progress.Sent != 1024 || progress.Total != 2048 {
-		t.Errorf("daemon progress was not mapped to an upload event: %+v", events)
+		t.Errorf("daemon progress was not mapped to a fetch event: %+v", events)
 	}
 	last := events[len(events)-1]
-	if last.Stage != "upload" || last.Status != "error" || !strings.Contains(last.Detail, "disk full") {
+	if last.Stage != "fetch" || last.Status != "error" || !strings.Contains(last.Detail, "disk full") {
 		t.Errorf("last event %+v", last)
 	}
 }

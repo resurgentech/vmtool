@@ -142,7 +142,7 @@ func (s *Service) syncImage(ctx context.Context, st ImageStore, in CreateVMInput
 	defer f.Close()
 	total := info.Size
 	if lacks {
-		s.noteUpload(in, fmt.Sprintf("%s is not in the store; to share it, run: "+StoreImageHint, in.Image, in.Image))
+		s.noteStage(in, "upload", fmt.Sprintf("%s is not in the store; to share it, run: "+StoreImageHint, in.Image, in.Image))
 	}
 	emit(in, "upload", "start", fmt.Sprintf("uploading %s to %s (%d bytes)", in.Image, in.Host, total), "")
 	step, next := uploadStep(total), int64(0)

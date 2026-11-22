@@ -472,3 +472,41 @@ func (l lockedWriter) Write(p []byte) (int, error) {
 	defer l.mu.Unlock()
 	return l.w.Write(p)
 }
+
+// The stage names of an image transfer (fetch, relay, upload; API 2.8.0) go
+// out on the stream as the workflow named them, and the timings keep each
+// under its own name.
+func TestCreateStreamCarriesTransferStageNames(t *testing.T) {
+	rec := httptest.NewRecorder()
+	cs := &createStream{st: newNDJSON(rec)}
+	evs := []app.ProgressEvent{
+		{Stage: "fetch", Status: "start", ElapsedMS: 10},
+		{Stage: "fetch", Status: "progress", Sent: 5, Total: 10, ElapsedMS: 20},
+		{Stage: "relay", Status: "start", ElapsedMS: 30},
+		{Stage: "relay", Status: "done", ElapsedMS: 50},
+		{Stage: "upload", Status: "start", ElapsedMS: 60},
+		{Stage: "upload", Status: "done", ElapsedMS: 90},
+	}
+	for _, ev := range evs {
+		cs.progress(ev)
+	}
+	var got []string
+	for _, l := range strings.Split(strings.TrimSpace(rec.Body.String()), "\n") {
+		var m map[string]any
+		if err := json.Unmarshal([]byte(l), &m); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, progressOf(t, m)["stage"].(string))
+	}
+	if want := []string{"fetch", "fetch", "relay", "relay", "upload", "upload"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("stages %v, want %v", got, want)
+	}
+	tm := cs.timings()
+	var names []string
+	for _, s := range tm.Stages {
+		names = append(names, s.Stage)
+	}
+	if !reflect.DeepEqual(names, []string{"fetch", "relay", "upload"}) {
+		t.Fatalf("timing stages %v", names)
+	}
+}

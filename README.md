@@ -467,13 +467,15 @@ Base images, in store mode, `create` asks the store first:
    downloads from the `store_url` in its own `config.yml` (`just deploy`
    writes it from the client's `server.url`), https only, system trust
    store, no redirects, through the same checked receive path as an upload
-   (the SHA-256 and size must match). Progress shows as for an upload. The
-   image bytes never pass through the client. A daemon that already holds
+   (the SHA-256 and size must match). Progress shows as `fetching: N%` and the
+   timings line names the stage `fetch` (a `create` by this machine's
+   client; API 2.8.0). The image bytes never pass through the client. A daemon that already holds
    the image at the store's digest does nothing.
 2. If the daemon cannot fetch (no `store_url`: 409; a daemon older than 2.3.0:
    404; the store not reachable from the host), the client **relays**: it
    streams the image from the store into the daemon's `uploadImage` with no
-   local file, after one line saying so. A digest or size mismatch is not
+   local file, after one line saying so (progress `relaying: N%`, stage
+   `relay`). A digest or size mismatch is not
    relayed; `create` fails.
 3. If the store lacks the image but `image_dir` or a local pool has it, it is
    uploaded to the daemon as in local mode, with a line suggesting

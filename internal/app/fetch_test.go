@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -233,7 +234,7 @@ func TestSyncStoreHostCurrentDoesNothing(t *testing.T) {
 	if r.store.tickets.Load() != 0 || len(r.vms.fetches) != 0 || r.vms.uploads != 0 || r.src.n.Load() != 0 {
 		t.Fatalf("tickets %d fetches %d uploads %d local lookups %d", r.store.tickets.Load(), len(r.vms.fetches), r.vms.uploads, r.src.n.Load())
 	}
-	if r.statuses() != "upload:done" {
+	if r.statuses() != "fetch:done" {
 		t.Errorf("events %s", r.statuses())
 	}
 }
@@ -256,7 +257,7 @@ func TestSyncStoreFetchesWithTicketAndReadsNoBytes(t *testing.T) {
 	if r.src.n.Load() != 0 || r.store.blobs.Load() != 0 || r.vms.uploads != 0 {
 		t.Fatalf("client touched image bytes: lookups %d blob GETs %d uploads %d", r.src.n.Load(), r.store.blobs.Load(), r.vms.uploads)
 	}
-	if r.statuses() != "upload:start,upload:progress,upload:progress,upload:done" {
+	if r.statuses() != "fetch:start,fetch:progress,fetch:progress,fetch:done" {
 		t.Fatalf("events %s", r.statuses())
 	}
 	p := r.events[1]
@@ -380,7 +381,13 @@ func TestSyncStoreFetchErrorNeverHasTicket(t *testing.T) {
 				}
 			}
 			last := r.events[len(r.events)-1]
-			if last.Stage != "upload" || last.Status != "error" {
+			// A plain failure ends the fetch stage; a relayable one is
+			// relayed and the relay is what failed.
+			wantStage := "relay"
+			if name == "plain" {
+				wantStage = "fetch"
+			}
+			if last.Stage != wantStage || last.Status != "error" {
 				t.Errorf("last event %+v", last)
 			}
 			if r.vms.uploads != 0 {
@@ -441,7 +448,7 @@ func assertRelayed(t *testing.T, r *storeRun, reason string) {
 	if ents, _ := os.ReadDir("."); len(ents) != 0 {
 		t.Errorf("relay left files in the working directory: %v", ents)
 	}
-	if !strings.Contains(r.statuses(), "upload:notice") || !strings.HasSuffix(r.statuses(), "upload:progress,upload:done") {
+	if !strings.Contains(r.statuses(), "relay:notice") || !strings.HasSuffix(r.statuses(), "relay:progress,relay:done") {
 		t.Errorf("events %s", r.statuses())
 	}
 	for _, e := range r.events {
@@ -568,5 +575,76 @@ func TestSyncStoreRelayBlobDisagreesDoesNotUpload(t *testing.T) {
 				t.Fatalf("the store's blob was uploaded: %+v", r.vms.uploadCalls)
 			}
 		})
+	}
+}
+
+// stagesRan is the stages the create timer lists for the run's events, each
+// stamped 10 ms after the one before, with the ms of each.
+func stagesRan(r *storeRun) (names []string, ms map[string]int64) {
+	var tm CreateTimer
+	for i, e := range r.events {
+		e.ElapsedMS = int64(i) * 10
+		tm.Add(e)
+	}
+	ms = map[string]int64{}
+	for _, s := range tm.Timings().Stages {
+		names = append(names, s.Stage)
+		ms[s.Stage] = s.MS
+	}
+	return names, ms
+}
+
+func TestSyncStoreStageNames(t *testing.T) {
+	// The host fetches: stage fetch only.
+	r := syncStore(t, func(st *imgStore, v *fetchVMs) {
+		st.put("u.qcow2", imgSHA, 100)
+		v.progress = [][2]int64{{50, 100}, {100, 100}}
+	})
+	if r.err != nil {
+		t.Fatal(r.err)
+	}
+	if got, _ := stagesRan(r); !reflect.DeepEqual(got, []string{"fetch"}) {
+		t.Errorf("fetch: stages %v (%s)", got, r.statuses())
+	}
+
+	// The fetch is not possible, this machine relays: fetch, then relay.
+	r = syncStore(t, func(st *imgStore, v *fetchVMs) {
+		relayStore(st)
+		v.fetchErr = &relayKindErr{"hv1: no store configured on hv1", "no store configured on the host"}
+	})
+	if got, _ := stagesRan(r); !reflect.DeepEqual(got, []string{"fetch", "relay"}) {
+		t.Errorf("relay: stages %v (%s)", got, r.statuses())
+	}
+	for _, e := range r.events {
+		if e.Stage == "upload" {
+			t.Errorf("relay run has an upload event: %+v", e)
+		}
+	}
+
+	// The relay fails and this machine's copy goes up: fetch, relay, upload,
+	// each timed under its own name.
+	r = syncStore(t, func(st *imgStore, v *fetchVMs) {
+		relayStore(st)
+		v.fetchErr = &relayKindErr{"hv1: no store configured on hv1", "no store configured on the host"}
+		v.uploadErrs = []error{errors.New("hv1: upload broke")}
+	})
+	if r.err != nil {
+		t.Fatal(r.err)
+	}
+	got, ms := stagesRan(r)
+	if !reflect.DeepEqual(got, []string{"fetch", "relay", "upload"}) {
+		t.Fatalf("fallback: stages %v (%s)", got, r.statuses())
+	}
+	if ms["relay"] <= 0 || ms["upload"] <= 0 {
+		t.Errorf("fallback: timings %v", ms)
+	}
+	// The upload stage starts at its own hash event, not at a notice.
+	for i, e := range r.events {
+		if e.Stage == "upload" {
+			if e.Status != "hash" {
+				t.Errorf("first upload event %d is %s, want hash", i, e.Status)
+			}
+			break
+		}
 	}
 }

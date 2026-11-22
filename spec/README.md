@@ -349,6 +349,12 @@ line saying to redeploy it.
 
 ### `fetchImage` and the relay
 
+Stage names (API 2.8.0). In a create's `ProgressEvent`s and `timings`, the
+host downloading from the store is stage `fetch`, this machine streaming the
+store's bytes to the host is `relay`, and this machine sending its own copy is
+`upload`. A fetch that falls back shows the stages that ran, each under its
+own name. Only the workstation client changed; daemons need no redeploy.
+
 `fetchImage` (`POST /v1/hosts/{host}/images/{name}/fetch`, in `vmtool.yaml`,
 API 2.3.0) has a hypervisor daemon download an image from the store instead of
 receiving it from the client. The client first gets a ticket

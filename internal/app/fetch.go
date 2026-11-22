@@ -82,11 +82,11 @@ func (s *Service) fetchViaStore(ctx context.Context, st ImageStore, f ImageFetch
 		if vmtool.IsNotFound(gerr) {
 			return false, true, nil
 		}
-		s.noteUpload(in, fmt.Sprintf("%s: the store could not be asked for %s (%v); using this machine's copy", s.Store.Host(), in.Image, gerr))
+		s.noteStage(in, "fetch", fmt.Sprintf("%s: the store could not be asked for %s (%v); using this machine's copy", s.Store.Host(), in.Image, gerr))
 		return false, false, nil
 	}
 	if rem.SHA256 == img.SHA256 && rem.Size == img.Size {
-		emit(in, "upload", "done", fmt.Sprintf("%s is up to date on %s", in.Image, in.Host), "")
+		emit(in, "fetch", "done", fmt.Sprintf("%s is up to date on %s", in.Image, in.Host), "")
 		return true, false, nil
 	}
 	t, terr := cat.Ticket(ctx, in.Image)
@@ -94,12 +94,12 @@ func (s *Service) fetchViaStore(ctx context.Context, st ImageStore, f ImageFetch
 		if vmtool.IsNotFound(terr) {
 			return false, true, nil
 		}
-		s.noteUpload(in, fmt.Sprintf("%s: the store would not give a download ticket for %s (%v); using this machine's copy", s.Store.Host(), in.Image, terr))
+		s.noteStage(in, "fetch", fmt.Sprintf("%s: the store would not give a download ticket for %s (%v); using this machine's copy", s.Store.Host(), in.Image, terr))
 		return false, false, nil
 	}
 	ticket := t.Ticket
 	total := t.Size
-	emit(in, "upload", "start", fmt.Sprintf("%s fetches %s from the store (%d bytes)", in.Host, in.Image, total), "")
+	emit(in, "fetch", "start", fmt.Sprintf("%s fetches %s from the store (%d bytes)", in.Host, in.Image, total), "")
 	step, next := uploadStep(total), int64(0)
 	progress := func(received, tot int64) {
 		if tot <= 0 {
@@ -107,7 +107,7 @@ func (s *Service) fetchViaStore(ctx context.Context, st ImageStore, f ImageFetch
 		}
 		if received >= next || received == tot {
 			next = received + step
-			in.OnProgress.emitEvent(ProgressEvent{Stage: "upload", Status: "progress",
+			in.OnProgress.emitEvent(ProgressEvent{Stage: "fetch", Status: "progress",
 				Detail: fmt.Sprintf("%d/%d bytes", received, tot), Sent: received, Total: tot})
 		}
 	}
@@ -117,7 +117,7 @@ func (s *Service) fetchViaStore(ctx context.Context, st ImageStore, f ImageFetch
 			return s.relayToHost(ctx, st, cat, t, in, relayReason(ferr), ticket)
 		}
 		msg := scrub(ferr.Error(), ticket)
-		emit(in, "upload", "error", msg, "")
+		emit(in, "fetch", "error", msg, "")
 		kind := KindBadGateway
 		var ae *Error
 		if errors.As(ferr, &ae) {
@@ -125,7 +125,7 @@ func (s *Service) fetchViaStore(ctx context.Context, st ImageStore, f ImageFetch
 		}
 		return true, false, &Error{Kind: kind, Op: "create", Err: &scrubbed{msg: msg, err: ferr}}
 	}
-	emit(in, "upload", "done", fmt.Sprintf("%s fetched %s from the store", in.Host, in.Image), "")
+	emit(in, "fetch", "done", fmt.Sprintf("%s fetched %s from the store", in.Host, in.Image), "")
 	return true, false, nil
 }
 
@@ -136,7 +136,7 @@ func (s *Service) fetchViaStore(ctx context.Context, st ImageStore, f ImageFetch
 // caller uploads that copy as in local mode, after a line saying so; with no
 // copy the create fails.
 func (s *Service) relayToHost(ctx context.Context, st ImageStore, cat ImageCatalog, t *ImageTicket, in CreateVMInput, reason, ticket string) (handled, lacks bool, err error) {
-	s.noteUpload(in, fmt.Sprintf("relaying %s to %s through this machine: %s", in.Image, in.Host, reason))
+	s.noteStage(in, "relay", fmt.Sprintf("relaying %s to %s through this machine: %s", in.Image, in.Host, reason))
 	rerr := s.relay(ctx, st, cat, t, in)
 	if rerr == nil {
 		return true, false, nil
@@ -144,12 +144,12 @@ func (s *Service) relayToHost(ctx context.Context, st ImageStore, cat ImageCatal
 	msg := scrub(rerr.Error(), ticket)
 	if s.Images != nil {
 		if _, ferr := s.Images.FindImage(in.Image); ferr == nil {
-			s.noteUpload(in, fmt.Sprintf("relaying %s to %s failed (%s); using this machine's copy", in.Image, in.Host, msg))
+			s.noteStage(in, "relay", fmt.Sprintf("relaying %s to %s failed (%s); using this machine's copy", in.Image, in.Host, msg))
 			return false, false, nil
 		}
 	}
 	msg = fmt.Sprintf("relaying %s to %s failed (%s) and this machine has no copy of it", in.Image, in.Host, msg)
-	emit(in, "upload", "error", msg, "")
+	emit(in, "relay", "error", msg, "")
 	kind := KindBadGateway
 	var ae *Error
 	if errors.As(rerr, &ae) {
@@ -170,27 +170,28 @@ func (s *Service) relay(ctx context.Context, st ImageStore, cat ImageCatalog, t 
 		return fmt.Errorf("the store's copy does not match its own metadata (sha256 %q size %d, expected %q size %d)", got.SHA256, got.Size, t.SHA256, t.Size)
 	}
 	total := t.Size
-	emit(in, "upload", "start", fmt.Sprintf("relaying %s to %s (%d bytes)", in.Image, in.Host, total), "")
+	emit(in, "relay", "start", fmt.Sprintf("relaying %s to %s (%d bytes)", in.Image, in.Host, total), "")
 	step, next := uploadStep(total), int64(0)
 	progress := func(sent int64) {
 		if sent >= next || sent == total {
 			next = sent + step
-			in.OnProgress.emitEvent(ProgressEvent{Stage: "upload", Status: "progress",
+			in.OnProgress.emitEvent(ProgressEvent{Stage: "relay", Status: "progress",
 				Detail: fmt.Sprintf("%d/%d bytes", sent, total), Sent: sent, Total: total})
 		}
 	}
 	if err := st.UploadImage(ctx, in.Image, body, total, t.SHA256, progress); err != nil {
 		return err
 	}
-	emit(in, "upload", "done", fmt.Sprintf("relayed %s to %s", in.Image, in.Host), "")
+	emit(in, "relay", "done", fmt.Sprintf("relayed %s to %s", in.Image, in.Host), "")
 	return nil
 }
 
-// noteUpload sends one line to the command's user (once) and, when it went
-// out, as a progress event (stage upload, status notice).
-func (s *Service) noteUpload(in CreateVMInput, line string) {
+// noteStage sends one line to the command's user (once) and, when it went
+// out, as a progress event (status notice) under the transfer stage it
+// belongs to: fetch, relay or upload.
+func (s *Service) noteStage(in CreateVMInput, stage, line string) {
 	if s.Store.Notify(line) {
-		emit(in, "upload", "notice", line, "")
+		emit(in, stage, "notice", line, "")
 	}
 }
 

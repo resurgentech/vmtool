@@ -174,7 +174,7 @@ exists is left as it is. Without --pool the host's default pool is used.`,
 			t, err := e.service("").PrepareTemplate(cmd.Context(), m, app.PrepareTemplateInput{
 				Host: host, Image: image, Pool: pool,
 				OnProgress: func(ev app.ProgressEvent) {
-					if uploadProgress(errw, ev) {
+					if imageTransferProgress(errw, ev) {
 						return
 					}
 					if ev.Status == "done" && ev.Detail != "" {
