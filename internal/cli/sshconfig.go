@@ -28,6 +28,9 @@ jetfire). vmtool's own commands still take host/vm.
 
 The ProxyCommand runs in vmtool's working directory (where config.yml is)
 and needs VMTOOL_TOKEN in the environment (or in .env there).`,
+		Example: `  vmtool ssh-config --json
+
+  Tip: with --json the block is the "config" string of the object.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			dir, err := filepath.Abs(e.dir)
@@ -37,6 +40,9 @@ and needs VMTOOL_TOKEN in the environment (or in .env there).`,
 			block, err := sshConfigBlock(dir)
 			if err != nil {
 				return err
+			}
+			if jsonMode(cmd) {
+				return emit(cmd, map[string]string{"config": block})
 			}
 			_, err = io.WriteString(cmd.OutOrStdout(), block)
 			return err

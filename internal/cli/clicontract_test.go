@@ -24,28 +24,17 @@ import (
 // pendingJSON are the commands not yet converted. A command on it that
 // already conforms fails the test, so the list only shrinks.
 var pendingJSON = map[string]bool{
-	"vmtool add-disk":          true,
-	"vmtool autostart":         true,
-	"vmtool bridges":           true,
-	"vmtool comment":           true,
 	"vmtool config host":       true,
 	"vmtool config host-vms":   true,
 	"vmtool config server-url": true,
 	"vmtool config set-host":   true,
 	"vmtool config write":      true,
-	"vmtool create":            true,
 	"vmtool creds fetch":       true,
 	"vmtool creds forget":      true,
-	"vmtool delete":            true,
-	"vmtool exec":              true,
-	"vmtool hosts":             true,
-	"vmtool i":                 true,
 	"vmtool images delete":     true,
 	"vmtool images list":       true,
 	"vmtool images pull":       true,
 	"vmtool images push":       true,
-	"vmtool info":              true,
-	"vmtool list":              true,
 	"vmtool metal add":         true,
 	"vmtool metal exec":        true,
 	"vmtool metal info":        true,
@@ -54,7 +43,6 @@ var pendingJSON = map[string]bool{
 	"vmtool metal reboot":      true,
 	"vmtool metal rm":          true,
 	"vmtool metal ssh":         true,
-	"vmtool migrate-disk":      true,
 	"vmtool net attach":        true,
 	"vmtool net create":        true,
 	"vmtool net delete":        true,
@@ -62,26 +50,14 @@ var pendingJSON = map[string]bool{
 	"vmtool net join":          true,
 	"vmtool net leave":         true,
 	"vmtool net show":          true,
-	"vmtool networks":          true,
-	"vmtool playbook":          true,
 	"vmtool pool create":       true,
 	"vmtool pool list":         true,
-	"vmtool poweroff":          true,
-	"vmtool reboot":            true,
-	"vmtool resize-disk":       true,
-	"vmtool resume":            true,
-	"vmtool server":            true,
-	"vmtool ssh":               true,
-	"vmtool ssh-config":        true,
-	"vmtool start":             true,
-	"vmtool stop":              true,
 	"vmtool templates delete":  true,
 	"vmtool templates export":  true,
 	"vmtool templates list":    true,
 	"vmtool templates prepare": true,
 	"vmtool templates prune":   true,
 	"vmtool templates save":    true,
-	"vmtool tunnel":            true,
 }
 
 // cobraOwn are the commands cobra adds itself (help and shell completion):
@@ -166,7 +142,8 @@ type contractRun struct {
 func runContract(t *testing.T, dir string, keep string, args ...string) contractRun {
 	t.Helper()
 	var out, errb bytes.Buffer
-	root, _ := rootFor(dir, &out, &errb)
+	root, e := rootFor(dir, &out, &errb)
+	e.tunnelExe = stubTunnelExe
 	var r contractRun
 	walk(root, func(c *cobra.Command) {
 		if !c.Runnable() || c.CommandPath() == keep {
@@ -211,7 +188,10 @@ func conforms(t *testing.T, c *cobra.Command, args []string) []string {
 
 	// Help: stdout, exit 0, usage and an example. No token needed.
 	t.Setenv(config.TokenEnv, "")
-	h := runContract(t, writeWorkdir(t, "", ""), "", append(append([]string(nil), args...), "--help")...)
+	// The command's words only, then --help: after exec's target the rest of
+	// the line is the remote command's, so a dummy argument would hide --help.
+	helpArgs := append(strings.Fields(path)[1:], "--help")
+	h := runContract(t, writeWorkdir(t, "", ""), "", helpArgs...)
 	if h.code != 0 || h.err != nil || !strings.Contains(h.out, "Usage:") || h.errOut != "" {
 		bad = append(bad, "help: exit "+itoa(h.code)+", stderr "+h.errOut)
 	} else if !helpHasExample(h.out) {

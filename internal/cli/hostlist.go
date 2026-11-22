@@ -7,6 +7,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/resurgentech/vmtool/internal/api"
 	"github.com/resurgentech/vmtool/internal/app"
 	"github.com/resurgentech/vmtool/internal/hosts"
 	"github.com/spf13/cobra"
@@ -31,6 +32,13 @@ and does not change the exit status: the listing ran. A network home (hosts:
 vms: false) is not asked: it is one row, "<host>  network home: runs no VMs".
 Name a host to list only that host (a network home too); then it is asked and
 its failure is the command's error.`,
+		Example: `  vmtool list
+  vmtool list hv1
+  vmtool list --json
+
+  Tip: with --json stdout is {"vms", "errors", "network_homes"}: each VM is the
+  API's VMInfo with its host; an unreachable host is a {host, error} row under
+  errors, and the exit status stays 0.`,
 		Aliases: []string{"ls"},
 		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -52,6 +60,9 @@ its failure is the command's error.`,
 				return rows[0].Err
 			}
 			rows = leaveOutOwnName(cmd.ErrOrStderr(), r, rows)
+			if jsonMode(cmd) {
+				return emit(cmd, listObject(rows, r.NetworkHome))
+			}
 			return printVMTable(cmd.OutOrStdout(), rows, r.NetworkHome)
 		},
 	}
@@ -108,6 +119,100 @@ func printVMTable(out io.Writer, rows []app.HostVMs, networkHome func(string) bo
 	return w.Flush()
 }
 
+// listJSON is `list --json`: the VMs of every host that answered (the API's
+// VMInfo and the host), the hosts that did not as {host, error} rows, and the
+// network homes (hosts that run no VMs).
+type listJSON struct {
+	VMs          []listVMJSON  `json:"vms"`
+	Errors       []hostErrJSON `json:"errors"`
+	NetworkHomes []string      `json:"network_homes"`
+}
+
+type listVMJSON struct {
+	Host string `json:"host"`
+	api.VMInfo
+}
+
+type hostErrJSON struct {
+	Host  string `json:"host"`
+	Error string `json:"error"`
+}
+
+func listObject(rows []app.HostVMs, networkHome func(string) bool) listJSON {
+	out := listJSON{VMs: []listVMJSON{}, Errors: []hostErrJSON{}, NetworkHomes: []string{}}
+	for _, h := range rows {
+		switch {
+		case h.Err != nil:
+			out.Errors = append(out.Errors, hostErrJSON{Host: h.Host, Error: oneLine(h.Err.Error())})
+		case h.NetworkHome || len(h.VMs) == 0 && networkHome != nil && networkHome(h.Host):
+			out.NetworkHomes = append(out.NetworkHomes, h.Host)
+		default:
+			for i := range h.VMs {
+				out.VMs = append(out.VMs, listVMJSON{Host: h.Host, VMInfo: apiVMInfo(&h.VMs[i])})
+			}
+		}
+	}
+	return out
+}
+
+// hostsJSON is `hosts --json`: a row per host, and the store's row when a
+// store is configured.
+type hostsJSON struct {
+	Hosts []hostRowJSON `json:"hosts"`
+	Store *storeRowJSON `json:"store,omitempty"`
+}
+
+type hostRowJSON struct {
+	Name         string `json:"name"`
+	Address      string `json:"address,omitempty"`
+	Local        bool   `json:"local"`
+	NetworkHome  bool   `json:"network_home"`
+	Reachable    bool   `json:"reachable"`
+	APIVersion   string `json:"api_version,omitempty"`
+	CertDaysLeft *int   `json:"cert_days_left,omitempty"`
+	CertNotAfter string `json:"cert_not_after,omitempty"`
+	Error        string `json:"error,omitempty"`
+}
+
+type storeRowJSON struct {
+	URL       string `json:"url"`
+	Reachable bool   `json:"reachable"`
+	Caller    string `json:"caller,omitempty"`
+	Version   string `json:"version,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+
+// hostsObject builds the object; the certificate warnings (what the table
+// prints under it) are returned apart, for stderr.
+func hostsObject(st []app.HostStatus, now time.Time) (hostsJSON, []string) {
+	out := hostsJSON{Hosts: []hostRowJSON{}}
+	var warnings []string
+	for _, s := range st {
+		row := hostRowJSON{Name: s.Host, Address: s.Address, Local: s.Local, NetworkHome: s.NetworkHome,
+			Reachable: s.Reachable, APIVersion: s.APIVersion}
+		if d, ok := s.CertDaysLeft(now); ok {
+			row.CertDaysLeft = &d
+			row.CertNotAfter = s.CertNotAfter.UTC().Format(time.RFC3339)
+			if d < certWarnDays {
+				warnings = append(warnings, certWarning(s, d))
+			}
+		}
+		if s.Err != nil {
+			row.Error = oneLine(s.Err.Error())
+		}
+		out.Hosts = append(out.Hosts, row)
+	}
+	return out, warnings
+}
+
+func storeObject(st app.StoreStatus) *storeRowJSON {
+	row := &storeRowJSON{URL: st.URL, Reachable: st.Reachable, Caller: st.Caller, Version: st.Version}
+	if st.Err != nil {
+		row.Error = oneLine(st.Err.Error())
+	}
+	return row
+}
+
 func hostsCmd(e *env) *cobra.Command {
 	return &cobra.Command{
 		Use:   "hosts",
@@ -117,9 +222,24 @@ concurrently) and print name, address, whether it answered, the API version it
 reports (informational, never compared) and the days left on the certificate it presented. A warning line
 follows for each certificate with fewer than 30 days left. A network home (hosts:
 vms: false) is written "<host> (network home)".`,
+		Example: `  vmtool hosts
+  vmtool hosts --json
+
+  Tip: with --json stdout is {"hosts", "store"} (store only when one is
+  configured); certificate warnings go to stderr.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			st := e.resolver().Status(cmd.Context(), app.ListTimeout)
+			if jsonMode(cmd) {
+				obj, warnings := hostsObject(st, nowFn())
+				for _, w := range warnings {
+					fmt.Fprintln(cmd.ErrOrStderr(), w)
+				}
+				if sess := e.session(); sess != nil {
+					obj.Store = storeObject(sess.Status(cmd.Context(), app.WhoamiTimeout))
+				}
+				return emit(cmd, obj)
+			}
 			if err := printHosts(cmd.OutOrStdout(), st, nowFn()); err != nil {
 				return err
 			}

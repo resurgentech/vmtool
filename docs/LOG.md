@@ -2821,3 +2821,40 @@ are appended, never edited in; a hook refuses rewrites.
   unchanged; `just check` green.
 - Commits: the CLI output-layer commit on `master` (this entry rides in it);
   not pushed. No tag.
+
+## 2026-11-22 — CLI: `--json` for the VM and host commands
+
+- `create`, `start`, `resume`, `stop`, `poweroff`, `reboot`, `autostart`
+  and `migrate-disk` print the VM as the REST API's `VMInfo` (`apiVMInfo`
+  in `internal/cli/cli.go`, the same mapping as the server's; pkg/vmtool's
+  own JSON spells the cards differently). `info` adds `origin` and
+  `comment` when the store was read. `delete` prints `{"deleted"}`;
+  `comment` the API's `VMNotes`; `resize-disk` `ResizeDiskResult` (a
+  failed grow prints the object, then the error object, exit 1); `add-disk`
+  `AddDiskResult`; `playbook` `{vm, playbook, completed}`.
+- Lists under a key: `list` `{vms (VMInfo plus host), errors [{host,
+  error}], network_homes}`; `hosts` `{hosts, store}`; `networks`
+  `{networks [{name, vmtool, member}]}`; `bridges` `{bridges}`;
+  `ssh-config` `{config}`.
+- `exec --json` captures the program's streams and prints `{exit_code,
+  stdout, stderr}`, then still exits with the remote code; `-t` with
+  `--json` is a usage error (exit 2). Its help says so.
+- With `--json`, the progress, ansible output, timings and status lines of
+  `create`, `playbook`, `migrate-disk` and `resize-disk` go to stderr.
+  Without it every command prints exactly as before.
+- `ssh`, `i`, `server` and `tunnel` are marked interactive (the tunnel
+  where it joins the tree); with `--json` they exit 2.
+- Each command's help gains an example; `create`'s names its two waits.
+- Tests: 24 commands leave `pendingJSON` (25 conform, 34 pending);
+  `internal/cli/clijson_test.go` adds a Manager whose operations succeed,
+  the `jsonCases` entries and the shape tests (`TestJSONVMShape`,
+  `TestJSONCreate`, `TestJSONCreateFailure`, `TestJSONExec`,
+  `TestJSONExecTTYRefused`, `TestJSONListShape`, `TestJSONHostsShape`,
+  `TestInteractiveMarked` and others). The tree test runs a command's help
+  with its words only (`exec x --help` hands `--help` to the remote
+  command) and gives runs the stub tunnel executable.
+- Red: the 24 commands taken off the list first: no example, output not
+  one object, human lines on the real stdout, the interactive four not
+  marked. Green after the change; `just check` green.
+- Commits: the CLI VM-commands commit on `master` (this entry rides in it);
+  not pushed. No tag.

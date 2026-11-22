@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/resurgentech/vmtool/internal/api"
 	"github.com/resurgentech/vmtool/internal/app"
 	"github.com/resurgentech/vmtool/internal/config"
 	"github.com/resurgentech/vmtool/internal/hosts"
@@ -297,7 +299,7 @@ Agent tips:
 		hostsCmd(e),
 		infoCmd(e),
 		sshCmd(e),
-		tunnelCmd(e),
+		interactiveTunnel(tunnelCmd(e)),
 		sshConfigCmd(e),
 		execCmd(e),
 		rebootCmd(e),
@@ -321,6 +323,17 @@ Agent tips:
 	root.PersistentFlags().Bool(jsonFlagName, false, "print the result as one JSON object on stdout, and an error as one on stderr (see docs/CLI.md)")
 	markRunErrors(root)
 	return root
+}
+
+// interactiveTunnel marks the tunnel interactive (it is a byte stream for
+// ssh's ProxyCommand) and gives its help an example. tunnelCmd is in
+// tunnel.go; the mark is made where the command joins the tree.
+func interactiveTunnel(c *cobra.Command) *cobra.Command {
+	c.Annotations = map[string]string{annotationInteractive: "true"}
+	if c.Example == "" {
+		c.Example = "  vmtool tunnel jetfire/web"
+	}
+	return c
 }
 
 // remoteExitError is a remote command's exit status. Execute exits with
@@ -529,6 +542,111 @@ func printAppErr(err error) error {
 	return err
 }
 
+// printAppErrFor is printAppErr for a command that has --json: the output the
+// failed step captured goes to stderr then, so stdout stays clear.
+func printAppErrFor(cmd *cobra.Command, err error) error {
+	if !jsonMode(cmd) {
+		return printAppErr(err)
+	}
+	var ae *app.Error
+	if errors.As(err, &ae) && ae.Output != "" {
+		fmt.Fprint(cmd.ErrOrStderr(), ae.Output)
+	}
+	return err
+}
+
+// apiVMInfo is a VM as the REST API's VMInfo (the server builds the same
+// from the same fields; pkg/vmtool's own JSON spells the cards differently).
+func apiVMInfo(info *vmtool.VMInfo) api.VMInfo {
+	if info == nil {
+		return api.VMInfo{}
+	}
+	out := api.VMInfo{
+		Name:      info.Name,
+		State:     api.VMInfoState(info.State),
+		Vcpus:     int(info.VCPUs),
+		Memory:    int(info.Memory),
+		Ip:        info.IP,
+		Autostart: info.Autostart,
+	}
+	if info.DiskCache != "" {
+		v := api.VMInfoDiskCache(info.DiskCache)
+		out.DiskCache = &v
+	}
+	if info.DiskBacking != "" {
+		v := api.VMInfoDiskBacking(info.DiskBacking)
+		out.DiskBacking = &v
+	}
+	if info.UUID != "" {
+		u := info.UUID
+		out.Uuid = &u
+	}
+	if info.Firmware != "" {
+		v := api.VMInfoFirmware(info.Firmware)
+		out.Firmware = &v
+	}
+	if len(info.Networks) > 0 {
+		cards := make([]api.NetworkAttachment, len(info.Networks))
+		for i, a := range info.Networks {
+			cards[i] = api.NetworkAttachment{Network: a.Network, Mac: a.MAC, Ip: a.IP}
+		}
+		out.Networks = &cards
+	}
+	return out
+}
+
+// emitVM prints a VM as the command's one object (the API's VMInfo).
+func emitVM(cmd *cobra.Command, info *vmtool.VMInfo) error {
+	return emit(cmd, apiVMInfo(info))
+}
+
+// progressOut is where a long command's progress goes: the process's stdout as
+// it always did, and stderr with --json (stdout is then the object only).
+func progressOut(cmd *cobra.Command) io.Writer {
+	if jsonMode(cmd) {
+		return cmd.ErrOrStderr()
+	}
+	return os.Stdout
+}
+
+// apiNotes is a VM's notes as the API's VMNotes (what comment --json prints).
+func apiNotes(ref app.VMRef, n *app.VMNotes) api.VMNotes {
+	info := infoObject(&vmtool.VMInfo{}, n)
+	out := api.VMNotes{Host: ref.Host, Name: ref.Name, Uuid: n.UUID, Comment: n.Comment, Origin: info.Origin}
+	return out
+}
+
+// infoJSON is `info --json`: the API's VMInfo and, when the store was read,
+// the VM's notes beside it (origin and comment, in the API's spelling).
+type infoJSON struct {
+	api.VMInfo
+	Origin  *api.InventoryOrigin `json:"origin,omitempty"`
+	Comment *string              `json:"comment,omitempty"`
+}
+
+func infoObject(info *vmtool.VMInfo, notes *app.VMNotes) infoJSON {
+	out := infoJSON{VMInfo: apiVMInfo(info)}
+	if notes == nil {
+		return out
+	}
+	nonEmpty := func(s string) *string {
+		if s == "" {
+			return nil
+		}
+		return &s
+	}
+	if o := notes.Origin; o != nil {
+		out.Origin = &api.InventoryOrigin{Image: nonEmpty(o.Image), ImageSha256: nonEmpty(o.ImageSHA256),
+			Template: nonEmpty(o.Template), Clone: nonEmpty(o.CloneKind), Pool: nonEmpty(o.Pool)}
+		if !o.Created.IsZero() {
+			out.Origin.Created = nonEmpty(o.Created.UTC().Format(time.RFC3339))
+		}
+	}
+	c := notes.Comment
+	out.Comment = &c
+	return out
+}
+
 func createCmd(e *env) *cobra.Command {
 	var (
 		vcpus           uint
@@ -634,6 +752,11 @@ removes the reservations.
   vmtool create jetfire/web ubuntu-24.04.qcow2
   vmtool create hv1/web img1 --pool nvme-thin --disk-size 40
   vmtool create hv1/web img1 --network net1 --network net2=10.77.2.50`,
+		Example: `  vmtool create --json hv1/web img1
+
+  Tip: create waits for the VM's address (ip_wait_seconds) and then for SSH
+  (ssh_wait_seconds), 120 s each by default; --no-wait skips both. With
+  --json the VM is the object on stdout, and progress and timings go to stderr.`,
 		Args: cobra.ExactArgs(2),
 		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
 			extra, err := parseExtraVars(extraVars)
@@ -645,6 +768,12 @@ removes the reservations.
 				return err
 			}
 			var evs []app.ProgressEvent
+			// With --json progress is stderr only; stdout is the object.
+			progress := io.Writer(os.Stdout)
+			transfer := io.Writer(os.Stderr)
+			if jsonMode(cmd) {
+				progress, transfer = cmd.ErrOrStderr(), cmd.ErrOrStderr()
+			}
 			info, err := e.service(inventory).CreateVM(cmd.Context(), m, app.CreateVMInput{
 				Networks:        nets,
 				Host:            ref.Host,
@@ -670,18 +799,18 @@ removes the reservations.
 				Comment:         comment,
 				OnProgress: func(ev app.ProgressEvent) {
 					evs = append(evs, ev)
-					if imageTransferProgress(os.Stderr, ev) {
+					if imageTransferProgress(transfer, ev) {
 						return
 					}
 					if ev.Output != "" {
-						fmt.Print(ev.Output)
+						fmt.Fprint(progress, ev.Output)
 					}
 					if (ev.Status == "done" || ev.Status == "error") && ev.Detail != "" {
-						fmt.Println(ev.Detail)
+						fmt.Fprintln(progress, ev.Detail)
 					}
 				},
 			})
-			out := cmd.OutOrStdout()
+			out := humanOut(cmd)
 			if err != nil {
 				// The line closes what create printed; the error itself follows
 				// on stderr. Nothing for a create refused before it began.
@@ -694,7 +823,7 @@ removes the reservations.
 				if info != nil {
 					fmt.Fprintf(out, "VM %q exists and is running, but create did not finish:\n", ref.String())
 				}
-				return printAppErr(err)
+				return printAppErrFor(cmd, err)
 			}
 			fmt.Fprintf(out, "VM %q created and started\n", ref.String())
 			if info != nil && info.IP != "" {
@@ -705,6 +834,12 @@ removes the reservations.
 			}
 			if l := timingsLine(evs); l != "" {
 				fmt.Fprintln(out, l)
+			}
+			if jsonMode(cmd) {
+				if info == nil {
+					info = &vmtool.VMInfo{Name: ref.Name}
+				}
+				return emitVM(cmd, info)
 			}
 			return nil
 		}),
@@ -738,10 +873,16 @@ func startCmd(e *env) *cobra.Command {
 	return &cobra.Command{
 		Use:   "start <host/name>",
 		Short: "Start a stopped VM",
-		Args:  cobra.ExactArgs(1),
+		Example: `  vmtool start jetfire/web
+  vmtool start --json jetfire/web`,
+		Args: cobra.ExactArgs(1),
 		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
-			if _, err := e.service("").StartVM(cmd.Context(), m, ref); err != nil {
+			info, err := e.service("").StartVM(cmd.Context(), m, ref)
+			if err != nil {
 				return err
+			}
+			if jsonMode(cmd) {
+				return emitVM(cmd, info)
 			}
 			fmt.Printf("VM %q started\n", args[0])
 			return nil
@@ -753,10 +894,16 @@ func resumeCmd(e *env) *cobra.Command {
 	return &cobra.Command{
 		Use:   "resume <host/name>",
 		Short: "Resume a paused VM",
-		Args:  cobra.ExactArgs(1),
+		Example: `  vmtool resume jetfire/web
+  vmtool resume --json jetfire/web`,
+		Args: cobra.ExactArgs(1),
 		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
-			if _, err := e.service("").ResumeVM(cmd.Context(), m, ref); err != nil {
+			info, err := e.service("").ResumeVM(cmd.Context(), m, ref)
+			if err != nil {
 				return err
+			}
+			if jsonMode(cmd) {
+				return emitVM(cmd, info)
 			}
 			fmt.Printf("VM %q resumed\n", args[0])
 			return nil
@@ -768,10 +915,16 @@ func stopCmd(e *env) *cobra.Command {
 	return &cobra.Command{
 		Use:   "stop <host/name>",
 		Short: "Gracefully shut down a VM",
-		Args:  cobra.ExactArgs(1),
+		Example: `  vmtool stop jetfire/web
+  vmtool stop --json jetfire/web`,
+		Args: cobra.ExactArgs(1),
 		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
-			if _, err := e.service("").StopVM(cmd.Context(), m, ref); err != nil {
+			info, err := e.service("").StopVM(cmd.Context(), m, ref)
+			if err != nil {
 				return err
+			}
+			if jsonMode(cmd) {
+				return emitVM(cmd, info)
 			}
 			fmt.Printf("VM %q shutdown requested\n", args[0])
 			return nil
@@ -783,10 +936,16 @@ func poweroffCmd(e *env) *cobra.Command {
 	return &cobra.Command{
 		Use:   "poweroff <host/name>",
 		Short: "Force power-off a VM",
-		Args:  cobra.ExactArgs(1),
+		Example: `  vmtool poweroff jetfire/web
+  vmtool poweroff --json jetfire/web`,
+		Args: cobra.ExactArgs(1),
 		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
-			if _, err := e.service("").PoweroffVM(cmd.Context(), m, ref); err != nil {
+			info, err := e.service("").PoweroffVM(cmd.Context(), m, ref)
+			if err != nil {
 				return err
+			}
+			if jsonMode(cmd) {
+				return emitVM(cmd, info)
 			}
 			fmt.Printf("VM %q powered off\n", args[0])
 			return nil
@@ -804,10 +963,15 @@ func deleteCmd(e *env) *cobra.Command {
 
 By default also deletes the cloned disk volume.
 Use --noclone to skip volume deletion (use when the VM was created with --noclone).`,
+		Example: `  vmtool delete jetfire/web
+  vmtool delete --json jetfire/web`,
 		Args: cobra.ExactArgs(1),
 		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
 			if err := e.service("").DeleteVM(cmd.Context(), m, ref, noclone); err != nil {
 				return err
+			}
+			if jsonMode(cmd) {
+				return emit(cmd, map[string]string{"deleted": ref.String()})
 			}
 			fmt.Printf("VM %q deleted\n", args[0])
 			return nil
@@ -822,14 +986,20 @@ func infoCmd(e *env) *cobra.Command {
 	return &cobra.Command{
 		Use:   "info <host/name>",
 		Short: "Show details of a VM",
-		Args:  cobra.ExactArgs(1),
+		Example: `  vmtool info jetfire/web
+  vmtool info --json jetfire/web`,
+		Args: cobra.ExactArgs(1),
 		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
 			svc := e.service("")
 			info, err := svc.GetVM(cmd.Context(), m, ref.Name)
 			if err != nil {
 				return err
 			}
-			writeVMInfo(cmd.OutOrStdout(), info, svc.Notes(cmd.Context(), ref, info.UUID))
+			notes := svc.Notes(cmd.Context(), ref, info.UUID)
+			if jsonMode(cmd) {
+				return emit(cmd, infoObject(info, notes))
+			}
+			writeVMInfo(cmd.OutOrStdout(), info, notes)
 			return nil
 		}),
 	}
@@ -907,7 +1077,8 @@ username and key stored there. Otherwise falls back to packer. Host key
 checking is disabled.
 
   vmtool ssh jetfire/web`,
-		Args: cobra.MinimumNArgs(1),
+		Annotations: map[string]string{annotationInteractive: "true"},
+		Args:        cobra.MinimumNArgs(1),
 		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
 			info, err := m.Info(ref.Name)
 			if err != nil {
@@ -955,10 +1126,19 @@ the program sees a terminal, stdout and stderr are merged, input is echoed.
 Put -t before the VM; after it, -t belongs to the remote command.
 
   vmtool exec -t jetfire/web -- top`,
+		Example: `  vmtool exec --json jetfire/web uname -a
+
+  exec exits with the remote command's exit code. With --json it prints
+  {"exit_code", "stdout", "stderr"} and still exits with that code; -t cannot
+  be combined with --json.`,
 		Args:          execArgs,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
+			asJSON := jsonMode(cmd)
+			if asJSON && tty {
+				return usageError(errors.New("--tty cannot be combined with --json"))
+			}
 			info, err := m.Info(ref.Name)
 			if err != nil {
 				return err
@@ -971,13 +1151,21 @@ Put -t before the VM; after it, -t belongs to the remote command.
 			if err := svc.PrepareVMCreds(cmd.Context(), m, ref); err != nil {
 				return err
 			}
+			// With --json the program's streams are captured into the object.
+			var stdout, stderr bytes.Buffer
 			run := func() error {
 				c, err := svc.RemoteCmd(ref, execCommand(args), ttyOpts(tty)...)
 				if err != nil {
 					return err
 				}
 				// RemoteCmd (exact argv) leaves stdio unset (it is also used for captured runs).
-				c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
+				if asJSON {
+					stdout.Reset()
+					stderr.Reset()
+					c.Stdin, c.Stdout, c.Stderr = cmd.InOrStdin(), &stdout, &stderr
+				} else {
+					c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
+				}
 				return c.Run()
 			}
 			err = run()
@@ -986,13 +1174,22 @@ Put -t before the VM; after it, -t belongs to the remote command.
 				// ssh failed (255) and the store has newer credentials: once more.
 				err = run()
 			}
-			if err == nil {
-				return nil
+			code := 0
+			if err != nil {
+				if !errors.As(err, &ee) {
+					return err
+				}
+				code = ee.ExitCode()
 			}
-			if errors.As(err, &ee) {
-				return remoteExitError{code: ee.ExitCode()}
+			if asJSON {
+				if err := emit(cmd, api.ExecResult{ExitCode: code, Stdout: stdout.String(), Stderr: stderr.String()}); err != nil {
+					return err
+				}
 			}
-			return err
+			if code != 0 {
+				return remoteExitError{code: code}
+			}
+			return nil
 		}),
 	}
 	cmd.Flags().BoolVarP(&tty, "tty", "t", false, "force a remote terminal (ssh -tt) and attach yours live")
@@ -1017,10 +1214,16 @@ func rebootCmd(e *env) *cobra.Command {
 
 Unlike stop (ACPI shutdown, then shutoff) or poweroff (force destroy),
 the VM comes back up on its own if the guest handles the reboot.`,
+		Example: `  vmtool reboot jetfire/web
+  vmtool reboot --json jetfire/web`,
 		Args: cobra.ExactArgs(1),
 		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
-			if _, err := e.service("").RebootVM(cmd.Context(), m, ref); err != nil {
+			info, err := e.service("").RebootVM(cmd.Context(), m, ref)
+			if err != nil {
 				return err
+			}
+			if jsonMode(cmd) {
+				return emitVM(cmd, info)
 			}
 			fmt.Printf("VM %q rebooted\n", args[0])
 			return nil
@@ -1032,7 +1235,9 @@ func autostartCmd(e *env) *cobra.Command {
 	return &cobra.Command{
 		Use:   "autostart <host/name> <on|off>",
 		Short: "Enable or disable autostart for a VM",
-		Args:  cobra.ExactArgs(2),
+		Example: `  vmtool autostart jetfire/web on
+  vmtool autostart --json jetfire/web off`,
+		Args: cobra.ExactArgs(2),
 		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
 			name := args[0]
 			var enable bool
@@ -1044,8 +1249,12 @@ func autostartCmd(e *env) *cobra.Command {
 			default:
 				return fmt.Errorf("invalid value %q: use on or off", args[1])
 			}
-			if _, err := e.service("").SetAutostart(cmd.Context(), m, ref, enable); err != nil {
+			info, err := e.service("").SetAutostart(cmd.Context(), m, ref, enable)
+			if err != nil {
 				return err
+			}
+			if jsonMode(cmd) {
+				return emitVM(cmd, info)
 			}
 			label := "disabled"
 			if enable {
@@ -1093,8 +1302,12 @@ inventory' show it.
 			if err := r.Check(ref.Host); err != nil {
 				return err
 			}
-			if _, err := e.service("").SetComment(cmd.Context(), ref, text); err != nil {
+			notes, err := e.service("").SetComment(cmd.Context(), ref, text)
+			if err != nil {
 				return err
+			}
+			if jsonMode(cmd) {
+				return emit(cmd, apiNotes(ref, notes))
 			}
 			if text == "" {
 				fmt.Fprintf(cmd.OutOrStdout(), "Comment cleared for VM %q\n", ref.String())
@@ -1113,6 +1326,9 @@ func interactiveCmd(e *env) *cobra.Command {
 		Use:     "i",
 		Short:   "Launch interactive TUI",
 		Aliases: []string{"interactive"},
+		Example: "  vmtool i",
+		// A TUI: no --json.
+		Annotations: map[string]string{annotationInteractive: "true"},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			t, err := e.tunnel()
 			if err != nil {
@@ -1127,12 +1343,21 @@ func networksCmd(e *env) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "networks",
 		Short: "List available libvirt networks (vmtool's are marked, member forms too)",
+		Example: `  vmtool networks
+  vmtool networks --host hv1 --json`,
 	}
 	host := hostFlag(cmd)
 	cmd.RunE = withHost(e, host, func(m app.Manager, cmd *cobra.Command, args []string) error {
 		nets, err := e.service("").ListNetworkMarks(cmd.Context(), m)
 		if err != nil {
 			return err
+		}
+		if jsonMode(cmd) {
+			rows := make([]networkJSON, len(nets))
+			for i, n := range nets {
+				rows[i] = networkJSON{Name: n.Name, Vmtool: n.Vmtool, Member: n.Member}
+			}
+			return emit(cmd, map[string]any{"networks": rows})
 		}
 		for _, n := range nets {
 			if n.Vmtool && n.Member {
@@ -1148,16 +1373,31 @@ func networksCmd(e *env) *cobra.Command {
 	return cmd
 }
 
+// networkJSON is one row of `networks --json`.
+type networkJSON struct {
+	Name   string `json:"name"`
+	Vmtool bool   `json:"vmtool"`
+	Member bool   `json:"member"`
+}
+
 func bridgesCmd(e *env) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "bridges",
 		Short: "List host bridges usable with --net-type=bridge",
+		Example: `  vmtool bridges
+  vmtool bridges --host hv1 --json`,
 	}
 	host := hostFlag(cmd)
 	cmd.RunE = withHost(e, host, func(m app.Manager, cmd *cobra.Command, args []string) error {
 		brs, err := e.service("").ListBridges(cmd.Context(), m)
 		if err != nil {
 			return err
+		}
+		if jsonMode(cmd) {
+			if brs == nil {
+				brs = []string{}
+			}
+			return emit(cmd, map[string]any{"bridges": brs})
 		}
 		for _, b := range brs {
 			fmt.Println(b)
@@ -1195,7 +1435,12 @@ func playbookCmd(e *env) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "playbook <host/vm-name> <playbook-path>",
 		Short: "Run an Ansible playbook against a running VM",
-		Args:  cobra.ExactArgs(2),
+		Example: `  vmtool playbook jetfire/web site.yml
+  vmtool playbook --json jetfire/web site.yml
+
+  Tip: playbook blocks until ansible ends. With --json ansible's output goes to
+  stderr and stdout carries {"vm", "playbook", "completed"}.`,
+		Args: cobra.ExactArgs(2),
 		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
 			extra, err := parseExtraVars(extraVars)
 			if err != nil {
@@ -1203,10 +1448,13 @@ func playbookCmd(e *env) *cobra.Command {
 			}
 			res, err := e.service("").RunPlaybook(cmd.Context(), m, ref, args[1], vmtool.Auth{User: sshUser, Password: sshPass}, extra)
 			if res != nil && res.Output != "" {
-				fmt.Print(res.Output)
+				fmt.Fprint(progressOut(cmd), res.Output)
 			}
 			if err != nil {
-				return printAppErr(err)
+				return printAppErrFor(cmd, err)
+			}
+			if jsonMode(cmd) {
+				return emit(cmd, map[string]any{"vm": ref.String(), "playbook": args[1], "completed": true})
 			}
 			fmt.Printf("Playbook %s completed\n", args[1])
 			return nil
@@ -1423,13 +1671,23 @@ redefine the domain with the new path, then restart (if it was running).
 A block disk (an LV in a logical pool, or a thin LV), or a logical pool as the
 target, is refused before the VM is stopped. A thin pool is not a libvirt pool,
 so it cannot be a target either.`,
+		Example: `  vmtool migrate-disk jetfire/web fast
+  vmtool migrate-disk --json jetfire/web fast
+
+  Tip: migrate-disk blocks until the copy is done. With --json the progress
+  line goes to stderr and stdout is the VM.`,
 		Args: cobra.ExactArgs(2),
 		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
 			vmName := args[0]
 			pool := args[1]
-			fmt.Printf("Migrating disk for VM %q to pool %q...\n", vmName, pool)
-			if _, err := e.service("").MigrateDisk(cmd.Context(), m, ref, pool); err != nil {
+			fmt.Fprintf(progressOut(cmd), "Migrating disk for VM %q to pool %q...\n", vmName, pool)
+			info, err := e.service("").MigrateDisk(cmd.Context(), m, ref, pool)
+			if err != nil {
 				return err
+			}
+			if jsonMode(cmd) {
+				fmt.Fprintf(cmd.ErrOrStderr(), "VM %q disk migrated to pool %q\n", vmName, pool)
+				return emitVM(cmd, info)
 			}
 			fmt.Printf("VM %q disk migrated to pool %q\n", vmName, pool)
 			return nil
@@ -1458,6 +1716,11 @@ refused with the numbers.
 
 A disk in a thick logical pool (an LV) cannot be grown: it is sized at create
 (--disk-size). resize-disk refuses it before touching the VM.`,
+		Example: `  vmtool resize-disk jetfire/web 40
+  vmtool resize-disk --json jetfire/web 40
+
+  Tip: with --json stdout is {"vm", "filesystem_grown", "grow_error"}; a failed
+  filesystem grow still fails the command (exit 1).`,
 		Args: cobra.ExactArgs(2),
 		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
 			vmName := args[0]
@@ -1466,10 +1729,24 @@ A disk in a thick logical pool (an LV) cannot be grown: it is sized at create
 				return fmt.Errorf("invalid size %q: must be a positive integer (GB)", args[1])
 			}
 
-			fmt.Printf("Resizing disk for VM %q to %dGB...\n", vmName, sizeGB)
+			fmt.Fprintf(progressOut(cmd), "Resizing disk for VM %q to %dGB...\n", vmName, sizeGB)
 			res, err := e.service("").ResizeDisk(cmd.Context(), m, ref, uint(sizeGB), vmtool.Auth{User: sshUser, Password: sshPass})
 			if err != nil {
 				return err
+			}
+			if jsonMode(cmd) {
+				obj := api.ResizeDiskResult{Vm: apiVMInfo(&res.VM), FilesystemGrown: res.FilesystemGrown}
+				if res.GrowError != "" {
+					g := res.GrowError
+					obj.GrowError = &g
+				}
+				if err := emit(cmd, obj); err != nil {
+					return err
+				}
+				if res.GrowError != "" {
+					return fmt.Errorf("growing filesystem: %s", res.GrowError)
+				}
+				return nil
 			}
 			fmt.Printf("VM %q disk resized to %dGB\n", vmName, sizeGB)
 			if res.FilesystemGrown {
@@ -1521,6 +1798,9 @@ partitioned or formatted.
 			if err != nil {
 				return err
 			}
+			if jsonMode(cmd) {
+				return emit(cmd, api.AddDiskResult{Vm: apiVMInfo(&res.VM), Path: res.Path, Target: res.Target})
+			}
 			fmt.Printf("Attached %s (%dGB) to VM %q as %s\n", res.Path, sizeGB, vmName, res.Target)
 			return nil
 		}),
@@ -1550,6 +1830,10 @@ directory. config.yml must set tls_cert, tls_key and token_sha256. Every route
 except GET /, /openapi.yaml and /openapi.json needs
 "Authorization: Bearer <token>" (checked against token_sha256). Listen
 address: --listen if given, else config.yml listen, else 127.0.0.1:9473.`,
+		Example: `  vmtool server
+  vmtool server --listen 127.0.0.1:9473`,
+		// A server: no --json.
+		Annotations: map[string]string{annotationInteractive: "true"},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return serverFrom(e.cfg, listen, cmd.Flags().Changed("listen")).ListenAndServe()
 		},
