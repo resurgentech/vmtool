@@ -2916,3 +2916,16 @@ are appended, never edited in; a hook refuses rewrites.
   check` green.
 - Commits: the CLI net/metal/config commit on `master` (this entry rides
   in it); not pushed. No tag.
+
+## 2026-11-22 — CLI tests: plain names for the `--json` test files
+
+- The `--json` test files and helpers carried planning labels. They are
+  renamed by what they cover: `clijson_lm6_test.go` ->
+  `clijson_images_test.go`, `clijson_lm7_test.go` ->
+  `clijson_metal_test.go`, `clijson_lm7_net_test.go` ->
+  `clijson_net_test.go`; `lm6ImageFile` -> `placeholderImageFile`,
+  `TestJSONLM6Failure` -> `TestJSONStoreGroupFailure`; the labels are gone
+  from the comments. The two entries above name the old file names. No
+  behaviour change; `just check` green.
+- Commits: the test-rename commit on `master` (this entry rides in it); not
+  pushed. No tag.

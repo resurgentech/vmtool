@@ -13,7 +13,7 @@ import (
 	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
-// LM6: --json for the template, image, pool and creds commands. The cases
+// --json for the template, image, pool and creds commands. The cases
 // join jsonCases (the contract walk in clicontract_test.go); the focused
 // tests pin each shape.
 
@@ -49,7 +49,7 @@ func init() {
 	jsonCases["vmtool images push"] = jsonCase{setup: func(t *testing.T) (string, []string) {
 		s := newCLIStore(t)
 		dir := storeWorkdir(t, s, storeTok)
-		return dir, []string{"images", "push", lm6ImageFile(t)}
+		return dir, []string{"images", "push", placeholderImageFile(t)}
 	}}
 	jsonCases["vmtool images pull"] = jsonCase{setup: func(t *testing.T) (string, []string) {
 		s := newCLIStore(t)
@@ -72,8 +72,8 @@ func init() {
 	}}
 }
 
-// lm6ImageFile is a small placeholder image file to push.
-func lm6ImageFile(t *testing.T) string {
+// placeholderImageFile is a small placeholder image file to push.
+func placeholderImageFile(t *testing.T) string {
 	t.Helper()
 	f := filepath.Join(t.TempDir(), "base.qcow2")
 	if err := os.WriteFile(f, []byte("PLACEHOLDER image bytes"), 0o644); err != nil {
@@ -348,7 +348,7 @@ func TestJSONImagesListStore(t *testing.T) {
 func TestJSONImagesPushPull(t *testing.T) {
 	s := newCLIStore(t)
 	dir := storeWorkdir(t, s, storeTok)
-	file := lm6ImageFile(t)
+	file := placeholderImageFile(t)
 	sum := sumHex([]byte("PLACEHOLDER image bytes"))
 	r, o := runJSON(t, dir, "vmtool images push", "images", "push", file)
 	if r.code != 0 || o["name"] != "base.qcow2" || o["sha256"] != sum || o["size"] != float64(23) {
@@ -424,7 +424,7 @@ func TestJSONCredsNeverPrintSecrets(t *testing.T) {
 }
 
 // A failure under --json is the error object on stderr and nothing on stdout.
-func TestJSONLM6Failure(t *testing.T) {
+func TestJSONStoreGroupFailure(t *testing.T) {
 	c := newCredCLI(t) // the store has no record
 	r := runContract(t, c.dir, "vmtool creds fetch", "--json", "creds", "fetch", "ws/web")
 	if r.code != 1 || r.out != "" || !strings.Contains(r.errOut, `"not_found"`) {

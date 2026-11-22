@@ -14,8 +14,8 @@ import (
 	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
-// LM7: --json for the config and metal commands (the net ones are in
-// clijson_lm7_net_test.go). The cases join jsonCases; the focused tests pin
+// --json for the config and metal commands (the net ones are in
+// clijson_net_test.go). The cases join jsonCases; the focused tests pin
 // each shape.
 
 const (

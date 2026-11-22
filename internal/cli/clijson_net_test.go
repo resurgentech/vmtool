@@ -24,7 +24,7 @@ import (
 	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
-// LM7: --json for the net commands. attach, create, delete, detach and show
+// --json for the net commands. attach, create, delete, detach and show
 // run against the jsonFake host; join and leave (and a registered delete) need
 // a registry, so they run against the real store, in process, and hosts that
 // keep their networks and links.

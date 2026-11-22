@@ -13,7 +13,7 @@ import (
 	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
-// LM5: --json for the VM and host commands. The cases join jsonCases (the
+// --json for the VM and host commands. The cases join jsonCases (the
 // contract walk in clicontract_test.go); the focused tests pin each shape.
 
 // jsonFake is a host on which every VM operation succeeds and Info answers
