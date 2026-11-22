@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaredeh/vmtool/internal/storeclient"
+	"github.com/resurgentech/vmtool/internal/storeclient"
 )
 
 // N9: Service.Inventory is the one read of the store's inventory. The store is

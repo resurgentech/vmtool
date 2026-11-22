@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 // V2: VMs on a vmtool network. The workflows order a card's steps (reservation,

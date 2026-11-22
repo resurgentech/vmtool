@@ -6,8 +6,8 @@ import (
 	"net"
 	"strings"
 
-	"github.com/jaredeh/vmtool/internal/store/db"
-	"github.com/jaredeh/vmtool/internal/storeapi"
+	"github.com/resurgentech/vmtool/internal/store/db"
+	"github.com/resurgentech/vmtool/internal/storeapi"
 )
 
 // The reservations of networks that span hosts (tranche 17, V5): the store

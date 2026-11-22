@@ -3,7 +3,7 @@ package app
 import (
 	"fmt"
 
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 // ImageSource finds this machine's copy of a base image for create to hash

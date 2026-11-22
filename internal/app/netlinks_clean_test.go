@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaredeh/vmtool/internal/storeclient"
+	"github.com/resurgentech/vmtool/internal/storeclient"
 )
 
 // G2: a waking member cleans up after itself. At the start pass, a member-form

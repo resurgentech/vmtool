@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaredeh/vmtool/internal/storeclient"
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/internal/storeclient"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 // N8: a workflow on host/vm that fails with "the host does not have it"

@@ -5,10 +5,10 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/jaredeh/vmtool/internal/app"
-	"github.com/jaredeh/vmtool/internal/config"
-	"github.com/jaredeh/vmtool/internal/hosts"
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/internal/app"
+	"github.com/resurgentech/vmtool/internal/config"
+	"github.com/resurgentech/vmtool/internal/hosts"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 func i64(n int64) *int64     { return &n }

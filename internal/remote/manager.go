@@ -16,9 +16,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jaredeh/vmtool/internal/api"
-	"github.com/jaredeh/vmtool/internal/app"
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/internal/api"
+	"github.com/resurgentech/vmtool/internal/app"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 const (

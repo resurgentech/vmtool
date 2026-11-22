@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 // V1: named networks on one host. The workflows check the name before the

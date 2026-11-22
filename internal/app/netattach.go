@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/jaredeh/vmtool/internal/storeclient"
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/internal/storeclient"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 // A VM's cards on vmtool networks (tranche 17, V2). A card is an extra

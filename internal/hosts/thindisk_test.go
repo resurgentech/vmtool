@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jaredeh/vmtool/internal/app"
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/internal/app"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 // diskInner is thinInner plus the libvirt primitives the thin disk operations

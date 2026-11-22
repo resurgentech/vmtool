@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/jaredeh/vmtool/internal/storeapi"
+	"github.com/resurgentech/vmtool/internal/storeapi"
 )
 
 // The network registry (tranche 17, V3): the networks that span hosts, their

@@ -7,8 +7,8 @@ import (
 	"io"
 	"time"
 
-	"github.com/jaredeh/vmtool/internal/storeclient"
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/internal/storeclient"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 // ErrNoStore is what the local ImageCatalog answers: this command is in

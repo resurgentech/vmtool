@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaredeh/vmtool/internal/testexec"
+	"github.com/resurgentech/vmtool/internal/testexec"
 )
 
 // probeClock advances only when WaitSSH sleeps.

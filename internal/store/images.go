@@ -15,10 +15,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jaredeh/vmtool/internal/store/blob"
-	"github.com/jaredeh/vmtool/internal/store/db"
-	"github.com/jaredeh/vmtool/internal/storeapi"
-	"github.com/jaredeh/vmtool/internal/tokenhash"
+	"github.com/resurgentech/vmtool/internal/store/blob"
+	"github.com/resurgentech/vmtool/internal/store/db"
+	"github.com/resurgentech/vmtool/internal/storeapi"
+	"github.com/resurgentech/vmtool/internal/tokenhash"
 )
 
 // TicketLifetime is how long a download ticket stays valid.

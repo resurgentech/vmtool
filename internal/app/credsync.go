@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 // This file is the client's policy for guest credentials in store mode: when

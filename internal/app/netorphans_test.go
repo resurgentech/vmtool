@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaredeh/vmtool/internal/store/db"
+	"github.com/resurgentech/vmtool/internal/store/db"
 )
 
 // G3: a reservation left on a home (a VM deleted while the home was down, a

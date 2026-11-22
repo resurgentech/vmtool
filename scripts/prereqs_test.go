@@ -12,7 +12,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/jaredeh/vmtool/internal/testexec"
+	"github.com/resurgentech/vmtool/internal/testexec"
 )
 
 // prereqs.sh <host> hands the playbook the hypervisor role and every layout

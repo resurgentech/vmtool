@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jaredeh/vmtool/internal/app"
-	"github.com/jaredeh/vmtool/internal/config"
-	"github.com/jaredeh/vmtool/internal/remote"
+	"github.com/resurgentech/vmtool/internal/app"
+	"github.com/resurgentech/vmtool/internal/config"
+	"github.com/resurgentech/vmtool/internal/remote"
 )
 
 func failing(t *testing.T) Connector {

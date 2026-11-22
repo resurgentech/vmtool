@@ -12,11 +12,11 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/jaredeh/vmtool/internal/api"
-	"github.com/jaredeh/vmtool/internal/app"
-	"github.com/jaredeh/vmtool/internal/config"
-	"github.com/jaredeh/vmtool/internal/remote"
-	"github.com/jaredeh/vmtool/internal/storeclient"
+	"github.com/resurgentech/vmtool/internal/api"
+	"github.com/resurgentech/vmtool/internal/app"
+	"github.com/resurgentech/vmtool/internal/config"
+	"github.com/resurgentech/vmtool/internal/remote"
+	"github.com/resurgentech/vmtool/internal/storeclient"
 )
 
 // `vmtool templates export host/<name> --push`. The daemon and the store are

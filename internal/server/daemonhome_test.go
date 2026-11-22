@@ -8,10 +8,10 @@ import (
 	"testing"
 
 	"github.com/getkin/kin-openapi/openapi3"
-	"github.com/jaredeh/vmtool/internal/app"
-	"github.com/jaredeh/vmtool/internal/config"
-	"github.com/jaredeh/vmtool/internal/hosts"
-	"github.com/jaredeh/vmtool/spec"
+	"github.com/resurgentech/vmtool/internal/app"
+	"github.com/resurgentech/vmtool/internal/config"
+	"github.com/resurgentech/vmtool/internal/hosts"
+	"github.com/resurgentech/vmtool/spec"
 )
 
 // daemonHomeRefused is the set of operations a daemon with network_home: true

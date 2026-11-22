@@ -12,12 +12,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jaredeh/vmtool/internal/api"
-	"github.com/jaredeh/vmtool/internal/app"
-	"github.com/jaredeh/vmtool/internal/config"
-	"github.com/jaredeh/vmtool/internal/hosts"
-	"github.com/jaredeh/vmtool/internal/storeclient"
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/internal/api"
+	"github.com/resurgentech/vmtool/internal/app"
+	"github.com/resurgentech/vmtool/internal/config"
+	"github.com/resurgentech/vmtool/internal/hosts"
+	"github.com/resurgentech/vmtool/internal/storeclient"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 // Server is the vmtool REST API.

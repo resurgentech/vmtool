@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 // vmtool info prints the UUID, and "unknown" when the daemon did not send one.

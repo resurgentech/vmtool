@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 const evPlaceholder = "PLACEHOLDER-not-a-secret-1"

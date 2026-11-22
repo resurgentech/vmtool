@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jaredeh/vmtool/internal/storeclient"
+	"github.com/resurgentech/vmtool/internal/storeclient"
 )
 
 // Mode is where a command gets credentials, machine records and base images.

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jaredeh/vmtool/internal/app"
+	"github.com/resurgentech/vmtool/internal/app"
 )
 
 // Upload progress retitles the running create entry; other events do not.

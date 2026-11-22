@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 const appTok = "app-test-token-7f3a"

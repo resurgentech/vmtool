@@ -6,7 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/jaredeh/vmtool/internal/app"
+	"github.com/resurgentech/vmtool/internal/app"
 )
 
 // The inventory view (I from the VM list): the store's record of hosts, VMs

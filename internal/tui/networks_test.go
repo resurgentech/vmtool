@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jaredeh/vmtool/internal/app"
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/internal/app"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 // V1: N opens a read-only list of the host's networks with vmtool's marked.

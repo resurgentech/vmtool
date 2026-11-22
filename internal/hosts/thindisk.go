@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/jaredeh/vmtool/internal/app"
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/internal/app"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 // Add-disk and resize-disk on thin pools: ThinPools' overrides. A VM whose

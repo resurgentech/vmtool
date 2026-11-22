@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaredeh/vmtool/internal/testexec"
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/internal/testexec"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 // The machine probe hands ssh explicit argv: sh -c <script>, every argument

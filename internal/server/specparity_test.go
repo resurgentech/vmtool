@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/getkin/kin-openapi/openapi3"
-	"github.com/jaredeh/vmtool/internal/api"
-	"github.com/jaredeh/vmtool/spec"
+	"github.com/resurgentech/vmtool/internal/api"
+	"github.com/resurgentech/vmtool/spec"
 )
 
 type recMux struct {

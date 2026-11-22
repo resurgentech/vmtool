@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/jaredeh/vmtool/internal/app"
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/internal/app"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 // V3: every wrapper keeps app.VNICreator visible, so a host's network number

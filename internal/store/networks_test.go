@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaredeh/vmtool/internal/storeapi"
-	"github.com/jaredeh/vmtool/internal/tokenhash"
+	"github.com/resurgentech/vmtool/internal/storeapi"
+	"github.com/resurgentech/vmtool/internal/tokenhash"
 )
 
 func testServerNoDB(t *testing.T) (*httptest.Server, *bytes.Buffer) {

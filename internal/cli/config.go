@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/jaredeh/vmtool/internal/config"
+	"github.com/resurgentech/vmtool/internal/config"
 	"github.com/spf13/cobra"
 )
 

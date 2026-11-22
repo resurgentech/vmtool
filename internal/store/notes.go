@@ -5,9 +5,9 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/jaredeh/vmtool/internal/store/db"
-	"github.com/jaredeh/vmtool/internal/storeapi"
-	"github.com/jaredeh/vmtool/internal/vmnotes"
+	"github.com/resurgentech/vmtool/internal/store/db"
+	"github.com/resurgentech/vmtool/internal/storeapi"
+	"github.com/resurgentech/vmtool/internal/vmnotes"
 )
 
 // A VM's notes (origin and comment): kept in the store only, keyed (host,

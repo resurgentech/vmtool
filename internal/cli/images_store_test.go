@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaredeh/vmtool/internal/config"
+	"github.com/resurgentech/vmtool/internal/config"
 )
 
 var (

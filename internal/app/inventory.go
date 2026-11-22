@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 func (s *Service) ListNetworks(_ context.Context, m Manager) ([]string, error) {

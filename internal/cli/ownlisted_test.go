@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaredeh/vmtool/internal/app"
-	"github.com/jaredeh/vmtool/internal/config"
-	"github.com/jaredeh/vmtool/internal/hosts"
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/internal/app"
+	"github.com/resurgentech/vmtool/internal/config"
+	"github.com/resurgentech/vmtool/internal/hosts"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 // ownResolver replaces the CLI's resolver for one test. The own name is

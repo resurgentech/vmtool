@@ -7,7 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/jaredeh/vmtool/internal/app"
+	"github.com/resurgentech/vmtool/internal/app"
 )
 
 // The network list (N from the VM list): the libvirt networks of this host

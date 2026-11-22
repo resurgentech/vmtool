@@ -14,10 +14,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaredeh/vmtool/internal/api"
-	"github.com/jaredeh/vmtool/internal/app"
-	"github.com/jaredeh/vmtool/internal/config"
-	"github.com/jaredeh/vmtool/internal/hosts"
+	"github.com/resurgentech/vmtool/internal/api"
+	"github.com/resurgentech/vmtool/internal/app"
+	"github.com/resurgentech/vmtool/internal/config"
+	"github.com/resurgentech/vmtool/internal/hosts"
 )
 
 // noLibvirt is a resolver whose local connector fails the test if called.

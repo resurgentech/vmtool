@@ -7,11 +7,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jaredeh/vmtool/internal/app"
-	"github.com/jaredeh/vmtool/internal/config"
-	"github.com/jaredeh/vmtool/internal/hosts"
-	"github.com/jaredeh/vmtool/internal/testexec"
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/internal/app"
+	"github.com/resurgentech/vmtool/internal/config"
+	"github.com/resurgentech/vmtool/internal/hosts"
+	"github.com/resurgentech/vmtool/internal/testexec"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 // ipFake is a Manager whose Info answers with an address, so exec proceeds to ssh.

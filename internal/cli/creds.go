@@ -3,7 +3,7 @@ package cli
 import (
 	"fmt"
 
-	"github.com/jaredeh/vmtool/internal/app"
+	"github.com/resurgentech/vmtool/internal/app"
 	"github.com/spf13/cobra"
 )
 

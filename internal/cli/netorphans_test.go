@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jaredeh/vmtool/internal/app"
-	"github.com/jaredeh/vmtool/internal/storeclient"
+	"github.com/resurgentech/vmtool/internal/app"
+	"github.com/resurgentech/vmtool/internal/storeclient"
 )
 
 // G3: `net show` lists the orphaned reservations that remain (the home did not

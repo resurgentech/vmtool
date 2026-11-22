@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaredeh/vmtool/internal/app"
-	"github.com/jaredeh/vmtool/internal/config"
+	"github.com/resurgentech/vmtool/internal/app"
+	"github.com/resurgentech/vmtool/internal/config"
 )
 
 // V6: a hosts: entry with vms: false is a network home. The resolver carries

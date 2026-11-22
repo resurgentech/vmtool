@@ -1,4 +1,4 @@
-module github.com/jaredeh/vmtool
+module github.com/resurgentech/vmtool
 
 go 1.24.0
 

@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jaredeh/vmtool/internal/api"
+	"github.com/resurgentech/vmtool/internal/api"
 )
 
 // F1: the client removes its own token from a daemon's text.

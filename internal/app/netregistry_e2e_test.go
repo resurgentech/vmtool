@@ -13,12 +13,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jaredeh/vmtool/internal/store"
-	"github.com/jaredeh/vmtool/internal/store/blob"
-	"github.com/jaredeh/vmtool/internal/store/db"
-	"github.com/jaredeh/vmtool/internal/storeclient"
-	"github.com/jaredeh/vmtool/internal/tokenhash"
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/internal/store"
+	"github.com/resurgentech/vmtool/internal/store/blob"
+	"github.com/resurgentech/vmtool/internal/store/db"
+	"github.com/resurgentech/vmtool/internal/storeclient"
+	"github.com/resurgentech/vmtool/internal/tokenhash"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 // V3, the hop to the host: the real store (in-process, httptest) allocates

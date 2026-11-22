@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 // `templates export` and `images pull host/<name>`: the workflows. The host is

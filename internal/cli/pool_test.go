@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/jaredeh/vmtool/internal/config"
+	"github.com/resurgentech/vmtool/internal/config"
 )
 
 // No --pool is the host's default pool, which the host resolves: every pool

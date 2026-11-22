@@ -8,8 +8,8 @@ import (
 	"strings"
 
 	"github.com/getkin/kin-openapi/openapi3"
-	"github.com/jaredeh/vmtool/internal/api"
-	"github.com/jaredeh/vmtool/internal/config"
+	"github.com/resurgentech/vmtool/internal/api"
+	"github.com/resurgentech/vmtool/internal/config"
 )
 
 // publicRoutes returns a mux matching exactly the operations whose effective

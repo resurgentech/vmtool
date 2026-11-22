@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaredeh/vmtool/internal/store"
-	"github.com/jaredeh/vmtool/internal/store/blob"
-	"github.com/jaredeh/vmtool/internal/store/db"
-	"github.com/jaredeh/vmtool/internal/tokenhash"
+	"github.com/resurgentech/vmtool/internal/store"
+	"github.com/resurgentech/vmtool/internal/store/blob"
+	"github.com/resurgentech/vmtool/internal/store/db"
+	"github.com/resurgentech/vmtool/internal/tokenhash"
 )
 
 // The store never links libvirt: it must build without cgo and have no
@@ -32,7 +32,7 @@ func TestNoLibvirtDeps(t *testing.T) {
 		if strings.Contains(p, "libvirt.org") {
 			t.Errorf("dependency %s", p)
 		}
-		if p == "github.com/jaredeh/vmtool/pkg/vmtool" || p == "github.com/jaredeh/vmtool/internal/config" {
+		if p == "github.com/resurgentech/vmtool/pkg/vmtool" || p == "github.com/resurgentech/vmtool/internal/config" {
 			t.Errorf("dependency %s pulls in libvirt", p)
 		}
 	}

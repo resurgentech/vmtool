@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jaredeh/vmtool/internal/tokenhash"
+	"github.com/resurgentech/vmtool/internal/tokenhash"
 )
 
 const (

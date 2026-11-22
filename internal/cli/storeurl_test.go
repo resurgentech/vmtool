@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jaredeh/vmtool/internal/config"
+	"github.com/resurgentech/vmtool/internal/config"
 )
 
 // `config write --store-url` records the daemon's store address.

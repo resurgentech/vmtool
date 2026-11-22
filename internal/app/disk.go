@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 func (s *Service) MigrateDisk(ctx context.Context, m Manager, ref VMRef, pool string) (*vmtool.VMInfo, error) {

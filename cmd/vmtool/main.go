@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/jaredeh/vmtool/internal/cli"
+	"github.com/resurgentech/vmtool/internal/cli"
 )
 
 func main() {

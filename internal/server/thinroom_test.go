@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jaredeh/vmtool/internal/app"
-	"github.com/jaredeh/vmtool/internal/config"
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/internal/app"
+	"github.com/resurgentech/vmtool/internal/config"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 const roomMsg = "thin pool thin-test (vg-test) has no room: data use is 80.00%, at or above the 80% limit"

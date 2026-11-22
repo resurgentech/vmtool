@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 // saveHost is a thin-pool host (tmplHost) with a VM whose state is set, and a

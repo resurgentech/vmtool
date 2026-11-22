@@ -18,8 +18,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jaredeh/vmtool/internal/tokenhash"
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/internal/tokenhash"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 	"gopkg.in/yaml.v3"
 )
 

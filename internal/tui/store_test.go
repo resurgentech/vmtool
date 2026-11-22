@@ -3,7 +3,7 @@ package tui
 import (
 	"testing"
 
-	"github.com/jaredeh/vmtool/internal/app"
+	"github.com/resurgentech/vmtool/internal/app"
 )
 
 // The TUI's workflow layer carries the run's store session, so credential

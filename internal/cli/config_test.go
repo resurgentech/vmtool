@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jaredeh/vmtool/internal/config"
+	"github.com/resurgentech/vmtool/internal/config"
 )
 
 func runConfig(t *testing.T, dir, stdin string, args ...string) (string, error) {

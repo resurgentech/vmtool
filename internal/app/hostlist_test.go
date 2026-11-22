@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 // listFake answers List after delay (or never, until block is closed).

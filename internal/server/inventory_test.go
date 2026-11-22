@@ -18,12 +18,12 @@ import (
 	"time"
 
 	"github.com/getkin/kin-openapi/openapi3"
-	"github.com/jaredeh/vmtool/internal/app"
-	"github.com/jaredeh/vmtool/internal/config"
-	"github.com/jaredeh/vmtool/internal/hosts"
-	"github.com/jaredeh/vmtool/internal/storeclient"
-	"github.com/jaredeh/vmtool/pkg/vmtool"
-	"github.com/jaredeh/vmtool/spec"
+	"github.com/resurgentech/vmtool/internal/app"
+	"github.com/resurgentech/vmtool/internal/config"
+	"github.com/resurgentech/vmtool/internal/hosts"
+	"github.com/resurgentech/vmtool/internal/storeclient"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/spec"
 )
 
 // noVMChange is every operation that leaves what a VM looks like alone. Each

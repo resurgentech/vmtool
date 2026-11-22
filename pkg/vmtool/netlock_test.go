@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/jaredeh/vmtool/internal/testexec"
+	"github.com/resurgentech/vmtool/internal/testexec"
 )
 
 // Z1: link and unlink of one network are serialised in the process. A stub

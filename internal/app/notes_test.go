@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaredeh/vmtool/internal/storeapi"
-	"github.com/jaredeh/vmtool/internal/storeclient"
-	"github.com/jaredeh/vmtool/internal/vmnotes"
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/internal/storeapi"
+	"github.com/resurgentech/vmtool/internal/storeclient"
+	"github.com/resurgentech/vmtool/internal/vmnotes"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 // N12: a VM's origin and comment live in the store only. Create writes them

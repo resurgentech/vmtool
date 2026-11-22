@@ -4,8 +4,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/jaredeh/vmtool/internal/config"
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/internal/config"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 // G1: New(cfg)'s local connector is real libvirt. Under go test, resolving the

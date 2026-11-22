@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 // Metal and alien machines in store mode: the store holds the record (manifest

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jaredeh/vmtool/internal/api"
+	"github.com/resurgentech/vmtool/internal/api"
 )
 
 // N12: PUT /v1/hosts/{host}/vms/{name}/comment is workstation-only and writes

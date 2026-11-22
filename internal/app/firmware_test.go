@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 // uefiVMs is a createVMs whose WaitForIP times out and whose Define records

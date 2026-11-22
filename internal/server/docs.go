@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"context"
 
-	"github.com/jaredeh/vmtool/internal/api"
-	"github.com/jaredeh/vmtool/spec"
+	"github.com/resurgentech/vmtool/internal/api"
+	"github.com/resurgentech/vmtool/spec"
 	"gopkg.in/yaml.v3"
 )
 

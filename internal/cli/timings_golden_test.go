@@ -3,7 +3,7 @@ package cli
 import (
 	"testing"
 
-	"github.com/jaredeh/vmtool/internal/app"
+	"github.com/resurgentech/vmtool/internal/app"
 )
 
 // Golden lines: the closing timings text is a contract (scripts read it), so

@@ -15,13 +15,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaredeh/vmtool/internal/store"
-	"github.com/jaredeh/vmtool/internal/store/blob"
-	"github.com/jaredeh/vmtool/internal/store/db"
-	"github.com/jaredeh/vmtool/internal/storeapi"
-	"github.com/jaredeh/vmtool/internal/storeclient"
-	"github.com/jaredeh/vmtool/internal/tokenhash"
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/internal/store"
+	"github.com/resurgentech/vmtool/internal/store/blob"
+	"github.com/resurgentech/vmtool/internal/store/db"
+	"github.com/resurgentech/vmtool/internal/storeapi"
+	"github.com/resurgentech/vmtool/internal/storeclient"
+	"github.com/resurgentech/vmtool/internal/tokenhash"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 // G2: `net delete` of a registered network removes it everywhere and its

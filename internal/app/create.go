@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jaredeh/vmtool/internal/vmnotes"
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/internal/vmnotes"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 // RemoteImage is a host's image-cache entry for one image (getImageManifest).

@@ -7,8 +7,8 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/jaredeh/vmtool/internal/app"
-	"github.com/jaredeh/vmtool/internal/hosts"
+	"github.com/resurgentech/vmtool/internal/app"
+	"github.com/resurgentech/vmtool/internal/hosts"
 	"github.com/spf13/cobra"
 )
 

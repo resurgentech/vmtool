@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 // createVMs is a Manager that fakes the create and delete paths.

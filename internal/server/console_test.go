@@ -18,11 +18,11 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/jaredeh/vmtool/internal/app"
-	"github.com/jaredeh/vmtool/internal/config"
-	"github.com/jaredeh/vmtool/internal/hosts"
-	"github.com/jaredeh/vmtool/internal/testexec"
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/internal/app"
+	"github.com/resurgentech/vmtool/internal/config"
+	"github.com/resurgentech/vmtool/internal/hosts"
+	"github.com/resurgentech/vmtool/internal/testexec"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 // consoleMgr is a fakeMgr with three VMs: web (has an address), noip (none),

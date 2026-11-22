@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jaredeh/vmtool/internal/app"
+	"github.com/resurgentech/vmtool/internal/app"
 )
 
 // V1: createNetwork, getNetwork and deleteNetwork through the real handler

@@ -24,8 +24,8 @@ import (
 	"time"
 
 	"github.com/getkin/kin-openapi/openapi3"
-	"github.com/jaredeh/vmtool/internal/config"
-	"github.com/jaredeh/vmtool/spec"
+	"github.com/resurgentech/vmtool/internal/config"
+	"github.com/resurgentech/vmtool/spec"
 )
 
 // Test tokens only; never a real token.

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jaredeh/vmtool/internal/storeclient"
+	"github.com/resurgentech/vmtool/internal/storeclient"
 )
 
 // V5: a card on a network that spans hosts. The reservation is made on the

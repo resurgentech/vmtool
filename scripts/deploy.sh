@@ -158,7 +158,7 @@ if rev=$(git -C "$root" rev-parse HEAD 2>/dev/null); then
     rev+="+dirty"
   fi
   [[ $rev =~ ^[0-9a-f]{40}(\+dirty)?$ ]] || die "git revision '$rev' of $root is not a 40-digit hash with an optional +dirty; not building with it."
-  ldflags=" -ldflags \"-X github.com/jaredeh/vmtool/internal/buildinfo.stamped=$rev\""
+  ldflags=" -ldflags \"-X github.com/resurgentech/vmtool/internal/buildinfo.stamped=$rev\""
 else
   echo "deploy: $root is not a git checkout; building without a revision stamp (the daemon will report its version as unknown)." >&2
 fi

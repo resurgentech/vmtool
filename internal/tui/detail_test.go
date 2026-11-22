@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaredeh/vmtool/internal/app"
-	"github.com/jaredeh/vmtool/internal/vmnotes"
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/internal/app"
+	"github.com/resurgentech/vmtool/internal/vmnotes"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 // The pane under the VM list shows the selected VM's origin and comment, read

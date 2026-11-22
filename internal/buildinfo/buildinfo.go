@@ -4,7 +4,7 @@ package buildinfo
 import "runtime/debug"
 
 // stamped is the revision a build was told about with
-// -ldflags "-X github.com/jaredeh/vmtool/internal/buildinfo.stamped=<rev>".
+// -ldflags "-X github.com/resurgentech/vmtool/internal/buildinfo.stamped=<rev>".
 // Nothing else sets it. It stands for a build that has no VCS information of
 // its own, such as `just deploy`'s, which builds from a copy without .git.
 var stamped string

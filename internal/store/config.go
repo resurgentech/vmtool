@@ -16,7 +16,7 @@ import (
 	"regexp"
 	"sort"
 
-	"github.com/jaredeh/vmtool/internal/tokenhash"
+	"github.com/resurgentech/vmtool/internal/tokenhash"
 	"gopkg.in/yaml.v3"
 )
 

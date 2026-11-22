@@ -4,8 +4,8 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/jaredeh/vmtool/internal/app"
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/internal/app"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 // InventorySource is what the daemon's reporter lists from: the local host's

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jaredeh/vmtool/internal/api"
+	"github.com/resurgentech/vmtool/internal/api"
 )
 
 // N9: GET /v1/inventory on the workstation reads the store through

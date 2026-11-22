@@ -8,8 +8,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/jaredeh/vmtool/internal/store/db"
-	"github.com/jaredeh/vmtool/internal/storeapi"
+	"github.com/resurgentech/vmtool/internal/store/db"
+	"github.com/resurgentech/vmtool/internal/storeapi"
 )
 
 // The network registry (tranche 17, V3): the networks that span hosts, their

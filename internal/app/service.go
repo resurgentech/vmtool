@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 // Manager is the libvirt surface Service needs.

@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaredeh/vmtool/internal/app"
-	"github.com/jaredeh/vmtool/internal/storeapi"
+	"github.com/resurgentech/vmtool/internal/app"
+	"github.com/resurgentech/vmtool/internal/storeapi"
 )
 
 // N9: I opens a read-only view of the store's inventory, read through

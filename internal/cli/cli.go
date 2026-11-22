@@ -14,14 +14,14 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/jaredeh/vmtool/internal/app"
-	"github.com/jaredeh/vmtool/internal/config"
-	"github.com/jaredeh/vmtool/internal/hosts"
-	"github.com/jaredeh/vmtool/internal/server"
-	"github.com/jaredeh/vmtool/internal/storeclient"
-	"github.com/jaredeh/vmtool/internal/tui"
-	"github.com/jaredeh/vmtool/internal/vmnotes"
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/internal/app"
+	"github.com/resurgentech/vmtool/internal/config"
+	"github.com/resurgentech/vmtool/internal/hosts"
+	"github.com/resurgentech/vmtool/internal/server"
+	"github.com/resurgentech/vmtool/internal/storeclient"
+	"github.com/resurgentech/vmtool/internal/tui"
+	"github.com/resurgentech/vmtool/internal/vmnotes"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 	"github.com/spf13/cobra"
 )
 

@@ -21,9 +21,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaredeh/vmtool/internal/config"
-	"github.com/jaredeh/vmtool/internal/remote"
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/internal/config"
+	"github.com/resurgentech/vmtool/internal/remote"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 const want101 = "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: vmtool-tunnel\r\n\r\n"

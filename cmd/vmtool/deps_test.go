@@ -23,11 +23,11 @@ func TestNoStoreServerDeps(t *testing.T) {
 		switch {
 		case strings.HasPrefix(p, "github.com/minio/minio-go"),
 			strings.HasPrefix(p, "modernc.org/sqlite"),
-			p == "github.com/jaredeh/vmtool/internal/store",
-			strings.HasPrefix(p, "github.com/jaredeh/vmtool/internal/store/"),
-			p == "github.com/jaredeh/vmtool/cmd/vmtool-store":
+			p == "github.com/resurgentech/vmtool/internal/store",
+			strings.HasPrefix(p, "github.com/resurgentech/vmtool/internal/store/"),
+			p == "github.com/resurgentech/vmtool/cmd/vmtool-store":
 			t.Errorf("vmtool depends on %s", p)
-		case p == "github.com/jaredeh/vmtool/internal/storeclient":
+		case p == "github.com/resurgentech/vmtool/internal/storeclient":
 			sawClient = true
 		}
 	}

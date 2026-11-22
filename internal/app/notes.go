@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jaredeh/vmtool/internal/storeclient"
-	"github.com/jaredeh/vmtool/internal/vmnotes"
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/internal/storeclient"
+	"github.com/resurgentech/vmtool/internal/vmnotes"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 // A VM's notes: what vmtool records about a VM besides what its host

@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 // ListTimeout bounds one host's contribution to a combined listing or probe:

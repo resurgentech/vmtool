@@ -7,7 +7,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/jaredeh/vmtool/internal/storeclient"
+	"github.com/resurgentech/vmtool/internal/storeclient"
 )
 
 // InventoryVM is one VM row of the inventory.

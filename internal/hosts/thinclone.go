@@ -10,8 +10,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/jaredeh/vmtool/internal/app"
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/internal/app"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 // Thin-pool clone, define, delete and resize: ThinPools' overrides. A request

@@ -11,8 +11,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/jaredeh/vmtool/internal/app"
-	"github.com/jaredeh/vmtool/internal/config"
+	"github.com/resurgentech/vmtool/internal/app"
+	"github.com/resurgentech/vmtool/internal/config"
 )
 
 // `vmtool templates export host/<name>` and `vmtool images pull host/<name>`.

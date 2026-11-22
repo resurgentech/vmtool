@@ -3,7 +3,7 @@ package cli
 import (
 	"testing"
 
-	"github.com/jaredeh/vmtool/internal/config"
+	"github.com/resurgentech/vmtool/internal/config"
 )
 
 func TestServerFrom(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 // Named networks on one host (tranche 17, V1). They need no store: a network

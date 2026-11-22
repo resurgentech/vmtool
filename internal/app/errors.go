@@ -3,7 +3,7 @@ package app
 import (
 	"errors"
 
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 type Kind int

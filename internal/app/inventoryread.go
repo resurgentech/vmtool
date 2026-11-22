@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/jaredeh/vmtool/internal/storeclient"
+	"github.com/resurgentech/vmtool/internal/storeclient"
 )
 
 // The store's inventory as the read surfaces show it. Types are the store

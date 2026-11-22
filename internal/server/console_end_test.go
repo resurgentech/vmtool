@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/jaredeh/vmtool/internal/config"
+	"github.com/resurgentech/vmtool/internal/config"
 )
 
 // Test 9: a client close frame and a dropped connection each kill the shell

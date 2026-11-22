@@ -9,8 +9,8 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/jaredeh/vmtool/internal/store/db"
-	"github.com/jaredeh/vmtool/internal/storeapi"
+	"github.com/resurgentech/vmtool/internal/store/db"
+	"github.com/resurgentech/vmtool/internal/storeapi"
 )
 
 // Credential limits. A secret field is a password or a key; a PUT body that

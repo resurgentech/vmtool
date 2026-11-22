@@ -3,8 +3,8 @@ package server
 import (
 	"context"
 
-	"github.com/jaredeh/vmtool/internal/api"
-	"github.com/jaredeh/vmtool/internal/app"
+	"github.com/resurgentech/vmtool/internal/api"
+	"github.com/resurgentech/vmtool/internal/app"
 )
 
 func toAPIMachine(info *app.MachineInfo) api.MachineInfo {

@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaredeh/vmtool/internal/storeclient"
+	"github.com/resurgentech/vmtool/internal/storeclient"
 )
 
 // `templates export --push`: the workflow. The host is a fake (xferHost); the

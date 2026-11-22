@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 // Template management: list, build ahead, delete, prune. A template is a thin

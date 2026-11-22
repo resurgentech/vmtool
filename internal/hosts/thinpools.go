@@ -3,8 +3,8 @@ package hosts
 import (
 	"log/slog"
 
-	"github.com/jaredeh/vmtool/internal/app"
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/internal/app"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 // ThinPools is a hypervisor daemon's local Manager with LVM thin pools added:

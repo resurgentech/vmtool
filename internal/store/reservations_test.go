@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jaredeh/vmtool/internal/storeapi"
+	"github.com/resurgentech/vmtool/internal/storeapi"
 )
 
 // V5: the store records each spanning network's reservations (network, MAC,

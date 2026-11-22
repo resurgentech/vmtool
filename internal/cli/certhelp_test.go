@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaredeh/vmtool/internal/remote"
+	"github.com/resurgentech/vmtool/internal/remote"
 )
 
 func mustOurVersion(t *testing.T) string {

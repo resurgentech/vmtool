@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/jaredeh/vmtool/internal/storeclient"
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/internal/storeclient"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 // The network registry in store mode (tranche 17, V3). The store keeps the

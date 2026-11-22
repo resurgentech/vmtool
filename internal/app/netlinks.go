@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jaredeh/vmtool/internal/storeclient"
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/internal/storeclient"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 // The daemon keeps its links up (tranche 17, V5). A VXLAN device does not

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 func notFound(n string) (string, error) { return "", fmt.Errorf("%s: %w", n, vmtool.ErrNotFound) }

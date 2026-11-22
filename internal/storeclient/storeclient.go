@@ -23,7 +23,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jaredeh/vmtool/internal/storeapi"
+	"github.com/resurgentech/vmtool/internal/storeapi"
 )
 
 var (

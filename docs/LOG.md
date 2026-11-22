@@ -2610,3 +2610,32 @@ are appended, never edited in; a hook refuses rewrites.
   `deploy/vmtool-net:207`. Green; `just check` green.
 - Hosts need `just deploy` (helper and daemon) for the fix to take effect.
 - Commits: the Z3 commit on `clone-identity` (this entry rides in it).
+
+## 2026-11-22 — Module path `github.com/resurgentech/vmtool`
+
+- The module moves from `github.com/jaredeh/vmtool` to
+  `github.com/resurgentech/vmtool`, ahead of the repository's move to that
+  owner. One mechanical rewrite, nothing else: `go.mod`, 266 tracked `.go`
+  files (643 lines: imports, the dependency-test strings in
+  `cmd/vmtool/deps_test.go`, the deploy-test stamp strings, the comment in
+  `internal/buildinfo/buildinfo.go`), and `scripts/deploy.sh`; 268 files,
+  645 lines. Entries above keep the old path as history.
+- The build stamp follows the path: `scripts/deploy.sh` builds with
+  `-X github.com/resurgentech/vmtool/internal/buildinfo.stamped=<rev>`. A
+  stale path would make the linker set nothing and every deployed daemon
+  report no revision; `stampFlag` and `TestDeployLocalStampsBuildRevision`
+  pin the new one.
+- Red (deploy tests changed first, script unchanged):
+  `TestDeployFlow`, `TestDeployStampsBuildRevision`,
+  `TestDeployStampsDirtyTree`, `TestDeployLocalStampsBuildRevision` fail
+  with "lacks the stamp". Green after the rewrite; `just check` green;
+  `just generate` leaves no diff; the store image builds
+  (`docker build -f deploy/vmtool-store.Dockerfile .`, not tagged or
+  pushed).
+- `gofmt -l .` lists `scripts/deploy_test.go` (`const deployTok =`) and
+  `scripts/nvme_stripe_test.go` (a key's alignment), both whitespace that
+  predates this change; left as they were.
+- Existing checkouts and `go install` users need the new path after the
+  move; hosts are unaffected until their next `just deploy`.
+- Commits: the module-path commit on `master` (this entry rides in it);
+  not pushed: it is pushed after the repository moves. No tag.

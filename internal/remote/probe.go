@@ -6,8 +6,8 @@ import (
 	"io"
 	"net/url"
 
-	"github.com/jaredeh/vmtool/internal/api"
-	"github.com/jaredeh/vmtool/internal/app"
+	"github.com/resurgentech/vmtool/internal/api"
+	"github.com/resurgentech/vmtool/internal/app"
 )
 
 // OurVersion is info.version of the spec embedded in this binary: the API

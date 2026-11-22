@@ -3,9 +3,9 @@ package hosts
 import (
 	"testing"
 
-	"github.com/jaredeh/vmtool/internal/app"
-	"github.com/jaredeh/vmtool/internal/remote"
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/internal/app"
+	"github.com/resurgentech/vmtool/internal/remote"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 // V5: every wrapper gives up the Manager it wraps, so app.AsNetMember finds the

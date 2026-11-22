@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 // ImageFetcher is implemented by a Manager whose host can download a base

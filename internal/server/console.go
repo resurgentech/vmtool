@@ -15,9 +15,9 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/creack/pty"
-	"github.com/jaredeh/vmtool/internal/api"
-	"github.com/jaredeh/vmtool/internal/app"
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/internal/api"
+	"github.com/resurgentech/vmtool/internal/app"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 // GET /v1/hosts/{host}/vms/{name}/console and GET /v1/metal/{name}/console:

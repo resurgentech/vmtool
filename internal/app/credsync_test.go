@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jaredeh/vmtool/internal/testexec"
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/internal/testexec"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 // S8: the client's side of the credentials in the store. Every test runs in a

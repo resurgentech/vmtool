@@ -6,8 +6,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/jaredeh/vmtool/internal/api"
-	"github.com/jaredeh/vmtool/internal/app"
+	"github.com/resurgentech/vmtool/internal/api"
+	"github.com/resurgentech/vmtool/internal/app"
 )
 
 // warningsHeader carries the request's warnings: today only the store

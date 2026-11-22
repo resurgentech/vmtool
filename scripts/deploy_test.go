@@ -14,7 +14,7 @@ import (
 
 const deployRev = "0123456789abcdef0123456789abcdef01234567"
 
-const stampFlag = `-ldflags "-X github.com/jaredeh/vmtool/internal/buildinfo.stamped=`
+const stampFlag = `-ldflags "-X github.com/resurgentech/vmtool/internal/buildinfo.stamped=`
 
 const deployTok ="feedfacefeedfacefeedfacefeedfacefeedfacefeedfacefeedfacefeedface"
 
@@ -1748,7 +1748,7 @@ func TestDeployLocalStampsBuildRevision(t *testing.T) {
 	if r := e.deploy(t, nil, "PLACEHOLDER-HOST"); r.code != 0 {
 		t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
 	}
-	if g := readOr(t, filepath.Join(e.stub, "go.argv")); !strings.Contains(g, "-ldflags -X github.com/jaredeh/vmtool/internal/buildinfo.stamped="+deployRev+" ./cmd/vmtool") {
+	if g := readOr(t, filepath.Join(e.stub, "go.argv")); !strings.Contains(g, "-ldflags -X github.com/resurgentech/vmtool/internal/buildinfo.stamped="+deployRev+" ./cmd/vmtool") {
 		t.Errorf("go argv lacks the stamp: %q", g)
 	}
 }

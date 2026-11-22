@@ -5,7 +5,7 @@ import (
 	"io"
 	"testing"
 
-	"github.com/jaredeh/vmtool/internal/app"
+	"github.com/resurgentech/vmtool/internal/app"
 )
 
 // storeFake is a Manager that caches images and can fetch them (what

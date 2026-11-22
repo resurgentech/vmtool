@@ -3,9 +3,9 @@ package server
 import (
 	"context"
 
-	"github.com/jaredeh/vmtool/internal/api"
-	"github.com/jaredeh/vmtool/internal/app"
-	"github.com/jaredeh/vmtool/internal/storeclient"
+	"github.com/resurgentech/vmtool/internal/api"
+	"github.com/resurgentech/vmtool/internal/app"
+	"github.com/resurgentech/vmtool/internal/storeclient"
 )
 
 // GetInventory serves the store's inventory through app.Service.Inventory,

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jaredeh/vmtool/internal/testexec"
+	"github.com/resurgentech/vmtool/internal/testexec"
 )
 
 // V5: the member form of a network (the bridge and the MTU, nothing else), the

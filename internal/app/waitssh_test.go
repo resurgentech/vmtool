@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaredeh/vmtool/internal/testexec"
+	"github.com/resurgentech/vmtool/internal/testexec"
 )
 
 // sshStub installs stub `ansible` and `ansible-playbook` through

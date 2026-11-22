@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaredeh/vmtool/internal/storeapi"
+	"github.com/resurgentech/vmtool/internal/storeapi"
 )
 
 // Placeholders only.

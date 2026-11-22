@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaredeh/vmtool/pkg/vmtool"
+	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
 
 // nwVMs records every call and fails WaitForIP with ipErr.
