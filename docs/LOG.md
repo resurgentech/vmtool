@@ -2858,3 +2858,30 @@ are appended, never edited in; a hook refuses rewrites.
   marked. Green after the change; `just check` green.
 - Commits: the CLI VM-commands commit on `master` (this entry rides in it);
   not pushed. No tag.
+
+## 2026-11-22 — CLI: `--json` for templates, images, pool and creds
+
+- The 14 runnable commands of these groups print one object:
+  `templates list` `{templates (the API's TemplateInfo plus host), errors
+  [{host, error}], network_homes}` (an unreachable host is an `errors` row,
+  exit 0, as in the human view); `templates prepare`, `delete`, `save` the
+  API's `TemplateInfo` (`save` adds `extra_disks`); `templates prune`
+  `{host, removed}`; `templates export` `{host, name, sha256, size, path}`
+  plus `store` with `--push`; `images list` `{pools [{name, images}]}`, with
+  `--store` `{images [{name, size, sha256, updated}]}`; `images delete`
+  `{deleted, pool}`; `images push` `{name, size, sha256}`; `images pull`
+  `{name, path, size, sha256}` (from a host also `host`, `unchanged`);
+  `pool list` `{pools}` (the API's `PoolInfo`; an unknown value is absent);
+  `pool create` `{name, path}`; `creds fetch` `{fetched}`; `creds forget`
+  `{forgotten}`.
+- Under `--json` progress, notes and the human lines go to stderr; without
+  it every command prints as before. Each command's help gains an example.
+- `creds fetch` prints no password, key or token in either form, as
+  before; `TestJSONCredsNeverPrintSecrets` pins it for stdout and stderr.
+- Tests: `internal/cli/clijson_lm6_test.go` (the cases and shape tests);
+  the 14 leave `pendingJSON` (39 conform, 20 pending).
+- Red: the 14 taken off the list first: no example, human text instead of
+  one object, tables on the real stdout. Green after the change; `just
+  check` green.
+- Commits: the CLI templates/images commit on `master` (this entry rides
+  in it); not pushed. No tag.

@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/resurgentech/vmtool/internal/api"
 	"github.com/resurgentech/vmtool/internal/app"
 	"github.com/resurgentech/vmtool/pkg/vmtool"
 )
@@ -81,9 +82,19 @@ whether its sha256 is known, and when it expires (an export is kept 24 hours).`,
 				return rows[0].Err
 			}
 			rows = leaveOutOwnNameTemplates(cmd.ErrOrStderr(), e, rows)
+			if jsonMode(cmd) {
+				return emit(cmd, templatesListObject(rows, stale))
+			}
 			return writeTemplateTable(cmd.OutOrStdout(), rows, stale)
 		},
 	}
+	cmd.Example = `  vmtool templates list
+  vmtool templates list --host hv1 --stale
+  vmtool templates list --json
+
+  Tip: with --json stdout is {"templates", "errors", "network_homes"}: each
+  template is the API's TemplateInfo with its host; a host that did not answer
+  is a {host, error} row under errors, and the exit status stays 0.`
 	cmd.Flags().StringVar(&host, "host", "", "list only this host's templates")
 	cmd.Flags().BoolVar(&stale, "stale", false, "list only stale templates")
 	return cmd
@@ -99,6 +110,68 @@ func leaveOutOwnNameTemplates(stderr io.Writer, e *env, rows []app.HostTemplates
 			continue
 		}
 		out = append(out, h)
+	}
+	return out
+}
+
+// apiTemplate is a template as the REST API's TemplateInfo (the server builds
+// the same from the same fields; server.toAPITemplate is unexported there).
+func apiTemplate(t app.TemplateInfo) api.TemplateInfo {
+	nonEmpty := func(s string) *string {
+		if s == "" {
+			return nil
+		}
+		return &s
+	}
+	out := api.TemplateInfo{
+		Name: t.Name, Origin: api.TemplateInfoOrigin(t.Origin), Pool: t.Pool, Lv: t.LV,
+		SizeBytes: t.SizeBytes, UsedBytes: t.UsedBytes, Clones: t.Clones, Stale: t.Stale,
+		Image: nonEmpty(t.Image), Sha256: nonEmpty(t.SHA256),
+	}
+	if !t.Created.IsZero() {
+		c := t.Created
+		out.Created = &c
+	}
+	if x := t.Export; x != nil {
+		e := &api.TemplateExport{Bytes: x.Bytes, Sha256: nonEmpty(x.SHA256)}
+		if exp := x.Expires(); !exp.IsZero() {
+			e.Expires = &exp
+		}
+		out.Export = e
+	}
+	return out
+}
+
+// templatesJSON is `templates list --json`: the templates of every host that
+// answered (the API's TemplateInfo and the host), the hosts that did not as
+// {host, error} rows, and the network homes (hosts that run no VMs).
+type templatesJSON struct {
+	Templates    []templateRowJSON `json:"templates"`
+	Errors       []hostErrJSON     `json:"errors"`
+	NetworkHomes []string          `json:"network_homes"`
+}
+
+type templateRowJSON struct {
+	Host string `json:"host"`
+	api.TemplateInfo
+}
+
+func templatesListObject(rows []app.HostTemplates, stale bool) templatesJSON {
+	out := templatesJSON{Templates: []templateRowJSON{}, Errors: []hostErrJSON{}, NetworkHomes: []string{}}
+	for _, h := range rows {
+		switch {
+		case h.Err != nil:
+			out.Errors = append(out.Errors, hostErrJSON{Host: h.Host, Error: oneLine(h.Err.Error())})
+		case h.NetworkHome:
+			out.NetworkHomes = append(out.NetworkHomes, h.Host)
+		default:
+			for _, t := range h.Templates {
+				if stale && !t.Stale {
+					continue
+				}
+				out.Templates = append(out.Templates, templateRowJSON{Host: h.Host, TemplateInfo: apiTemplate(t)})
+			}
+		}
 	}
 	return out
 }
@@ -183,13 +256,22 @@ exists is left as it is. Without --pool the host's default pool is used.`,
 				},
 			})
 			if err != nil {
-				return printAppErr(err)
+				return printAppErrFor(cmd, err)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Template %s/%s is ready in pool %s (%s, %s, %d clones)\n",
+			fmt.Fprintf(humanOut(cmd), "Template %s/%s is ready in pool %s (%s, %s, %d clones)\n",
 				host, t.Name, t.Pool, t.LV, formatPoolBytes(t.SizeBytes), t.Clones)
+			if jsonMode(cmd) {
+				return emit(cmd, apiTemplate(t))
+			}
 			return nil
 		},
 	}
+	cmd.Example = `  vmtool templates prepare hv1 ubuntu-24.04.qcow2
+  vmtool templates prepare --json hv1 ubuntu-24.04.qcow2 --pool nvme-thin
+
+  Tip: prepare blocks until the host has built the template (the image is put
+  on the host first if it is not there). With --json the template is the API's
+  TemplateInfo on stdout, and progress goes to stderr.`
 	cmd.Flags().StringVar(&pool, "pool", "", "thin pool (default: the host's default pool)")
 	return cmd
 }
@@ -229,18 +311,38 @@ A name that is not a template is not found; a VM's volume is never removed.`,
 			defer release()
 			t, err := e.service("").DeleteTemplate(cmd.Context(), m, name, pool)
 			if err != nil {
-				return printAppErr(err)
+				return printAppErrFor(cmd, err)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Template %s/%s (%s in pool %s) removed; its %d clones are unaffected\n", host, t.Name, t.LV, t.Pool, t.Clones)
+			fmt.Fprintf(humanOut(cmd), "Template %s/%s (%s in pool %s) removed; its %d clones are unaffected\n", host, t.Name, t.LV, t.Pool, t.Clones)
+			if jsonMode(cmd) {
+				return emit(cmd, apiTemplate(t))
+			}
 			return nil
 		},
 	}
+	cmd.Example = `  vmtool templates delete hv1/ubuntu-24.04.qcow2
+  vmtool templates delete --json hv1/vmtpl-abababababab --pool nvme-thin
+
+  Tip: with --json the removed template is the API's TemplateInfo on stdout.`
 	cmd.Flags().StringVar(&pool, "pool", "", "only the template in this thin pool")
 	return cmd
 }
 
+// prunedJSON is `templates prune --json`: the host and the templates removed
+// (each the API's TemplateInfo), an empty list when none was stale.
+type prunedJSON struct {
+	Host    string             `json:"host"`
+	Removed []api.TemplateInfo `json:"removed"`
+}
+
 func templatesPruneCmd(e *env) *cobra.Command {
 	return &cobra.Command{
+		Example: `  vmtool templates prune hv1
+  vmtool templates prune --json hv1
+
+  Tip: with --json stdout is {"host", "removed"}, removed being the templates
+  taken away (the API's TemplateInfo); none stale is an empty list. A failure
+  part way is the error object on stderr, the removed ones' lines before it.`,
 		Use:   "prune <host>",
 		Short: "Remove every stale template on a host",
 		Long: `Remove the stale image templates of <host>: those whose image is no longer the
@@ -257,12 +359,19 @@ with it; other exports are removed by the daemon 24 hours after they were made.`
 			}
 			defer release()
 			removed, err := e.service("").PruneTemplates(cmd.Context(), m)
-			out := cmd.OutOrStdout()
+			out := humanOut(cmd)
 			for _, t := range removed {
 				fmt.Fprintf(out, "removed %s/%s (%s in pool %s)\n", host, t.Name, t.LV, t.Pool)
 			}
 			if err != nil {
-				return printAppErr(err)
+				return printAppErrFor(cmd, err)
+			}
+			if jsonMode(cmd) {
+				obj := prunedJSON{Host: host, Removed: make([]api.TemplateInfo, len(removed))}
+				for i, t := range removed {
+					obj.Removed[i] = apiTemplate(t)
+				}
+				return emit(cmd, obj)
 			}
 			if len(removed) == 0 {
 				fmt.Fprintf(out, "No stale templates on %s\n", host)
@@ -315,19 +424,43 @@ create can still log in and grow it. The author does that: see the README,
 			defer release()
 			t, err := e.service("").SaveTemplate(cmd.Context(), m, app.SaveTemplateInput{Host: ref.Host, VM: ref.Name, Name: args[1], Replace: replace})
 			if err != nil {
-				return printAppErr(err)
+				return printAppErrFor(cmd, err)
 			}
-			out := cmd.OutOrStdout()
+			out := humanOut(cmd)
 			fmt.Fprintf(out, "Template %s/%s saved from %s (%s in pool %s, %s)\n", ref.Host, t.Name, ref, t.LV, t.Pool, formatPoolBytes(t.SizeBytes))
 			if len(t.ExtraDisks) > 0 {
 				fmt.Fprintf(out, "warning: extra disks (%s) are not part of the template\n", strings.Join(t.ExtraDisks, ", "))
 			}
 			fmt.Fprintln(out, requirementsPointer)
+			if jsonMode(cmd) {
+				obj := apiTemplate(t.TemplateInfo)
+				if len(t.ExtraDisks) > 0 {
+					obj.ExtraDisks = &t.ExtraDisks
+				}
+				return emit(cmd, obj)
+			}
 			return nil
 		},
 	}
+	cmd.Example = `  vmtool templates save hv1/build1 t1-tpl
+  vmtool templates save --json hv1/build1 t1-tpl --replace
+
+  Tip: the VM must be shut off first (vmtool stop, then wait). With --json the
+  template is the API's TemplateInfo on stdout (extra_disks lists the VM's
+  other disks, which are not part of it); the notes go to stderr.`
 	cmd.Flags().BoolVar(&replace, "replace", false, "replace the saved template of that name (never an image template or a cached image)")
 	return cmd
+}
+
+// exportJSON is `templates export --json`: the exported image, and with
+// --push the image the store now holds.
+type exportJSON struct {
+	Host   string          `json:"host"`
+	Name   string          `json:"name"`
+	SHA256 string          `json:"sha256,omitempty"`
+	Size   int64           `json:"size"`
+	Path   string          `json:"path,omitempty"`
+	Store  *storeImageJSON `json:"store,omitempty"`
 }
 
 func templatesExportCmd(e *env) *cobra.Command {
@@ -438,16 +571,30 @@ has an image of that name.`,
 			if err != nil {
 				return printAppErr(err)
 			}
-			out := cmd.OutOrStdout()
+			out := humanOut(cmd)
 			if push {
 				fmt.Fprintf(out, "Image %s is in the store (%d bytes, sha256 %s), exported from %s/%s\n", res.Store.Name, res.Store.Size, res.Store.SHA256, host, name)
-				return nil
+			} else {
+				fmt.Fprintln(out, app.ExportedLine(host, img))
+				fmt.Fprintf(out, "Take it to another machine with: vmtool images pull %s/%s\n", host, img.Name)
 			}
-			fmt.Fprintln(out, app.ExportedLine(host, img))
-			fmt.Fprintf(out, "Take it to another machine with: vmtool images pull %s/%s\n", host, img.Name)
+			if jsonMode(cmd) {
+				obj := exportJSON{Host: host, Name: img.Name, SHA256: img.SHA256, Size: img.Size, Path: img.Path}
+				if push {
+					obj.Store = &storeImageJSON{Name: res.Store.Name, Size: res.Store.Size, SHA256: res.Store.SHA256}
+				}
+				return emit(cmd, obj)
+			}
 			return nil
 		},
 	}
+	cmd.Example = `  vmtool templates export hv1/t1-tpl
+  vmtool templates export --json hv1/t1-tpl --push
+
+  Tip: export blocks until the volume is written (and, with --push, until the
+  store has the image). With --json stdout is {"host", "name", "sha256",
+  "size"} and, with --push, a "store" object; progress goes to stderr. The
+  export is kept 24 hours.`
 	cmd.Flags().StringVar(&pool, "pool", "", "only the template in this thin pool")
 	cmd.Flags().BoolVar(&push, "push", false, "then push the image straight from the host into the store (needs a store)")
 	return cmd

@@ -1481,6 +1481,12 @@ func imagesListCmd(e *env) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List available disk images grouped by pool",
+		Example: `  vmtool images list
+  vmtool images list --host hv1 --json
+  vmtool images list --store
+
+  Tip: with --json stdout is {"pools": [{"name", "images"}]}; with --store it
+  is {"images": [{"name", "size", "sha256", "updated"}]}, the store's images.`,
 	}
 	host := hostFlag(cmd)
 	var fromStore bool
@@ -1495,6 +1501,15 @@ func imagesListCmd(e *env) *cobra.Command {
 			pools = append(pools, p)
 		}
 		sort.Strings(pools)
+		if jsonMode(cmd) {
+			obj := imagesJSON{Pools: make([]imagePoolJSON, 0, len(pools))}
+			for _, p := range pools {
+				imgs := append([]string{}, byPool[p]...)
+				sort.Strings(imgs)
+				obj.Pools = append(obj.Pools, imagePoolJSON{Name: p, Images: imgs})
+			}
+			return emit(cmd, obj)
+		}
 		for _, p := range pools {
 			fmt.Printf("%s:\n", p)
 			imgs := byPool[p]
@@ -1513,11 +1528,33 @@ func imagesListCmd(e *env) *cobra.Command {
 		// without --store this command never touches the store.
 		imgs, err := e.service("").ListStoreImages(cmd.Context())
 		if err != nil {
-			return printAppErr(err)
+			return printAppErrFor(cmd, err)
+		}
+		if jsonMode(cmd) {
+			obj := storeImagesJSON{Images: make([]storeImageJSON, len(imgs))}
+			for i, img := range imgs {
+				obj.Images[i] = storeImageObject(img)
+			}
+			return emit(cmd, obj)
 		}
 		return writeStoreImages(cmd.OutOrStdout(), imgs)
 	}
 	return cmd
+}
+
+// imagesJSON is `images list --json`: the images of each pool of the host.
+type imagesJSON struct {
+	Pools []imagePoolJSON `json:"pools"`
+}
+
+type imagePoolJSON struct {
+	Name   string   `json:"name"`
+	Images []string `json:"images"`
+}
+
+// storeImagesJSON is `images list --store --json`.
+type storeImagesJSON struct {
+	Images []storeImageJSON `json:"images"`
 }
 
 func imagesDeleteCmd(e *env) *cobra.Command {
@@ -1525,10 +1562,18 @@ func imagesDeleteCmd(e *env) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "delete <image>",
 		Short: "Delete a disk image from a storage pool",
-		Args:  cobra.ExactArgs(1),
+		Example: `  vmtool images delete base.qcow2
+  vmtool images delete --json base.qcow2 --pool fast --host hv1
+
+  Tip: with --json stdout is {"deleted": <image>, "pool": <pool>}; pool is
+  empty when the host's default pool was used.`,
+		Args: cobra.ExactArgs(1),
 		RunE: withHost(e, &host, func(m app.Manager, cmd *cobra.Command, args []string) error {
 			if err := e.service("").DeleteImage(cmd.Context(), m, args[0], pool); err != nil {
 				return err
+			}
+			if jsonMode(cmd) {
+				return emit(cmd, map[string]string{"deleted": args[0], "pool": pool})
 			}
 			if pool == "" {
 				fmt.Printf("Image %q deleted from the host's default pool\n", args[0])
@@ -1568,6 +1613,12 @@ libvirt pool, and any cell is blank when the host does not report it (a daemon
 older than API 2.4.0). A thin pool gets a '!' after its name when DATA% or META%
 is at or above 80: from there new thin volumes, add-disk and resize-disk are
 refused with 409, as are promised sizes over 4x the pool's SIZE.`,
+		Example: `  vmtool pool list
+  vmtool pool list --host hv1 --json
+
+  Tip: with --json stdout is {"pools": [...]}, each the API's PoolInfo (name,
+  path, active, and type, size_bytes, used_bytes, virtual_bytes, data_percent,
+  metadata_percent when the host reports them) in bytes and percent.`,
 	}
 	host := hostFlag(cmd)
 	cmd.RunE = withHost(e, host, func(m app.Manager, cmd *cobra.Command, args []string) error {
@@ -1575,9 +1626,31 @@ refused with 409, as are promised sizes over 4x the pool's SIZE.`,
 		if err != nil {
 			return err
 		}
+		if jsonMode(cmd) {
+			return emit(cmd, poolsObject(pools))
+		}
 		return writePoolTable(os.Stdout, pools)
 	})
 	return cmd
+}
+
+// poolsJSON is `pool list --json`: the API's PoolInfo for each pool.
+type poolsJSON struct {
+	Pools []api.PoolInfo `json:"pools"`
+}
+
+func poolsObject(pools []vmtool.PoolInfo) poolsJSON {
+	out := poolsJSON{Pools: make([]api.PoolInfo, len(pools))}
+	for i, p := range pools {
+		out.Pools[i] = api.PoolInfo{Name: p.Name, Path: p.Path, Active: p.Active,
+			SizeBytes: p.SizeBytes, UsedBytes: p.UsedBytes, VirtualBytes: p.VirtualBytes,
+			DataPercent: p.DataPercent, MetadataPercent: p.MetaPercent}
+		if p.Type != "" {
+			t := p.Type
+			out.Pools[i].Type = &t
+		}
+	}
+	return out
 }
 
 // poolWarnPercent is where a thin pool's name gets a "!": at or above it,
@@ -1648,12 +1721,19 @@ func poolCreateCmd(e *env) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "create <name> <path>",
 		Short: "Create a new directory-type storage pool",
-		Args:  cobra.ExactArgs(2),
+		Example: `  vmtool pool create fast /srv/fast
+  vmtool pool create --json fast /srv/fast --host hv1
+
+  Tip: with --json stdout is {"name", "path"} of the new pool.`,
+		Args: cobra.ExactArgs(2),
 	}
 	host := hostFlag(cmd)
 	cmd.RunE = withHost(e, host, func(m app.Manager, cmd *cobra.Command, args []string) error {
 		if err := e.service("").CreatePool(cmd.Context(), m, args[0], args[1]); err != nil {
 			return err
+		}
+		if jsonMode(cmd) {
+			return emit(cmd, map[string]string{"name": args[0], "path": args[1]})
 		}
 		fmt.Printf("Pool %q created at %s\n", args[0], args[1])
 		return nil

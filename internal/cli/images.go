@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -50,12 +51,21 @@ func imagesPushCmd(e *env) *cobra.Command {
 				func() { fmt.Fprintf(errw, "hashing %s...\n", args[0]) },
 				transferProgress(errw, "pushing"))
 			if err != nil {
-				return printAppErr(err)
+				return printAppErrFor(cmd, err)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Image %q is in the store (%d bytes, sha256 %s)\n", img.Name, img.Size, img.SHA256)
+			fmt.Fprintf(humanOut(cmd), "Image %q is in the store (%d bytes, sha256 %s)\n", img.Name, img.Size, img.SHA256)
+			if jsonMode(cmd) {
+				return emit(cmd, storeImageObject(*img))
+			}
 			return nil
 		},
 	}
+	cmd.Example = `  vmtool images push ubuntu-24.04.qcow2
+  vmtool images push --json ubuntu-24.04.qcow2 --name base.qcow2
+
+  Tip: push blocks until the file is hashed and uploaded. With --json stdout
+  is {"name", "size", "sha256"} of the store's image; the hashing and upload
+  progress go to stderr.`
 	cmd.Flags().StringVar(&name, "name", "", "image name in the store (default: the file's base name)")
 	return cmd
 }
@@ -111,12 +121,21 @@ func imagesPullCmd(e *env) *cobra.Command {
 			}
 			img, err := e.service("").PullImage(cmd.Context(), name, dest, force, transferProgress(cmd.ErrOrStderr(), "pulling"))
 			if err != nil {
-				return printAppErr(err)
+				return printAppErrFor(cmd, err)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Image %q written to %s (%d bytes, sha256 %s)\n", img.Name, dest, img.Size, img.SHA256)
+			fmt.Fprintf(humanOut(cmd), "Image %q written to %s (%d bytes, sha256 %s)\n", img.Name, dest, img.Size, img.SHA256)
+			if jsonMode(cmd) {
+				return emit(cmd, pulledJSON{Name: img.Name, Path: dest, Size: img.Size, SHA256: img.SHA256})
+			}
 			return nil
 		},
 	}
+	cmd.Example = `  vmtool images pull ubuntu-24.04.qcow2 --to ./base.qcow2
+  vmtool images pull --json hv1/t1-tpl --to /srv/images
+
+  Tip: pull blocks until the file is written and checked. With --json stdout
+  is {"name", "path", "size", "sha256"} (a pull from a host adds "host" and
+  "unchanged"); the progress goes to stderr.`
 	cmd.Flags().StringVar(&to, "to", "", "store pull: destination file (default: image_dir/<name>, else ./<name>); host pull: destination directory (default: image_dir, else .)")
 	cmd.Flags().BoolVar(&force, "force", false, "store pull only: replace the destination if it exists")
 	return cmd
@@ -152,15 +171,46 @@ func pullFromHost(cmd *cobra.Command, e *env, ref, to string) error {
 			}
 		}})
 	if err != nil {
-		return printAppErr(err)
+		return printAppErrFor(cmd, err)
 	}
-	out := cmd.OutOrStdout()
+	out := humanOut(cmd)
 	if img.Unchanged {
 		fmt.Fprintf(out, "Image %s/%s is already at %s (same SHA-256 %s); nothing to do\n", host, img.Name, img.Path, img.SHA256)
-		return nil
+	} else {
+		fmt.Fprintf(out, "Image %s/%s written to %s (%d bytes, sha256 %s)\n", host, img.Name, img.Path, img.Size, img.SHA256)
 	}
-	fmt.Fprintf(out, "Image %s/%s written to %s (%d bytes, sha256 %s)\n", host, img.Name, img.Path, img.Size, img.SHA256)
+	if jsonMode(cmd) {
+		return emit(cmd, pulledJSON{Host: host, Name: img.Name, Path: img.Path, Size: img.Size, SHA256: img.SHA256, Unchanged: &img.Unchanged})
+	}
 	return nil
+}
+
+// storeImageJSON is an image of the store: its name, size and digest, and when
+// it was last written (omitted when the answer did not carry it).
+type storeImageJSON struct {
+	Name    string `json:"name"`
+	Size    int64  `json:"size"`
+	SHA256  string `json:"sha256"`
+	Updated string `json:"updated,omitempty"`
+}
+
+func storeImageObject(i app.StoreImage) storeImageJSON {
+	out := storeImageJSON{Name: i.Name, Size: i.Size, SHA256: i.SHA256}
+	if !i.Updated.IsZero() {
+		out.Updated = i.Updated.UTC().Format(time.RFC3339)
+	}
+	return out
+}
+
+// pulledJSON is `images pull --json`: the file written. A pull from a host
+// names the host and says whether the file was already there (unchanged).
+type pulledJSON struct {
+	Host      string `json:"host,omitempty"`
+	Name      string `json:"name"`
+	Path      string `json:"path"`
+	Size      int64  `json:"size"`
+	SHA256    string `json:"sha256"`
+	Unchanged *bool  `json:"unchanged,omitempty"`
 }
 
 // writeStoreImages prints the store's images, one per line.

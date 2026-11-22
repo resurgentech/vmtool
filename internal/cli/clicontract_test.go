@@ -29,12 +29,6 @@ var pendingJSON = map[string]bool{
 	"vmtool config server-url": true,
 	"vmtool config set-host":   true,
 	"vmtool config write":      true,
-	"vmtool creds fetch":       true,
-	"vmtool creds forget":      true,
-	"vmtool images delete":     true,
-	"vmtool images list":       true,
-	"vmtool images pull":       true,
-	"vmtool images push":       true,
 	"vmtool metal add":         true,
 	"vmtool metal exec":        true,
 	"vmtool metal info":        true,
@@ -50,14 +44,6 @@ var pendingJSON = map[string]bool{
 	"vmtool net join":          true,
 	"vmtool net leave":         true,
 	"vmtool net show":          true,
-	"vmtool pool create":       true,
-	"vmtool pool list":         true,
-	"vmtool templates delete":  true,
-	"vmtool templates export":  true,
-	"vmtool templates list":    true,
-	"vmtool templates prepare": true,
-	"vmtool templates prune":   true,
-	"vmtool templates save":    true,
 }
 
 // cobraOwn are the commands cobra adds itself (help and shell completion):

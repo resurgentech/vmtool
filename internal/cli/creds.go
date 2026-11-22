@@ -36,10 +36,19 @@ store answers only for the UUID the VM's host reports, so credentials left
 over from a VM of the same name that was recreated are never fetched.
 
 Needs store mode: a configured, reachable store.`,
+		Example: `  vmtool creds fetch jetfire/web
+  vmtool creds fetch --json jetfire/web
+
+  Tip: with --json stdout is {"fetched": "<host/vm>"}. The credentials go
+  into the cache folder only; neither form prints a password or a key.`,
 		Args: cobra.ExactArgs(1),
 		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
 			if err := e.service("").FetchVMCreds(cmd.Context(), m, ref); err != nil {
 				return err
+			}
+			if jsonMode(cmd) {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Credentials for %s fetched into the cache\n", ref)
+				return emit(cmd, map[string]string{"fetched": ref.String()})
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Credentials for %s fetched into the cache\n", ref)
 			return nil
@@ -57,6 +66,10 @@ again. 'vmtool delete' is what removes the record.
 
 Refuses without a store (the folder is then the only copy) and when the
 folder holds credentials that are not in the store yet.`,
+		Example: `  vmtool creds forget jetfire/web
+  vmtool creds forget --json jetfire/web
+
+  Tip: with --json stdout is {"forgotten": "<host/vm>"}.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ref, err := e.resolver().ParseVM(args[0])
@@ -65,6 +78,10 @@ folder holds credentials that are not in the store yet.`,
 			}
 			if err := e.service("").ForgetVMCreds(cmd.Context(), ref); err != nil {
 				return err
+			}
+			if jsonMode(cmd) {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Credentials cache for %s removed (the store's record is untouched)\n", ref)
+				return emit(cmd, map[string]string{"forgotten": ref.String()})
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Credentials cache for %s removed (the store's record is untouched)\n", ref)
 			return nil
