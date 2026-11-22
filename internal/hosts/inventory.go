@@ -1,6 +1,7 @@
 package hosts
 
 import (
+	"errors"
 	"log/slog"
 	"sync"
 
@@ -58,6 +59,27 @@ func (i *inventoryReader) thinVolumes() ([]vmtool.ThinVolume, bool) {
 		i.vols, i.ok = vols, true
 	})
 	return i.vols, i.ok
+}
+
+// Templates lists the host's templates from the helper's report (the one read
+// the disks already share): image and saved templates, never a clone or a
+// volume being built. A host with no thin pools has none (an empty list); a
+// helper that cannot run is an error, so the reporter sends no list and the
+// store keeps the last one. The stale mark is not part of the inventory, so
+// the image manifest is not read.
+func (i *inventoryReader) Templates() ([]vmtool.Template, error) {
+	if i.thin == nil {
+		return []vmtool.Template{}, nil
+	}
+	vols, ok := i.thinVolumes()
+	if !ok {
+		return nil, errors.New("the thin volumes could not be read")
+	}
+	out := vmtool.ThinTemplates(vols)
+	if out == nil {
+		out = []vmtool.Template{}
+	}
+	return out, nil
 }
 
 func (i *inventoryReader) VMDisks(name string) ([]app.InventoryDisk, error) {

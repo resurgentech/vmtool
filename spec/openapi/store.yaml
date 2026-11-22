@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: vmtool store API
-  version: 1.3.0
+  version: 1.4.0
   description: >
     HTTP surface of `vmtool-store`, the image and credential store that runs as
     a container behind a TLS-terminating proxy. Spec-first: models, stdlib
@@ -419,6 +419,13 @@ paths:
         the store's own clock at the time it took the request: one that
         arrives while a later-received report of the same host has already
         been applied is answered 200 with `stale` true and changes nothing.
+        A report may carry `templates`, the host's whole template list (at
+        most 1024): it replaces the host's stored templates and sets the
+        host's `templates_reported`. A report without `templates` (an older
+        daemon, or one that could not list them) changes neither the stored
+        templates nor `templates_reported`. A template with a `kind` other
+        than `image` or `saved`, or with a bad field, is a 400 for the whole
+        report.
         `generated_at` is the daemon's own clock; it is stored and shown,
         never used to order or refuse a report. Nothing is marked gone by
         age or silence.
@@ -448,17 +455,19 @@ paths:
   /v1/inventory:
     get:
       operationId: getInventory
-      summary: The store's inventory of hosts, VMs and machines
+      summary: The store's inventory of hosts, VMs, templates and machines
       description: >
         User tokens only. A record of what each host daemon last said, not a
         live view; it carries no up/down state and no staleness mark. Gone
         VMs are listed only with `gone=true`. Hosts, VMs and machines are
-        ordered by (host,) name. Machines are not filtered by `host`.
+        ordered by (host,) name. Templates are the last list each host sent,
+        kept while the host sleeps; `host` limits them too. Machines are not
+        filtered by `host`.
       parameters:
         - name: host
           in: query
           required: false
-          description: Only this host's row and VMs.
+          description: Only this host's row, VMs and templates.
           schema:
             type: string
         - name: gone
@@ -1301,6 +1310,57 @@ components:
         ip:
           type: string
           description: Empty when the card has no reservation.
+    ReportTemplate:
+      type: object
+      description: >
+        One template of the reporting host, with only what its daemon knows.
+        There is no key: a host may hold two templates of one name in one pool
+        (a stale image template beside the current one).
+      required: [name, kind, pool, size_bytes]
+      properties:
+        name:
+          type: string
+          description: The image's name for an image template, the user's name for a saved one.
+        kind:
+          type: string
+          enum: [image, saved]
+        pool:
+          type: string
+          description: The thin pool it is in.
+        source_image:
+          type: string
+          description: Image templates only; absent on a saved template.
+        size_bytes:
+          type: integer
+          format: int64
+        created:
+          type: string
+          format: date-time
+          description: Absent when the host does not know.
+    InventoryTemplate:
+      type: object
+      description: A template of a host as its last report left it.
+      required: [host, name, kind, pool, size_bytes]
+      properties:
+        host:
+          type: string
+        name:
+          type: string
+        kind:
+          type: string
+          enum: [image, saved]
+        pool:
+          type: string
+        source_image:
+          type: string
+          description: Image templates only; absent on a saved template.
+        size_bytes:
+          type: integer
+          format: int64
+        created:
+          type: string
+          format: date-time
+          description: Absent when the host did not report it.
     HostReport:
       type: object
       required: [generated_at, daemon_version, vms]
@@ -1315,6 +1375,16 @@ components:
           maxItems: 4096
           items:
             $ref: "#/components/schemas/ReportVM"
+        templates:
+          type: array
+          maxItems: 1024
+          description: >
+            The host's whole template list, never a diff. Absent (an older
+            daemon, or a daemon that could not list them) leaves the host's
+            stored templates and `templates_reported` as they were; an empty
+            list replaces them with none.
+          items:
+            $ref: "#/components/schemas/ReportTemplate"
     ReportResult:
       type: object
       required: [listed, newly_gone, relisted, stale]
@@ -1330,7 +1400,7 @@ components:
           description: True when a report of the same host received later had already been applied, so this one was ignored.
     InventoryHost:
       type: object
-      required: [name, last_report, daemon_version, live, gone]
+      required: [name, last_report, daemon_version, live, gone, templates_reported]
       properties:
         name:
           type: string
@@ -1343,6 +1413,13 @@ components:
           type: integer
         gone:
           type: integer
+        templates_reported:
+          type: boolean
+          description: >
+            True once the host has sent a report that carried `templates` (an
+            empty list counts). False for a host whose daemon never has, so
+            its absence of templates means nothing. A later report without
+            `templates` leaves it, and the stored templates, as they were.
     InventoryVM:
       type: object
       required: [host, name, uuid, state, vcpus, memory, ip, autostart, firmware, disks, comment, first_seen, last_seen, has_credentials]
@@ -1405,12 +1482,21 @@ components:
           type: boolean
     Inventory:
       type: object
-      required: [hosts, vms, machines]
+      required: [hosts, vms, machines, templates]
       properties:
         hosts:
           type: array
           items:
             $ref: "#/components/schemas/InventoryHost"
+        templates:
+          type: array
+          description: >
+            The templates of the listed hosts (one host with `host`) as each
+            last reported them, ordered by host, name, pool. Templates are
+            kept for a host that has stopped reporting, and are not
+            filtered by `gone`.
+          items:
+            $ref: "#/components/schemas/InventoryTemplate"
         vms:
           type: array
           items:

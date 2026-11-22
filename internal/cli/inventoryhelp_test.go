@@ -20,6 +20,7 @@ func TestInventoryHelpPinsKeyWords(t *testing.T) {
 			"vmtool delete", "outside vmtool", "next report", "touch",
 			"from this version on", "plain text", "ip_wait_seconds", "its own clock",
 			"disks unreadable", "last known",
+			"templates", "not reported", "image or saved",
 		}},
 		{[]string{"comment"}, []string{"plain text", "store only", "never put a secret", "needs a store", "while the host sleeps"}},
 		{[]string{"create"}, []string{"--comment", "plain text", "in the store", "once", "nothing of its own into the VM's libvirt definition",

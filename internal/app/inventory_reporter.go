@@ -49,6 +49,13 @@ type InventoryReader interface {
 	VMDisks(name string) ([]InventoryDisk, error)
 }
 
+// InventoryTemplateReader is what an InventoryReader may also be: it lists
+// the host's templates. An empty, non-nil answer is a host with none; an error
+// is a host that could not say. A reader without it reports no templates.
+type InventoryTemplateReader interface {
+	Templates() ([]vmtool.Template, error)
+}
+
 // InventorySource opens an InventoryReader (one libvirt connection, say) for
 // one build of the list; done releases it.
 type InventorySource interface {
@@ -92,6 +99,7 @@ type InventoryReporter struct {
 	runs       map[string]*vmRun // by UUID: VMs seen running, so each run is handled once
 	watching   int               // how many of runs are still watched
 	unreadable map[string]bool   // VM names whose disks could not be read at the last build
+	tplFailed  bool              // the templates could not be listed at the last build
 }
 
 // vmRun is one run of a VM's domain as the reporter saw it. A VM with a
@@ -359,7 +367,43 @@ func (r *InventoryReporter) build(add bool) (storeclient.HostReport, error) {
 	}
 	r.unreadable = unreadable
 	r.observe(vms, add)
-	return storeclient.HostReport{GeneratedAt: r.c.Now(), DaemonVersion: r.c.Version, Vms: out}, nil
+	return storeclient.HostReport{GeneratedAt: r.c.Now(), DaemonVersion: r.c.Version, Vms: out, Templates: r.templates(rd)}, nil
+}
+
+// templates is the host's template list for the report, or nil (no templates
+// key: the store keeps what it had) when the reader cannot list them or the
+// listing failed. A failed listing never costs the VMs their report; it is
+// logged once until a listing works again.
+func (r *InventoryReporter) templates(rd InventoryReader) *[]storeapi.ReportTemplate {
+	tr, ok := rd.(InventoryTemplateReader)
+	if !ok {
+		return nil
+	}
+	ts, err := tr.Templates()
+	if err != nil {
+		if !r.tplFailed {
+			r.c.Log.Warn("templates not reported: the host's templates could not be listed; the store keeps its last list", "err", err)
+		}
+		r.tplFailed = true
+		return nil
+	}
+	r.tplFailed = false
+	out := make([]storeapi.ReportTemplate, 0, len(ts))
+	for _, t := range ts {
+		rt := storeapi.ReportTemplate{
+			Name: t.Name, Kind: storeapi.ReportTemplateKind(t.Origin), Pool: t.Pool, SizeBytes: t.SizeBytes,
+		}
+		if t.Origin == vmtool.TemplateOriginImage && t.Image != "" {
+			img := t.Image
+			rt.SourceImage = &img
+		}
+		if !t.Created.IsZero() {
+			c := t.Created
+			rt.Created = &c
+		}
+		out = append(out, rt)
+	}
+	return &out
 }
 
 // reportVM is one VM of the report: what its host knows. It carries no

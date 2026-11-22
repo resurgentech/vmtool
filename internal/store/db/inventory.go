@@ -53,6 +53,8 @@ type HostRow struct {
 	DaemonVersion string
 	Live          int
 	Gone          int
+	// TemplatesReported: the host has sent a report that carried templates.
+	TemplatesReported bool
 }
 
 // InventoryVM is a VMRow as stored, with its host, times, its notes (Origin
@@ -73,6 +75,8 @@ type InventoryVM struct {
 type Inventory struct {
 	Hosts []HostRow
 	VMs   []InventoryVM
+	// Templates are the last list each listed host sent, by host, name, pool.
+	Templates []TemplateRow
 }
 
 // Delisted is what Delist did: the UUID of the row marked gone and when its
@@ -106,8 +110,18 @@ const vmCols = `uuid, name, state, vcpus, memory_gib, ip, autostart, firmware, d
 // so a host with a wrong clock is neither refused nor able to block its later
 // reports. An empty list marks every live
 // row gone and deletes nothing. Nothing reads last_seen or last_report.
-func (d *DB) ApplyReport(ctx context.Context, host string, generatedAt time.Time, version string, vms []VMRow) (ReportCounts, error) {
+//
+// templates is the host's whole template list, or nil when the report carried
+// none: a non-nil list (an empty one too) replaces the host's stored templates
+// and sets its templates_reported flag, in the same transaction; nil changes
+// neither. A stale report changes no template either.
+func (d *DB) ApplyReportWithTemplates(ctx context.Context, host string, generatedAt time.Time, version string, vms []VMRow, templates *[]TemplateRow) (ReportCounts, error) {
 	var cnt ReportCounts
+	if templates != nil {
+		if err := checkTemplates(*templates); err != nil {
+			return cnt, err
+		}
+	}
 	for _, v := range vms {
 		if v.UUID == "" || v.Name == "" {
 			return cnt, errors.New("apply report: a VM needs a uuid and a name")
@@ -147,6 +161,11 @@ func (d *DB) ApplyReport(ctx context.Context, host string, generatedAt time.Time
 		   generated_at=excluded.generated_at, daemon_version=excluded.daemon_version`,
 		host, now, gen.Format(time.RFC3339Nano), version); err != nil {
 		return cnt, fmt.Errorf("apply report: %w", err)
+	}
+	if templates != nil {
+		if err := replaceTemplates(ctx, tx, host, *templates); err != nil {
+			return cnt, fmt.Errorf("apply report: %w", err)
+		}
 	}
 
 	listed := map[string]bool{}
@@ -317,7 +336,8 @@ func (d *DB) ListInventory(ctx context.Context, host string, withGone bool) (Inv
 	var inv Inventory
 	hq := `SELECT h.name, h.last_report, h.generated_at, h.daemon_version,
 	         (SELECT count(*) FROM vms v WHERE v.host=h.name AND v.gone_since IS NULL),
-	         (SELECT count(*) FROM vms v WHERE v.host=h.name AND v.gone_since IS NOT NULL)
+	         (SELECT count(*) FROM vms v WHERE v.host=h.name AND v.gone_since IS NOT NULL),
+	         h.templates_reported
 	       FROM hosts h WHERE (?='' OR h.name=?) ORDER BY h.name`
 	rows, err := d.sql.QueryContext(ctx, hq, host, host)
 	if err != nil {
@@ -326,7 +346,7 @@ func (d *DB) ListInventory(ctx context.Context, host string, withGone bool) (Inv
 	for rows.Next() {
 		var h HostRow
 		var lr, ga string
-		if err := rows.Scan(&h.Name, &lr, &ga, &h.DaemonVersion, &h.Live, &h.Gone); err != nil {
+		if err := rows.Scan(&h.Name, &lr, &ga, &h.DaemonVersion, &h.Live, &h.Gone, &h.TemplatesReported); err != nil {
 			rows.Close()
 			return inv, fmt.Errorf("list inventory: %w", err)
 		}
@@ -375,7 +395,14 @@ func (d *DB) ListInventory(ctx context.Context, host string, withGone bool) (Inv
 		}
 		inv.VMs = append(inv.VMs, v)
 	}
-	return inv, rows.Err()
+	if err := rows.Err(); err != nil {
+		return inv, err
+	}
+	rows.Close()
+	if inv.Templates, err = d.listTemplates(ctx, host); err != nil {
+		return inv, fmt.Errorf("list inventory: %w", err)
+	}
+	return inv, nil
 }
 
 // Sweep deletes rows gone for GracePeriod or more as of now, and with each

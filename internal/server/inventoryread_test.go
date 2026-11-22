@@ -32,6 +32,21 @@ func TestGetInventoryReadsTheStore(t *testing.T) {
 	if len(inv.Vms) != 2 || len(inv.Machines) != 1 || inv.Machines[0].Name != "nuc1" || inv.Machines[0].Kind != "metal" {
 		t.Fatalf("vms/machines %+v", inv)
 	}
+	if !inv.Hosts[0].TemplatesReported {
+		t.Errorf("templates_reported lost: %+v", inv.Hosts[0])
+	}
+	if inv.Templates == nil || len(*inv.Templates) != 2 {
+		t.Fatalf("templates %+v", inv.Templates)
+	}
+	st, im := (*inv.Templates)[0], (*inv.Templates)[1]
+	if st.Host != "hv1" || st.Name != "golden" || st.Kind != api.InventoryTemplateKindSaved || st.Pool != "pool1" || st.SizeBytes != 10<<30 ||
+		st.SourceImage != nil || st.Created != nil {
+		t.Errorf("saved template %+v", st)
+	}
+	if im.Name != "img1" || im.Kind != api.InventoryTemplateKindImage || im.SourceImage == nil || *im.SourceImage != "img1" ||
+		im.SizeBytes != 20<<30 || im.Created == nil || im.Created.Format("2006-01-02") != "2026-11-19" {
+		t.Errorf("image template %+v", im)
+	}
 	v := inv.Vms[0]
 	if v.Host != "hv1" || v.Name != "vm1" || v.State != "running" || v.Vcpus != 2 || v.Memory != 4 || v.Ip != "10.0.0.5" ||
 		!v.Autostart || v.Comment != "placeholder comment" || !v.HasCredentials || len(v.Disks) != 1 ||

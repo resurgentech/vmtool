@@ -9,7 +9,7 @@ a handler.
 | Path | Contract |
 |---|---|
 | `openapi/vmtool.yaml` | Every HTTP endpoint `vmtool server` registers. oapi-codegen generates models, a stdlib `ServerInterface`, a strict wrapper, an embedded spec, and a test client (`internal/api`). |
-| `openapi/store.yaml` | The image and credential store's HTTP API (`vmtool-store`, 1.3.0), served by `cmd/vmtool-store`, not by `vmtool server`. Its own generated package, `internal/storeapi`; handled as `vmtool.yaml` is (see [The store](#the-store)). |
+| `openapi/store.yaml` | The image and credential store's HTTP API (`vmtool-store`, 1.4.0), served by `cmd/vmtool-store`, not by `vmtool server`. Its own generated package, `internal/storeapi`; handled as `vmtool.yaml` is (see [The store](#the-store)). |
 
 Interactive SSH from CLI (`vmtool ssh`) and TUI (`t`) execs `ssh` locally and
 is not an HTTP operation.
@@ -1152,6 +1152,15 @@ up/down state and no staleness mark, `last_report` a plain time.
 `InventoryVM.disks_unreadable` marks a VM whose disks the host could not read
 (its `disks` are the last known ones); `vmtool inventory` and the TUI show it
 as `*` with a footnote.
+
+API 2.10.0 adds `Inventory.templates` (optional in the schema, always sent by
+the workstation) and `InventoryHost.templates_reported`. A template row is
+`{host, name, kind: image|saved, pool, source_image?, size_bytes, created?}`,
+the last list each host's daemon sent with its VMs (store API 1.4.0:
+`HostReport.templates`, `InventoryTemplate`); `host` limits them too. A host
+that stops reporting keeps its rows. `templates_reported` is true once the host
+has sent a list (an empty one counts) and false for a daemon that never has; a
+report without a list changes neither the rows nor the flag.
 
 A workflow that names a VM as `host/vm` and gets "no such VM" from a host that
 confirms it (an `Info` that is also a not-found) delists the VM in the store and

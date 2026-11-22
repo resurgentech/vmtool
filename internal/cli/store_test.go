@@ -98,6 +98,9 @@ func newCLIStore(t *testing.T) *cliStore {
 			s.invQuery.Store(r.URL.RequestURI())
 			// Like the store: VMs their host no longer has only with gone=true.
 			body := map[string]any{"hosts": s.inv["hosts"], "machines": s.inv["machines"]}
+			if tp, ok := s.inv["templates"]; ok {
+				body["templates"] = tp
+			}
 			vms := []any{}
 			for _, v := range s.inv["vms"].([]any) {
 				if _, isGone := v.(map[string]any)["gone_since"]; !isGone || r.URL.Query().Get("gone") == "true" {

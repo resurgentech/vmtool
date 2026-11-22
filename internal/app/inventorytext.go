@@ -7,6 +7,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/resurgentech/vmtool/internal/storeapi"
 	"github.com/resurgentech/vmtool/internal/storeclient"
 )
 
@@ -105,14 +106,30 @@ func invCreated(v InventoryVM) string {
 	return invDash(*v.Origin.Created)
 }
 
-// WriteInventory writes hosts, then VMs, then machines. Names and comments
-// are written on one line each (oneLine): a comment is user text.
+// invTemplateCount is how many templates h last reported, or "not reported"
+// for a host whose daemon never sent a list (so that no rows is not read as
+// none).
+func invTemplateCount(inv *Inventory, h storeapi.InventoryHost) string {
+	if !h.TemplatesReported {
+		return "not reported"
+	}
+	n := 0
+	for _, t := range inv.Templates {
+		if t.Host == h.Name {
+			n++
+		}
+	}
+	return fmt.Sprint(n)
+}
+
+// WriteInventory writes hosts, then VMs, then templates, then machines. Names
+// and comments are written on one line each (oneLine): a comment is user text.
 func WriteInventory(out io.Writer, inv *Inventory, gone bool) error {
 	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(w, "HOSTS")
-	fmt.Fprintln(w, "NAME\tLAST REPORT\tDAEMON\tLIVE\tGONE")
+	fmt.Fprintln(w, "NAME\tLAST REPORT\tDAEMON\tLIVE\tGONE\tTEMPLATES")
 	for _, h := range inv.Hosts {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%d\n", oneLn(h.Name), invTime(h.LastReport), invDash(oneLn(h.DaemonVersion)), h.Live, h.Gone)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%d\t%s\n", oneLn(h.Name), invTime(h.LastReport), invDash(oneLn(h.DaemonVersion)), h.Live, h.Gone, invTemplateCount(inv, h))
 	}
 	if len(inv.Hosts) == 0 {
 		fmt.Fprintln(w, "(none)")
@@ -147,6 +164,24 @@ func WriteInventory(out io.Writer, inv *Inventory, gone bool) error {
 	}
 	if anyUnreadable {
 		fmt.Fprintln(w, invUnreadableNote)
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "TEMPLATES")
+	fmt.Fprintln(w, "TEMPLATE\tKIND\tPOOL\tSOURCE IMAGE\tSIZE\tCREATED")
+	for _, t := range inv.Templates {
+		created := "-"
+		if t.Created != nil {
+			created = invTime(*t.Created)
+		}
+		src := "-"
+		if t.SourceImage != nil {
+			src = invDash(oneLn(*t.SourceImage))
+		}
+		fmt.Fprintf(w, "%s/%s\t%s\t%s\t%s\t%s\t%s\n", oneLn(t.Host), oneLn(t.Name), invDash(oneLn(string(t.Kind))),
+			invDash(oneLn(t.Pool)), src, invGiB(t.SizeBytes), created)
+	}
+	if len(inv.Templates) == 0 {
+		fmt.Fprintln(w, "(none)")
 	}
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "MACHINES")

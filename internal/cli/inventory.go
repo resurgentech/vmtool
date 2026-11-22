@@ -16,9 +16,10 @@ func inventoryCmd(e *env) *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "inventory",
-		Short: "Show the store's inventory of hosts and VMs",
+		Short: "Show the store's inventory of hosts, VMs and templates",
 		Long: `Show what the store last heard from each host's daemon: the hosts (when each
-last reported, its daemon version, how many VMs it lists live and gone), the
+last reported, its daemon version, how many VMs it lists live and gone, how
+many templates it reported), the
 VMs (state, vCPUs, memory, address, disks, what each was made from, when it was
 created, its comment, when the store last saw it) and the metal and alien
 machines the store keeps.
@@ -45,6 +46,14 @@ created that way from this version on. The comment is set with 'vmtool
 comment', also while the host sleeps. A VM marked * had its disks unreadable
 on the host; the last known disks are shown.
 
+Templates are listed too: each host's thin-pool templates, image or saved, with
+the pool, the image an image template was built from, its size and when it was
+made when the host knows that. They are the last list each daemon sent with its
+VMs, so a sleeping host's templates stay listed. A host row says how many
+templates it reported, or "not reported" when its daemon is too old to send
+them (it is not "none"). A template is not hidden or removed when its host stops
+reporting. --json includes them.
+
 Needs the store (a server: block in config.yml and VMTOOL_SERVER_TOKEN); with
 none, or one that does not answer, it says so and exits 1.`,
 		Args: cobra.NoArgs,
@@ -63,7 +72,7 @@ none, or one that does not answer, it says so and exits 1.`,
 			return app.WriteInventory(cmd.OutOrStdout(), inv, gone)
 		},
 	}
-	cmd.Flags().StringVar(&host, "host", "", "only this host's row and VMs (machines are always listed)")
+	cmd.Flags().StringVar(&host, "host", "", "only this host's row, VMs and templates (machines are always listed)")
 	cmd.Flags().BoolVar(&gone, "gone", false, "also list VMs their host no longer has, with when they are removed")
 	cmd.Flags().BoolVar(&asJS, "json", false, "print the inventory as JSON")
 	return cmd

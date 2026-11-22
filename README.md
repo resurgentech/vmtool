@@ -512,8 +512,8 @@ use is to find which host holds a VM so that a person or a tool can wake that
 host by other means.
 
 ```bash
-vmtool inventory                 # hosts, VMs, machines
-vmtool inventory --host hv1      # one host's row and VMs (machines are always listed)
+vmtool inventory                 # hosts, VMs, templates, machines
+vmtool inventory --host hv1      # one host's row, VMs and templates (machines are always listed)
 vmtool inventory --gone          # also VMs their host no longer has, with removal dates
 vmtool inventory --json
 ```
@@ -530,6 +530,21 @@ start, stop, disk changes). A new VM's address arrives with one
 follow-up report once it appears, for up to `ip_wait_seconds` after the VM
 starts. The store orders a host's reports by its own clock, so a host with a
 wrong clock is not silenced.
+
+**Templates.** The same report carries the host's templates (see
+[Templates](#templates-save-export-pull)), so a template can be found while its
+host sleeps: `vmtool inventory` lists them as `host/name` with the kind (`image`
+or `saved`), pool, the image an image template was built from, its size and
+when it was made, and `--json` and `GET /v1/inventory` carry them as
+`templates`. Only what the daemon knows is sent: a saved template has no source
+image, and the creation time is left out when the host does not give one. The
+store keeps each host's last list whole (a new list replaces it, an empty one
+clears it) and, as for VMs, keeps it when the host stops reporting. A host row
+shows `templates_reported`: false (`not reported` in the table) for a host whose
+daemon is too old to send templates or has never been able to list them, so no
+templates there is not read as none; a report without a template list never
+changes what the store has. If a daemon cannot read its thin pools at a report,
+it sends the VMs without templates, and the store keeps its last list.
 
 **What the store does not do.** It never decides whether a host is up: no
 heartbeat, no "stale" mark, and a sleeping or switched-off host keeps its VMs
@@ -1163,6 +1178,11 @@ both (`NAME ORIGIN IMAGE SHA256 POOL SIZE USED CLONES STALE CREATED`, names as
 vmtool templates delete hv1/t1-tpl      # one template; its clones keep working
 vmtool templates prune hv1              # every stale image template
 ```
+
+Each host also reports its templates to the store with its VMs, so they stay
+listed in `vmtool inventory` while the host sleeps (see
+[The inventory](#the-inventory)); that list is a record, and `templates list`
+stays the live view.
 
 Removing a template never affects its clones: a thin snapshot does not depend
 on its origin. A name that matches more than one template (a current and a

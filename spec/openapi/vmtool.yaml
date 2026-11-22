@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: vmtool API
-  version: 2.9.0
+  version: 2.10.0
   description: >
     HTTP surface of `vmtool server`. Spec-first: models, stdlib ServerInterface,
     embedded spec, and a test client are generated from this file. Metal and
@@ -1763,7 +1763,8 @@ paths:
       description: >
         What the store last heard from each host daemon (API 2.6.0), read
         through the workstation's configured store: hosts (last report as a
-        time, daemon version, live and gone counts), VMs (one row per host and
+        time, daemon version, live and gone counts, and `templates_reported`),
+        the templates each host last reported (API 2.10.0), VMs (one row per host and
         libvirt UUID) and the metal and alien machine names the store keeps.
         It is a record, not a live view: no up/down state and no staleness
         mark; `GET /v1/hosts/{host}/vms` is the live view. VMs their host no
@@ -2272,13 +2273,14 @@ components:
         comment: { type: string, description: Empty when there is none. }
     InventoryHost:
       type: object
-      required: [name, last_report, daemon_version, live, gone]
+      required: [name, last_report, daemon_version, live, gone, templates_reported]
       properties:
         name: { type: string }
         last_report: { type: string, format: date-time, description: When the host's daemon last reported. A plain time; the store does not judge whether the host is up. }
         daemon_version: { type: string }
         live: { type: integer }
         gone: { type: integer }
+        templates_reported: { type: boolean, description: "True once the host has sent a template list (an empty one counts; API 2.10.0). False for a host whose daemon never has, so the absence of its templates means nothing." }
     InventoryDisk:
       type: object
       required: [target, pool, capacity_bytes, kind]
@@ -2326,6 +2328,18 @@ components:
         gone_since: { type: string, format: date-time, description: Present only on a VM its host no longer has. }
         credentials_kept_until: { type: string, format: date-time, description: On a gone VM, when the store's sweep removes the row and its login. }
         has_credentials: { type: boolean }
+    InventoryTemplate:
+      type: object
+      description: A template of a host as its last report left it (API 2.10.0), with only what the host's daemon knows.
+      required: [host, name, kind, pool, size_bytes]
+      properties:
+        host: { type: string }
+        name: { type: string, description: "the image's name for an image template, the user's name for a saved one" }
+        kind: { type: string, enum: [image, saved] }
+        pool: { type: string, description: the thin pool it is in }
+        source_image: { type: string, description: "image templates only; absent on a saved template" }
+        size_bytes: { type: integer, format: int64 }
+        created: { type: string, format: date-time, description: omitted when the host did not report it }
     InventoryMachine:
       type: object
       required: [name, kind]
@@ -2339,6 +2353,10 @@ components:
         hosts: { type: array, items: { $ref: '#/components/schemas/InventoryHost' } }
         vms: { type: array, items: { $ref: '#/components/schemas/InventoryVM' } }
         machines: { type: array, items: { $ref: '#/components/schemas/InventoryMachine' } }
+        templates:
+          type: array
+          description: "The templates each listed host last reported (API 2.10.0), ordered by host, name, pool; kept while a host sleeps. Omitted by a store that predates it. A host with templates_reported false has sent none."
+          items: { $ref: '#/components/schemas/InventoryTemplate' }
     CommentRequest:
       type: object
       required: [comment]

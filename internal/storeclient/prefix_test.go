@@ -86,7 +86,7 @@ func TestClientUnderPathPrefix(t *testing.T) {
 			c := p.client(t, p.ts.URL+suffix, tok)
 			ctx := context.Background()
 
-			if v, err := c.Version(ctx); err != nil || v != "1.3.0" {
+			if v, err := c.Version(ctx); err != nil || v != "1.4.0" {
 				t.Fatalf("version %q %v", v, err)
 			}
 			if name, err := c.Whoami(ctx); err != nil || name != "alice" {

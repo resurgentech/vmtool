@@ -199,6 +199,23 @@ var migrations = []string{
 		(SELECT v.uuid FROM vms v
 		  WHERE v.host = network_reservations.host AND v.name = network_reservations.vm AND v.gone_since IS NULL
 		  ORDER BY v.first_seen DESC, v.uuid LIMIT 1), '');`,
+	// 9: the templates each host last reported, one row per template, replaced
+	// as a list by each report that carries one; and, per host, whether it ever
+	// sent such a list (templates_reported), so a host that never did is told
+	// apart from a host with none. An existing host has reported none. Times
+	// are RFC3339Nano UTC text, empty when the host did not know it. Nothing
+	// here is secret.
+	`ALTER TABLE hosts ADD COLUMN templates_reported INTEGER NOT NULL DEFAULT 0;
+	CREATE TABLE templates (
+		host         TEXT NOT NULL,
+		name         TEXT NOT NULL,
+		kind         TEXT NOT NULL,
+		pool         TEXT NOT NULL,
+		source_image TEXT NOT NULL DEFAULT '',
+		size_bytes   INTEGER NOT NULL DEFAULT 0,
+		created      TEXT NOT NULL DEFAULT ''
+	);
+	CREATE INDEX templates_host ON templates(host);`,
 }
 
 // DB is an open store database. It is safe for concurrent use.

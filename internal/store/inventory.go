@@ -20,6 +20,8 @@ import (
 const (
 	maxReportVMs  = 4096
 	maxDisksPerVM = 128
+	// maxReportTemplates bounds a host's template list in a report.
+	maxReportTemplates = 1024
 	// maxNetworksPerVM bounds a VM's cards on vmtool networks in a report.
 	maxNetworksPerVM = 64
 	maxShortField    = 128
@@ -94,6 +96,29 @@ func reportVM(v storeapi.ReportVM) (db.VMRow, string) {
 	return row, ""
 }
 
+// reportTemplate validates one reported template and returns its row. The
+// error names the field, never a value.
+func reportTemplate(t storeapi.ReportTemplate) (db.TemplateRow, string) {
+	switch {
+	case t.Name == "" || !plainText(t.Name, maxNameLen):
+		return db.TemplateRow{}, "name"
+	case t.Kind != storeapi.ReportTemplateKindImage && t.Kind != storeapi.ReportTemplateKindSaved:
+		return db.TemplateRow{}, "kind"
+	case !plainText(t.Pool, maxShortField):
+		return db.TemplateRow{}, "pool"
+	case t.SourceImage != nil && !plainText(*t.SourceImage, maxNameLen):
+		return db.TemplateRow{}, "source_image"
+	case t.SizeBytes < 0:
+		return db.TemplateRow{}, "size_bytes"
+	}
+	row := db.TemplateRow{Name: t.Name, Kind: string(t.Kind), Pool: t.Pool, SourceImage: deref(t.SourceImage), SizeBytes: t.SizeBytes}
+	if t.Created != nil && !t.Created.IsZero() {
+		c := *t.Created
+		row.Created = &c
+	}
+	return row, ""
+}
+
 func (h *handlers) PutHostInventory(ctx context.Context, req storeapi.PutHostInventoryRequestObject) (storeapi.PutHostInventoryResponseObject, error) {
 	// Only the host's own token: another host's token and every user token
 	// (whose caller never starts with "host/") are refused.
@@ -113,6 +138,8 @@ func (h *handlers) PutHostInventory(ctx context.Context, req storeapi.PutHostInv
 		return bad("daemon_version")
 	case len(b.Vms) > maxReportVMs:
 		return bad("vms")
+	case b.Templates != nil && len(*b.Templates) > maxReportTemplates:
+		return bad("templates")
 	}
 	rows := make([]db.VMRow, 0, len(b.Vms))
 	for i, v := range b.Vms {
@@ -122,10 +149,23 @@ func (h *handlers) PutHostInventory(ctx context.Context, req storeapi.PutHostInv
 		}
 		rows = append(rows, row)
 	}
+	// nil: the report carried no templates key; an empty list is not nil.
+	var tpls *[]db.TemplateRow
+	if b.Templates != nil {
+		list := make([]db.TemplateRow, 0, len(*b.Templates))
+		for i, t := range *b.Templates {
+			row, field := reportTemplate(t)
+			if field != "" {
+				return bad(fmt.Sprintf("%s (templates[%d])", field, i))
+			}
+			list = append(list, row)
+		}
+		tpls = &list
+	}
 	if !h.img.dbReady() {
 		return storeapi.PutHostInventory500JSONResponse{InternalErrorJSONResponse: internalErr}, nil
 	}
-	cnt, err := h.img.db.ApplyReport(ctx, req.Host, b.GeneratedAt, b.DaemonVersion, rows)
+	cnt, err := h.img.db.ApplyReportWithTemplates(ctx, req.Host, b.GeneratedAt, b.DaemonVersion, rows, tpls)
 	if err != nil {
 		h.img.fail("apply report", err)
 		return storeapi.PutHostInventory500JSONResponse{InternalErrorJSONResponse: internalErr}, nil
@@ -196,14 +236,26 @@ func (h *handlers) GetInventory(ctx context.Context, req storeapi.GetInventoryRe
 		return storeapi.GetInventory500JSONResponse{InternalErrorJSONResponse: internalErr}, nil
 	}
 	out := storeapi.Inventory{
-		Hosts:    make([]storeapi.InventoryHost, 0, len(inv.Hosts)),
-		Vms:      make([]storeapi.InventoryVM, 0, len(inv.VMs)),
-		Machines: make([]storeapi.MachineSummary, 0, len(machines)),
+		Hosts:     make([]storeapi.InventoryHost, 0, len(inv.Hosts)),
+		Vms:       make([]storeapi.InventoryVM, 0, len(inv.VMs)),
+		Machines:  make([]storeapi.MachineSummary, 0, len(machines)),
+		Templates: make([]storeapi.InventoryTemplate, 0, len(inv.Templates)),
 	}
 	for _, x := range inv.Hosts {
 		out.Hosts = append(out.Hosts, storeapi.InventoryHost{
 			Name: x.Name, LastReport: x.LastReport, DaemonVersion: x.DaemonVersion, Live: x.Live, Gone: x.Gone,
+			TemplatesReported: x.TemplatesReported,
 		})
+	}
+	for _, t := range inv.Templates {
+		it := storeapi.InventoryTemplate{
+			Host: t.Host, Name: t.Name, Kind: storeapi.InventoryTemplateKind(t.Kind), Pool: t.Pool, SizeBytes: t.SizeBytes, Created: t.Created,
+		}
+		if t.SourceImage != "" {
+			s := t.SourceImage
+			it.SourceImage = &s
+		}
+		out.Templates = append(out.Templates, it)
 	}
 	for _, v := range inv.VMs {
 		out.Vms = append(out.Vms, toInventoryVM(v))

@@ -36,8 +36,17 @@ func toAPIInventory(in *storeclient.Inventory) api.Inventory {
 		Machines: make([]api.InventoryMachine, len(in.Machines)),
 	}
 	for i, h := range in.Hosts {
-		out.Hosts[i] = api.InventoryHost{Name: h.Name, LastReport: h.LastReport, DaemonVersion: h.DaemonVersion, Live: h.Live, Gone: h.Gone}
+		out.Hosts[i] = api.InventoryHost{Name: h.Name, LastReport: h.LastReport, DaemonVersion: h.DaemonVersion, Live: h.Live, Gone: h.Gone,
+			TemplatesReported: h.TemplatesReported}
 	}
+	// Always present, empty when the store has none (a store that predates
+	// templates answers none, and every host then has templates_reported false).
+	tpls := make([]api.InventoryTemplate, len(in.Templates))
+	for i, t := range in.Templates {
+		tpls[i] = api.InventoryTemplate{Host: t.Host, Name: t.Name, Kind: api.InventoryTemplateKind(t.Kind), Pool: t.Pool,
+			SourceImage: t.SourceImage, SizeBytes: t.SizeBytes, Created: t.Created}
+	}
+	out.Templates = &tpls
 	for i, v := range in.Vms {
 		o := api.InventoryVM{
 			Host: v.Host, Name: v.Name, Uuid: v.Uuid, State: v.State, Vcpus: v.Vcpus, Memory: v.Memory,

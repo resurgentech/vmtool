@@ -2733,3 +2733,53 @@ are appended, never edited in; a hook refuses rewrites.
   30 s).
 - Commits: the API 2.9.0 commit on `master` (this entry rides in it); not
   pushed. No tag.
+
+## 2026-11-22 — API 2.10.0, store API 1.4.0: templates in the inventory, readable while hosts sleep
+
+- Spec first: `spec/openapi/store.yaml` 1.3.0 -> 1.4.0: `HostReport` gains
+  an optional `templates` (`ReportTemplate`: `name`, `kind` image|saved,
+  `pool`, `size_bytes`, and `source_image` and `created` when the daemon
+  knows them; at most 1024); the store's `Inventory` gains `templates`
+  (`InventoryTemplate`, with `host`) and `InventoryHost.templates_reported`.
+  `spec/openapi/vmtool.yaml` 2.9.0 -> 2.10.0: `Inventory.templates`
+  (optional; the workstation always sends it) and
+  `InventoryHost.templates_reported`. Both packages regenerated.
+- The hypervisor's reporter (`internal/app/inventory_reporter.go`) sends
+  its templates with its VMs, read from the thin helper's cached report
+  (`internal/hosts/inventory.go`, no manifest read). A host with no thin
+  pool sends `[]`; a listing that fails sends no `templates` and logs one
+  warning, and the VMs still go out.
+- The store (`internal/store/db`, migration 9; schema 8 -> 9) adds
+  `hosts.templates_reported` (existing hosts: false) and a `templates`
+  table. A report carrying `templates` replaces that host's rows and sets
+  the flag in the report's transaction; a report without it (an older
+  daemon) leaves the rows and the flag as they were; a stale report changes
+  neither. A host that stops reporting keeps its rows. A bad template row is
+  a `400` for the whole report.
+- The workstation's `GET /v1/inventory` returns `templates` and
+  `templates_reported`; still `503` with no store. `vmtool inventory` shows
+  a TEMPLATES column in the host table (a count, or "not reported") and a
+  TEMPLATES section; `--json` carries them.
+- Red, then green: db `TestApplyReportTemplates`,
+  `TestApplyReportKeepsDuplicateNames`, `TestStaleReportLeavesTemplates`,
+  `TestMigration9UpgradesVersion8Database` (a real version-8 database with
+  rows in every inventory, image, machine and network table, reopened: every
+  row count unchanged, version 9, hosts not reported); store
+  `TestReportTemplatesRoundTrip`, `TestReportWithoutTemplatesFromAnOldDaemon`,
+  `TestReportEmptyTemplateList`, `TestSleepingHostKeepsItsTemplates`,
+  `TestReportTemplateValidation`; reporter `TestReporterSendsTemplates`,
+  `TestReporterSendsAnEmptyTemplateList`,
+  `TestReporterOmitsTemplatesItCannotList`; hosts
+  `TestInventoryReaderListsTemplates` and its two failure cases; workstation
+  `TestGetInventoryReadsTheStore`; CLI `TestInventoryListsTemplates`,
+  `TestInventoryTemplatesNotReported`, `TestInventoryJSON`,
+  `TestInventoryHelpPinsKeyWords`. Version pins move to 2.10.0 / 1.4.0.
+  `just check` green; the store image builds
+  (`docker build -f deploy/vmtool-store.Dockerfile .`, not tagged or
+  pushed).
+- A stale image template is listed beside the current one with the same
+  name (no `stale` flag in the inventory).
+- Deployed stores and daemons are unaffected until rebuilt; an older daemon
+  against the new store leaves `templates_reported: false`.
+- Commits: the API 2.10.0 commit on `master` (this entry rides in it); not
+  pushed. No tag.

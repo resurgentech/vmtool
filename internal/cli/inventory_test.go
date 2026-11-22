@@ -15,7 +15,11 @@ var invKeep = map[string]bool{"vmtool inventory": true}
 
 func inventoryBody() map[string]any {
 	return map[string]any{
-		"hosts": []any{map[string]any{"name": "hv1", "last_report": "2026-11-21T01:02:03Z", "daemon_version": "2.6.0", "live": 1, "gone": 1}},
+		"hosts": []any{map[string]any{"name": "hv1", "last_report": "2026-11-21T01:02:03Z", "daemon_version": "2.6.0", "live": 1, "gone": 1, "templates_reported": true}},
+		"templates": []any{
+			map[string]any{"host": "hv1", "name": "golden", "kind": "saved", "pool": "pool1", "size_bytes": 10737418240},
+			map[string]any{"host": "hv1", "name": "img1", "kind": "image", "pool": "pool1", "source_image": "img1", "size_bytes": 21474836480, "created": "2026-11-19T00:00:00Z"},
+		},
 		"vms": []any{
 			map[string]any{"host": "hv1", "name": "vm1", "uuid": "00000000-0000-4000-8000-000000000001", "state": "running",
 				"vcpus": 2, "memory": 4, "ip": "10.0.0.5", "autostart": true, "firmware": "efi",
@@ -72,6 +76,73 @@ func TestInventoryTables(t *testing.T) {
 	}
 	if strings.Contains(r.out, storeTok) || strings.Contains(r.errOut, storeTok) {
 		t.Error("the store token is printed")
+	}
+}
+
+// The templates are listed between the VMs and the machines, each with its
+// host, kind, pool, source image, size and creation time; a field the host did
+// not report is a dash. The host row says how many it reported.
+func TestInventoryListsTemplates(t *testing.T) {
+	s := newCLIStore(t)
+	s.inv = inventoryBody()
+	dir := storeWorkdir(t, s, storeTok)
+	r := runGate(t, dir, invKeep, "inventory")
+	if r.err != nil {
+		t.Fatalf("%v\n%s", r.err, r.errOut)
+	}
+	if !strings.Contains(r.out, "TEMPLATES") {
+		t.Fatalf("no TEMPLATES section:\n%s", r.out)
+	}
+	if strings.Index(r.out, "\nVMS") > strings.Index(r.out, "\nTEMPLATES") || strings.Index(r.out, "\nTEMPLATES") > strings.Index(r.out, "\nMACHINES") {
+		t.Errorf("TEMPLATES is not between VMS and MACHINES:\n%s", r.out)
+	}
+	var golden, img string
+	for _, ln := range strings.Split(r.out, "\n") {
+		switch {
+		case strings.HasPrefix(ln, "hv1/golden"):
+			golden = ln
+		case strings.HasPrefix(ln, "hv1/img1"):
+			img = ln
+		}
+	}
+	if f := strings.Fields(golden); len(f) != 6 || f[1] != "saved" || f[2] != "pool1" || f[3] != "-" || f[4] != "10G" || f[5] != "-" {
+		t.Errorf("saved template row %q", golden)
+	}
+	if f := strings.Fields(img); len(f) != 6 || f[1] != "image" || f[2] != "pool1" || f[3] != "img1" || f[4] != "20G" || f[5] != "2026-11-19T00:00:00Z" {
+		t.Errorf("image template row %q", img)
+	}
+}
+
+// A host whose daemon never sent templates says so, so the lack of rows is
+// not read as "none"; one that did and has none says 0.
+func TestInventoryTemplatesNotReported(t *testing.T) {
+	body := inventoryBody()
+	body["templates"] = []any{}
+	body["hosts"] = []any{
+		map[string]any{"name": "hv1", "last_report": "2026-11-21T01:02:03Z", "daemon_version": "2.9.0", "live": 1, "gone": 0},
+		map[string]any{"name": "hv2", "last_report": "2026-11-21T01:02:03Z", "daemon_version": "2.10.0", "live": 0, "gone": 0, "templates_reported": true},
+	}
+	s := newCLIStore(t)
+	s.inv = body
+	dir := storeWorkdir(t, s, storeTok)
+	r := runGate(t, dir, invKeep, "inventory")
+	if r.err != nil {
+		t.Fatalf("%v\n%s", r.err, r.errOut)
+	}
+	var h1, h2 string
+	for _, ln := range strings.Split(r.out, "\n") {
+		switch {
+		case strings.HasPrefix(ln, "hv1 "):
+			h1 = ln
+		case strings.HasPrefix(ln, "hv2 "):
+			h2 = ln
+		}
+	}
+	if !strings.HasSuffix(strings.TrimSpace(h1), "not reported") || !strings.HasSuffix(strings.TrimSpace(h2), "0") {
+		t.Errorf("host rows:\n%q\n%q\n%s", h1, h2, r.out)
+	}
+	if !strings.Contains(r.out, "TEMPLATES\n") || !strings.Contains(r.out, "(none)") {
+		t.Errorf("no empty TEMPLATES section:\n%s", r.out)
 	}
 }
 
@@ -145,6 +216,10 @@ func TestInventoryJSON(t *testing.T) {
 	}
 	if len(inv.Hosts) != 1 || len(inv.Vms) != 2 || len(inv.Machines) != 1 || inv.Vms[1].GoneSince == nil || inv.Vms[0].Origin == nil {
 		t.Errorf("decoded %+v", inv)
+	}
+	if !inv.Hosts[0].TemplatesReported || len(inv.Templates) != 2 || inv.Templates[1].Name != "img1" ||
+		inv.Templates[1].SourceImage == nil || *inv.Templates[1].SourceImage != "img1" {
+		t.Errorf("templates missing from --json: %+v", inv.Templates)
 	}
 	if strings.Contains(r.out, "HOSTS") {
 		t.Errorf("tables mixed into --json:\n%s", r.out)

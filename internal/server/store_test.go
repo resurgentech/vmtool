@@ -57,7 +57,11 @@ func newSrvStore(t *testing.T) *srvStore {
 			s.invs.Add(1)
 			s.invQuery.Store(r.URL.RequestURI())
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"hosts": []any{map[string]any{"name": "hv1", "last_report": "2026-11-21T01:02:03Z", "daemon_version": "2.6.0", "live": 1, "gone": 1}},
+				"hosts": []any{map[string]any{"name": "hv1", "last_report": "2026-11-21T01:02:03Z", "daemon_version": "2.6.0", "live": 1, "gone": 1, "templates_reported": true}},
+				"templates": []any{
+					map[string]any{"host": "hv1", "name": "golden", "kind": "saved", "pool": "pool1", "size_bytes": 10737418240},
+					map[string]any{"host": "hv1", "name": "img1", "kind": "image", "pool": "pool1", "source_image": "img1", "size_bytes": 21474836480, "created": "2026-11-19T00:00:00Z"},
+				},
 				"vms": []any{
 					map[string]any{"host": "hv1", "name": "vm1", "uuid": "00000000-0000-4000-8000-000000000001", "state": "running",
 						"vcpus": 2, "memory": 4, "ip": "10.0.0.5", "autostart": true, "firmware": "efi",
@@ -258,7 +262,7 @@ func TestSpecDocumentsWarningsHeader(t *testing.T) {
 	if !strings.Contains(doc.Info.Description, warnHeader) {
 		t.Errorf("info.description does not document %s", warnHeader)
 	}
-	if doc.Info.Version != "2.9.0" {
-		t.Errorf("API version %s: want 2.9.0", doc.Info.Version)
+	if doc.Info.Version != "2.10.0" {
+		t.Errorf("API version %s: want 2.10.0", doc.Info.Version)
 	}
 }
