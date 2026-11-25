@@ -340,6 +340,42 @@ func TestThinReportNoPool(t *testing.T) {
 	}
 }
 
+// LVM is installed but the host has no volume group at all: lvs lists
+// nothing, and the report is the empty one.
+func TestThinReportNoVolumeGroup(t *testing.T) {
+	e := newThinEnv(t)
+	e.write("lvs.all.out", "")
+	r := e.run("report")
+	if r.code != 0 || r.stderr != "" || strings.TrimSpace(r.stdout) != `{"report": [{"lv": []}]}` {
+		t.Fatalf("exit %d stdout %q stderr %q", r.code, r.stdout, r.stderr)
+	}
+}
+
+// A host with no LVM at all (no lvs on the helper's PATH) has no thin pool:
+// the helper looked and found none, so the report is the empty one, not an
+// error.
+func TestThinReportNoLVM(t *testing.T) {
+	e := newThinEnv(t)
+	if err := os.Remove(filepath.Join(e.stub, "lvs")); err != nil {
+		t.Fatal(err)
+	}
+	r := e.run("report")
+	if r.code != 0 || r.stderr != "" || strings.TrimSpace(r.stdout) != `{"report": [{"lv": []}]}` {
+		t.Fatalf("exit %d stdout %q stderr %q", r.code, r.stdout, r.stderr)
+	}
+	e.noWrites()
+}
+
+// lvs is there but fails: the helper could not look, which stays an error.
+func TestThinReportLvsFails(t *testing.T) {
+	e := newThinEnv(t)
+	addStub(t, e.stub, "lvs", `echo "lvm: locking failed" >&2; exit 5`)
+	r := e.run("report")
+	if r.code == 0 || !strings.Contains(r.stderr, "cannot list volume groups") || r.stdout != "" {
+		t.Fatalf("exit %d stdout %q stderr %q", r.code, r.stdout, r.stderr)
+	}
+}
+
 // ------------------------------------------------------------------ refusals
 
 func TestThinRefusesBadNames(t *testing.T) {

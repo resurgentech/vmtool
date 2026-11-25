@@ -2929,3 +2929,29 @@ are appended, never edited in; a hook refuses rewrites.
   behaviour change; `just check` green.
 - Commits: the test-rename commit on `master` (this entry rides in it); not
   pushed. No tag.
+
+## 2026-11-25 — A host with no LVM reports an empty template list
+
+- Seen: a hypervisor with no LVM installed runs the daemon, but its
+  inventory never carries a template list. The thin helper's `report` ran
+  `lvs`, which is not there, and died "cannot list volume groups"; the
+  reporter took that as "could not look" and sent no list each time, so the
+  store never marked the host's templates as reported, and a template
+  listing for the host failed with the same line.
+- `deploy/vmtool-thin` `report`: with no `lvs` on the helper's fixed PATH
+  it prints the empty report (`{"report": [{"lv": []}]}`), as it already did
+  for a host whose volume groups hold no pool. An `lvs` that is there and
+  fails still dies "cannot list volume groups": the daemon then sends no
+  list, the store keeps its last one, and the warning is logged once, as
+  before. No other verb changes; no Go change, no API change (the spec
+  already says a host with no thin pools answers `[]`).
+- Tests: `scripts/vmtool_thin_test.go` `TestThinReportNoLVM` (red first:
+  exit 1, "cannot list volume groups"), `TestThinReportNoVolumeGroup`,
+  `TestThinReportLvsFails`; `internal/hosts/inventory_templates_test.go`
+  `TestInventoryReaderEmptyReportHasNoTemplates` and
+  `TestListTemplatesEmptyReportIsEmpty` pin that the empty report is an
+  empty list on both the reporter's path and the listing's.
+- Docs: the README's root-helper paragraph says what `report` gives on such a
+  host. `just check` green.
+- Commits: the helper commit on `master` (this entry rides in it); not
+  pushed. No tag; a host takes it with `just deploy`.

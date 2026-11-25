@@ -73,6 +73,29 @@ func TestInventoryReaderNoThinHasNoTemplates(t *testing.T) {
 	}
 }
 
+// A helper that looked and found no thin pool (no volume group, or no LVM on
+// the host) prints the empty report: the host has no templates, an empty
+// list and not an error, so the reporter sends it and the store marks the
+// host's templates as reported.
+func TestInventoryReaderEmptyReportHasNoTemplates(t *testing.T) {
+	h := newHelperStub(t)
+	h.report(t, `{"report": [{"lv": []}]}`)
+	got, err := templateReader(t, &vmtool.Thin{Helper: thinHelper}).Templates()
+	if err != nil || got == nil || len(got) != 0 {
+		t.Fatalf("%+v %v", got, err)
+	}
+}
+
+// The template listing shares the helper's report: the empty report lists
+// no templates (an empty list, not an error).
+func TestListTemplatesEmptyReportIsEmpty(t *testing.T) {
+	m, _, _ := newTemplateHost(t, `{"report": [{"lv": []}]}`)
+	got, err := m.ListTemplates()
+	if err != nil || got == nil || len(got) != 0 {
+		t.Fatalf("%+v %v", got, err)
+	}
+}
+
 // A helper that cannot run is an error: the reporter then sends no template
 // list and the store keeps its last one.
 func TestInventoryReaderTemplatesHelperFails(t *testing.T) {

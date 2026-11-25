@@ -31,6 +31,7 @@
 #
 # Verbs (a refusal prints one line to stderr and exits non-zero):
 #   report                                  lvs JSON over the VGs holding a pool
+#                                           (none, or no LVM at all: empty)
 #   create VG POOL NAME BYTES TAG...        thin volume of BYTES
 #   snapshot VG SRC NAME TAG...             thin snapshot of SRC, activated
 #   extend VG NAME BYTES                    grow only (equal size: nothing)
@@ -308,6 +309,13 @@ nargs=$#
 case $verb in
   report)
     need_args exact 0
+    # No LVM on the host (no lvs on the fixed PATH): there is no thin pool to
+    # look in, so the report is the empty one, as for a host whose volume
+    # groups hold no pool. An lvs that is there and fails is still an error.
+    if ! command -v lvs >/dev/null 2>&1; then
+      echo '{"report": [{"lv": []}]}'
+      exit 0
+    fi
     all=$(lvs --noheadings --separator '|' -o vg_name,lv_attr,lv_tags 2>/dev/null) || die "cannot list volume groups"
     vgs=()
     seen=' '

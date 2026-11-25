@@ -1155,7 +1155,10 @@ vmtool delete hv1/vm1                                      # removes vm1 and vm1
   only on thin volumes tagged `vmtool_vol`, `vmtool_template` or
   `vmtool_building`: it never removes a pool, never touches an untagged or a
   thick volume, and never anything of another tenant. `report` lists the
-  names, sizes and tags of every LV in such a volume group, read-only. Its file
+  names, sizes and tags of every LV in such a volume group, read-only; on a
+  host with no such volume group, or with no LVM installed at all, it lists
+  none, so the host reports an empty template list. An LVM that is there and
+  fails is an error, and the daemon then sends no template list. Its file
   paths are limited to the daemon's image cache directory, regular files only,
   no symlinks, and the image converter (`qemu-img`) runs as the `vmtool` user
   on that one volume's device node, never as root. `sudo -l -U vmtool` on a
