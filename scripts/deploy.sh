@@ -78,7 +78,9 @@
 #                  staged copy is removed either way) and `--personal-keys-url
 #                  <url> --personal-keys-token-file keys-pull-token
 #                  --personal-keys-cache-file personal-keys.json` are added to
-#                  config write. VMTOOL_KEY_REQUEST_URL, set, adds
+#                  config write. With no URL the install removes
+#                  HV_DIR/keys-pull-token and HV_DIR/personal-keys.json.
+#                  VMTOOL_KEY_REQUEST_URL, set, adds
 #                  `--key-request-url <url>`, with or without a list.
 #   8. check       GET /version over HTTPS (public: no token sent)
 #
@@ -402,7 +404,13 @@ script+="; $own -m 0600 \"\$1/config.yml\" $hv/config.yml"
 script+="; $own -m 0644 \"\$1/tls/$fqdn.crt\" $hv/tls/$fqdn.crt"
 script+="; $own -m 0600 \"\$1/tls/$fqdn.key\" $hv/tls/$fqdn.key"
 script+="; if [ -f \"\$1/store-host-token\" ]; then $own -m 0600 \"\$1/store-host-token\" $hv/store-host-token; else rm -f $hv/store-host-token; fi"
-[[ -z $pull_tok ]] || script+="; $own -m 0600 \"\$1/keys-pull-token\" $hv/keys-pull-token"
+# Turning the list off cleans up: with no URL the pull token and the cached
+# list are removed, as a stale host token is above.
+if [[ -n $pull_tok ]]; then
+  script+="; $own -m 0600 \"\$1/keys-pull-token\" $hv/keys-pull-token"
+else
+  script+="; rm -f $hv/keys-pull-token $hv/personal-keys.json"
+fi
 script+="; install -m 0644 \"\$1/vmtool-daemon.service\" $ud/vmtool-daemon.service"
 script+="; systemctl daemon-reload; systemctl enable --now vmtool-daemon; systemctl restart vmtool-daemon"
 # -t so a sudo password prompt works; the token never rides this call.

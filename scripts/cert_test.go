@@ -509,7 +509,7 @@ func TestInstallConfigWriteFlags(t *testing.T) {
 		t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
 	}
 	want := "config write --name fallbackhost --role workstation --listen 127.0.0.1:9473 " +
-		"--tls-cert tls/fallbackhost.labtwo.crt --tls-key tls/fallbackhost.labtwo.key"
+		"--tls-cert tls/fallbackhost.labtwo.crt --tls-key tls/fallbackhost.labtwo.key --no-personal-keys"
 	if got := strings.TrimSpace(readOr(t, filepath.Join(e.wd, "vmtool.argv"))); got != want {
 		t.Errorf("config write argv:\n got %q\nwant %q", got, want)
 	}

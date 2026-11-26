@@ -489,6 +489,9 @@ type WriteOptions struct {
 	// personal_keys.url, token_file and cache_file: the pulled key list's
 	// address and two paths (never a token). The block's other keys are kept.
 	PersonalKeysURL, PersonalKeysTokenFile, PersonalKeysCacheFile string
+	// NoPersonalKeys removes the whole personal_keys block first, before the
+	// fields above and KeyRequestURL are applied (turning the key list off).
+	NoPersonalKeys bool
 	// NetworkHome sets network_home: true; false leaves the key as is.
 	NetworkHome bool
 }
@@ -502,6 +505,14 @@ func Write(dir, token string, opts WriteOptions) error {
 		return ErrNoToken
 	}
 	return edit(dir, func(root *yaml.Node) error {
+		if opts.NoPersonalKeys {
+			for i := 0; i+1 < len(root.Content); i += 2 {
+				if root.Content[i].Value == "personal_keys" {
+					root.Content = append(root.Content[:i], root.Content[i+2:]...)
+					break
+				}
+			}
+		}
 		for _, kv := range []struct{ k, v string }{
 			{"name", opts.Name}, {"role", opts.Role}, {"listen", opts.Listen},
 			{"tls_cert", opts.TLSCert}, {"tls_key", opts.TLSKey}, {"store_url", opts.StoreURL},

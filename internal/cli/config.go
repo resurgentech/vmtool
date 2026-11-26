@@ -13,6 +13,24 @@ import (
 
 func cwdDir() (string, error) { return os.Getwd() }
 
+// tokenIsFileKey reports whether token equals the key in the token file. A
+// child of vmtool carries the caller's key as VMTOOL_TOKEN, so `config write`
+// must not hash it. The file is read directly (even with a mode ReadTokenFile
+// refuses, or through a symlink): only the comparison matters, and neither
+// value is ever shown. Reading more files than the gate would only refuses
+// more.
+func tokenIsFileKey(dir, token string) bool {
+	p, err := config.TokenFilePath(dir)
+	if err != nil {
+		return false
+	}
+	if fi, err := os.Stat(p); err != nil || !fi.Mode().IsRegular() {
+		return false
+	}
+	b, err := os.ReadFile(p)
+	return err == nil && strings.TrimSpace(string(b)) == token
+}
+
 // configCmd is the `vmtool config` group. dirFn returns the directory holding
 // config.yml and .env (the working directory in production).
 func configCmd(dirFn func() (string, error)) *cobra.Command {
@@ -55,6 +73,9 @@ func configCmd(dirFn func() (string, error)) *cobra.Command {
 				}
 				return err
 			}
+			if tokenIsFileKey(dir, token) {
+				return errors.New("the token is the personal key in the token file and must not become token_sha256; export the operator token (VMTOOL_TOKEN) for this shell, or pass it with --token-stdin")
+			}
 			if err := config.Write(dir, token, opts); err != nil {
 				return err
 			}
@@ -77,6 +98,7 @@ func configCmd(dirFn func() (string, error)) *cobra.Command {
 	f.StringVar(&opts.PersonalKeysURL, "personal-keys-url", "", "URL of the pulled key list (personal_keys.url); needs --personal-keys-cache-file (or one already in config.yml)")
 	f.StringVar(&opts.PersonalKeysTokenFile, "personal-keys-token-file", "", "path of the file holding the pull token for the key list (personal_keys.token_file; a path, never the token)")
 	f.StringVar(&opts.PersonalKeysCacheFile, "personal-keys-cache-file", "", "path where the last good key list is kept (personal_keys.cache_file; a path)")
+	f.BoolVar(&opts.NoPersonalKeys, "no-personal-keys", false, "remove the whole personal_keys block first (the key list off), then apply the other personal-keys flags and --key-request-url if given")
 	f.BoolVar(&opts.NetworkHome, "network-home", false, "write network_home: true, so this daemon refuses the VM-creating routes (the host is a network home)")
 	f.BoolVar(&tokenStdin, "token-stdin", false, "read the token from one line of stdin")
 

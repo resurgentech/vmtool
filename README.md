@@ -866,12 +866,20 @@ directory, any other relative path is relative to `config.yml`'s directory), els
 with an error that names the file and never shows it, unless it is a regular file (a symlink is refused) with no
 group or other permission bits (`0600` or tighter) and is not empty. A missing file is no key.
 
-A `VMTOOL_TOKEN` is checked against `token_sha256`, offline, as always. A key from the token file is not in
-`config.yml`, so the command asks the local service (`vmtool server`, the address in `listen`, trusting `tls_cert`)
-one authenticated question, `GET /v1/personal-keys`, with a 2 s limit. 200 passes; 401 stops the command with an
-error naming the token file; a service that does not answer stops it with "vmtool.service is not answering at
-<address>; start it: sudo systemctl start vmtool". `vmtool config write` never reads the token file: a personal
-key must not become a daemon's `token_sha256`, so it needs the operator token in `VMTOOL_TOKEN` or `--token-stdin`.
+A `VMTOOL_TOKEN` that hashes to `token_sha256` passes, offline, as always. Any other key (one from the token file, or
+a `VMTOOL_TOKEN` that is not the operator's, as the child of a daemon carries) is not in `config.yml`, so the command
+asks the local service (`vmtool server`, the address in `listen`, trusting `tls_cert`) one authenticated question,
+`GET /v1/personal-keys`, with a 2 s limit. 200 passes; 401 stops the command with an error (for a token-file key it
+names the file; for a `VMTOOL_TOKEN` it says the token does not match `token_sha256` and the local service did not
+accept it either); a service that does not answer stops it with "vmtool.service is not answering at <address>; start
+it: sudo systemctl start vmtool". That question goes only to this machine: the address in `listen` must be loopback
+or assigned to one of this machine's interfaces (an unspecified host such as `0.0.0.0` means loopback), or the key
+is not sent and the error says that `listen` is not an address of this machine. A `config.yml` that names someone
+else's address therefore cannot collect a key. `vmtool config write` never takes the token file's key: a personal
+key must not become a daemon's `token_sha256`, so it needs the operator token in `VMTOOL_TOKEN` or `--token-stdin`,
+and it refuses a token that equals the token file's key (a child of vmtool carries the caller's key as
+`VMTOOL_TOKEN`). `vmtool config write --no-personal-keys` removes the whole `personal_keys:` block first (the key
+list off), then applies any `--personal-keys-*` or `--key-request-url` flag given.
 `vmtool server` reads its store key in the same order, at each store request, and never asks for a key.
 
 ### First use with no key
@@ -1086,8 +1094,14 @@ executed or expanded, and any other line is an error that names its line
 number and never its content. A variable already in the environment wins over
 the file. (`.env` is not read for these.)
 
-- **URL unset:** nothing changes: no `personal_keys` flag, no OpenBao read for
-  it, and no file.
+- **URL unset:** no OpenBao read and no pull token. It also cleans up after a
+  list that was on: `just deploy` removes the host's `keys-pull-token` and
+  `personal-keys.json` (as it removes a stale host token), and `just install`
+  removes both from the checkout root and passes `config write
+  --no-personal-keys`, which drops the `personal_keys` block from `config.yml`
+  (its other settings stay) before `--key-request-url`, if set, is applied
+  again. `just deploy` writes `config.yml` from scratch, so the block is gone
+  there already.
 - **URL set:** the pull token is read from OpenBao into a variable (never in a
   command line, an echo or a log), and a missing or empty one stops the run
   before anything is installed or restarted, so the old daemon keeps running.

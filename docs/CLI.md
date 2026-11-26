@@ -77,7 +77,7 @@ The `code` of the error object is one of the REST API's `Error.code` values (`sp
 | `not_found` | the VM, host, image, template, network or machine does not exist |
 | `conflict` | the request conflicts with what is there (a name in use, a full pool) |
 | `bad_request` | a bad command line, flag or argument (exit `2`), or a value the command refuses (exit `1`) |
-| `unauthorized` | the token gate refused: no key, no `config.yml`, a token that does not match, or a token-file key the local service does not accept |
+| `unauthorized` | the token gate refused: no key, no `config.yml`, a token that is neither `token_sha256`'s nor accepted by the local service, a key the local service does not accept, or `listen` in `config.yml` not being an address of this machine (the key is then not sent) |
 | `key_pending` | no key yet, and a key request is open (exit `75`); the approval notice is in `message`; run the command again after approving |
 | `key_busy` | another process is handling the key request (exit `75`); try again shortly |
 | `key_denied`, `key_expired`, `key_consumed`, `key_unauthorized`, `key_provider` | the key request ended without a key (exit `1`); `key_provider` says when to try again if the provider asked for a wait |

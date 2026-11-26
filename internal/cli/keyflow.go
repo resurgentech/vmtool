@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/resurgentech/keyclient/request"
@@ -185,17 +186,13 @@ func (e *env) gate(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	if src != config.SourceFile && !config.Check(key, cfg.TokenSHA256) {
-		// A child process (the tunnel) is handed the token file's key as
-		// VMTOOL_TOKEN: it is the same key, so the service checks it.
-		if !e.isTokenFileKey(key) {
-			return &gateError{err: config.ErrTokenMismatch, msg: fmt.Sprintf("vmtool: %s does not match token_sha256 in %s; run 'just token-fetch', or 'just install' after 'just token'",
-				config.TokenEnv, config.FileName)}
-		}
-		src = config.SourceFile
-	}
-	if src == config.SourceFile {
-		if err := e.checkFileKey(cmdContext(cmd), cfg, key, fresh); err != nil {
+	// A VMTOOL_TOKEN that is not the operator's is not refused offline: it may
+	// be a personal key (a daemon hands its ssh child the caller's key this
+	// way), which only the local service can check. It is checked like a
+	// token-file key; e.tokenSource keeps its real source.
+	fromEnv := src != config.SourceFile && !config.Check(key, cfg.TokenSHA256)
+	if src == config.SourceFile || fromEnv {
+		if err := e.checkFileKey(cmdContext(cmd), cfg, key, fresh, fromEnv); err != nil {
 			return err
 		}
 	}
@@ -203,21 +200,13 @@ func (e *env) gate(cmd *cobra.Command) error {
 	return nil
 }
 
-// isTokenFileKey reports whether key is the one in the (usable) token file.
-func (e *env) isTokenFileKey(key string) bool {
-	p, err := config.TokenFilePath(e.dir)
-	if err != nil {
-		return false
-	}
-	k, err := config.ReadTokenFile(p)
-	return err == nil && k == key
-}
-
 // checkFileKey asks the local service whether it accepts key (the one place a
-// token-file key is checked before a command runs). After a fresh key one 401
-// is retried once after keyRetryDelay: the service may not have pulled the
-// list yet.
-func (e *env) checkFileKey(ctx context.Context, cfg *config.Config, key string, fresh bool) error {
+// key that is not the operator's is checked before a command runs): a
+// token-file key, or, with fromEnv, a VMTOOL_TOKEN that is not token_sha256's.
+// The call goes only to an address of this machine (errKeyCheckNotLocal).
+// After a fresh key one 401 is retried once after keyRetryDelay: the service
+// may not have pulled the list yet.
+func (e *env) checkFileKey(ctx context.Context, cfg *config.Config, key string, fresh, fromEnv bool) error {
 	status, err := localKeyCheck(ctx, cfg, key)
 	if err == nil && status == http.StatusUnauthorized && fresh {
 		select {
@@ -228,15 +217,81 @@ func (e *env) checkFileKey(ctx context.Context, cfg *config.Config, key string, 
 		status, err = localKeyCheck(ctx, cfg, key)
 	}
 	tokenPath, _ := config.TokenFilePath(e.dir)
+	var notLocal *errKeyCheckNotLocal
 	switch {
+	case errors.As(err, &notLocal):
+		return &gateError{err: err, msg: fmt.Sprintf("vmtool: the key was not sent: listen (%s) in %s is not an address of this machine, and the key is only checked by a service on this machine; fix listen, or use the operator token (token_sha256)",
+			notLocal.addr, config.FileName)}
+	case err != nil && fromEnv:
+		return &gateError{err: config.ErrTokenMismatch, msg: fmt.Sprintf("vmtool: %s does not match token_sha256 in %s, and vmtool.service is not answering at %s to check it as a personal key; start it: sudo systemctl start vmtool",
+			config.TokenEnv, config.FileName, localAddr(cfg))}
 	case err != nil:
 		return &gateError{err: err, msg: fmt.Sprintf("vmtool.service is not answering at %s; start it: sudo systemctl start vmtool", localAddr(cfg))}
 	case status >= 200 && status < 300:
 		return nil
+	case (status == http.StatusUnauthorized || status == http.StatusForbidden) && fromEnv:
+		return &gateError{err: config.ErrTokenMismatch, msg: fmt.Sprintf("vmtool: %s does not match token_sha256 in %s and the local service did not accept it either; run 'just token-fetch', or 'just install' after 'just token'",
+			config.TokenEnv, config.FileName)}
 	case status == http.StatusUnauthorized || status == http.StatusForbidden:
 		return &gateError{err: config.ErrTokenMismatch, msg: fmt.Sprintf("vmtool: the key in %s was not accepted by vmtool.service; run 'vmtool key status' to see where your key comes from, and 'vmtool key check' to see who accepts it", tokenPath)}
 	}
 	return &gateError{err: fmt.Errorf("HTTP %d", status), msg: fmt.Sprintf("vmtool.service at %s answered HTTP %d to the key check", localAddr(cfg), status)}
+}
+
+// errKeyCheckNotLocal is the dialer's refusal to connect the gate's key check
+// to an address that is not this machine's. It holds the address, never the
+// key.
+type errKeyCheckNotLocal struct{ addr string }
+
+func (e *errKeyCheckNotLocal) Error() string {
+	return "address " + e.addr + " is not an address of this machine"
+}
+
+// machineIPs are the addresses assigned to this machine's interfaces. Tests
+// replace it.
+var machineIPs = func() []net.IP {
+	addrs, _ := net.InterfaceAddrs()
+	var out []net.IP
+	for _, a := range addrs {
+		switch v := a.(type) {
+		case *net.IPNet:
+			out = append(out, v.IP)
+		case *net.IPAddr:
+			out = append(out, v.IP)
+		}
+	}
+	return out
+}
+
+// isThisMachine reports whether ip is loopback or assigned to an interface of
+// this machine.
+func isThisMachine(ip net.IP) bool {
+	if ip.IsLoopback() {
+		return true
+	}
+	for _, m := range machineIPs() {
+		if m.Equal(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// allowKeyCheckIP decides which addresses the gate's key check may connect to.
+// Tests replace it to refuse even loopback.
+var allowKeyCheckIP = isThisMachine
+
+// localOnlyControl is a net.Dialer Control: it runs after name resolution and
+// before the connect, so a refused address never gets a byte.
+func localOnlyControl(_, address string, _ syscall.RawConn) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return &errKeyCheckNotLocal{addr: address}
+	}
+	if ip := net.ParseIP(host); ip == nil || !allowKeyCheckIP(ip) {
+		return &errKeyCheckNotLocal{addr: address}
+	}
+	return nil
 }
 
 // localAddr is where the local workstation service listens, as a dialable
@@ -289,16 +344,23 @@ func localClient(cfg *config.Config, timeout time.Duration) *http.Client {
 	} else if keyProbeRoots != nil {
 		tc.RootCAs = keyProbeRoots
 	}
-	return probeClient(tc, timeout)
+	return probeClientCtl(tc, timeout, localOnlyControl)
 }
 
+// probeClient is a client for any host (`key check`'s probes are remote):
+// no "this machine" rule.
 func probeClient(tc *tls.Config, timeout time.Duration) *http.Client {
+	return probeClientCtl(tc, timeout, nil)
+}
+
+// probeClientCtl is probeClient with a dialer Control (nil: none).
+func probeClientCtl(tc *tls.Config, timeout time.Duration, control func(network, address string, c syscall.RawConn) error) *http.Client {
 	return &http.Client{
 		Timeout: timeout,
 		Transport: &http.Transport{
 			Proxy: nil, TLSClientConfig: tc, DisableKeepAlives: true,
 			TLSHandshakeTimeout: timeout,
-			DialContext:         (&net.Dialer{Timeout: timeout}).DialContext,
+			DialContext:         (&net.Dialer{Timeout: timeout, Control: control}).DialContext,
 		},
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}

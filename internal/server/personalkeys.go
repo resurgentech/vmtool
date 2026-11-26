@@ -33,8 +33,9 @@ func (s *Server) clock() time.Time {
 // initKeys builds, once, what authentication needs besides token_sha256: the
 // local token's use counter and, when config.yml sets personal_keys.url, the
 // key list's Source. It does not start the Source (startKeys) and it never
-// touches the network or a file. The error is a configuration error and
-// holds no token.
+// touches the network. It does read the pull-token file once (keylist.New), so
+// a missing or unreadable file is a configuration error here, fatal at start.
+// The error holds no token.
 func (s *Server) initKeys() error {
 	if s.keysInit {
 		return s.keysErr

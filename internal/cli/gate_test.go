@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -246,11 +247,22 @@ func TestGateMessages(t *testing.T) {
 
 	dir = writeWorkdir(t, goodConfig(), "")
 	t.Setenv(config.TokenEnv, gateWrong)
+	// The local service refuses it too.
+	old := localKeyCheck
+	localKeyCheck = func(context.Context, *config.Config, string) (int, error) { return 401, nil }
 	r = runGate(t, dir, nil, "list")
-	want = "vmtool: VMTOOL_TOKEN does not match token_sha256 in config.yml; run 'just token-fetch', or 'just install' after 'just token'"
+	want = "vmtool: VMTOOL_TOKEN does not match token_sha256 in config.yml and the local service did not accept it either; run 'just token-fetch', or 'just install' after 'just token'"
 	if r.err == nil || r.err.Error() != want {
 		t.Errorf("mismatch:\n got %v\nwant %s", r.err, want)
 	}
+	// The local service is not answering.
+	localKeyCheck = func(context.Context, *config.Config, string) (int, error) { return 0, errors.New("refused") }
+	r = runGate(t, dir, nil, "list")
+	want = "vmtool: VMTOOL_TOKEN does not match token_sha256 in config.yml, and vmtool.service is not answering at 127.0.0.1:9473 to check it as a personal key; start it: sudo systemctl start vmtool"
+	if r.err == nil || r.err.Error() != want {
+		t.Errorf("service down:\n got %v\nwant %s", r.err, want)
+	}
+	localKeyCheck = old
 
 	dir = writeWorkdir(t, "role: boss\n", "")
 	t.Setenv(config.TokenEnv, gateToken)

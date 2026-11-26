@@ -3116,3 +3116,20 @@ from. Nothing changes for a client whose `.env` holds `VMTOOL_TOKEN` and
 - Both scripts now stop without `VMTOOL_TOKEN` (environment or `.env`) with a
   message to export the operator token for the shell; they never write `.env`.
 - `.gitignore`: `/deploy.env`, `/keys-pull-token`, `/personal-keys.json`.
+
+## 2026-11-25 — Fixes to the client key gate and to turning the key list off
+
+- A `VMTOOL_TOKEN` that is not the operator's (`token_sha256`) is now checked by the local service, like a
+  token-file key, so the ssh ProxyCommand child of a daemon, which carries the caller's key as `VMTOOL_TOKEN`,
+  passes the gate for a caller whose key comes from the pulled list. A key the service refuses is still refused
+  (`unauthorized`, exit 1); the operator token is still checked offline.
+- The gate's check goes only to loopback or an address of this machine; any other `listen` in `config.yml` is
+  refused before a byte is sent, with an error that says why. `vmtool key check`'s local row follows the same rule.
+- `vmtool config write` refuses a token that equals the key in the token file.
+- New flag `vmtool config write --no-personal-keys`: removes the `personal_keys` block first, then applies the
+  other flags.
+- `just deploy` with no key-list URL removes the host's `keys-pull-token` and `personal-keys.json`; `just install`
+  with no URL removes both from the checkout root and passes `--no-personal-keys`.
+- Comment fix in `initKeys`: it reads the pull-token file.
+- Tests: a real built `vmtool` as the tunnel child against an in-process daemon with a pulled key list; the dialer
+  rule; `config write` cases; script tests for both clean-ups.

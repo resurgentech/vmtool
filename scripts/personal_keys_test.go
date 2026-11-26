@@ -95,7 +95,8 @@ func TestDeployPersonalKeysUnsetIsToday(t *testing.T) {
 		t.Errorf("bao asked for a pull token: %q", readOr(t, filepath.Join(e.stub, "bao.argv")))
 	}
 	for _, c := range sshCalls(t, e.stub) {
-		if strings.Contains(c.argv, "keys-pull-token") || strings.Contains(c.argv, "personal") {
+		// Only the removal of the two files may name them.
+		if a := strings.ReplaceAll(c.argv, "rm -f "+hv+"/keys-pull-token "+hv+"/personal-keys.json", ""); strings.Contains(a, "keys-pull-token") || strings.Contains(a, "personal") {
 			t.Errorf("ssh argv names the personal keys: %q", c.argv)
 		}
 	}
@@ -353,7 +354,7 @@ func TestInstallPersonalKeysUnsetIsToday(t *testing.T) {
 		t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
 	}
 	want := "config write --name fallbackhost --role workstation --listen 127.0.0.1:9473 " +
-		"--tls-cert tls/fallbackhost.example.lab.crt --tls-key tls/fallbackhost.example.lab.key"
+		"--tls-cert tls/fallbackhost.example.lab.crt --tls-key tls/fallbackhost.example.lab.key --no-personal-keys"
 	if got := strings.TrimSpace(readOr(t, filepath.Join(e.wd, "vmtool.argv"))); got != want {
 		t.Errorf("config write argv:\n got %q\nwant %q", got, want)
 	}
@@ -473,5 +474,106 @@ func TestPersonalKeysIgnoredFiles(t *testing.T) {
 		if !strings.Contains(lines, "\n"+f+"\n") {
 			t.Errorf(".gitignore lacks %s", f)
 		}
+	}
+}
+
+// Turning the list off cleans up: with no key-list URL, deploy removes the
+// host's pull token and cached list (as it removes a stale host token).
+func TestDeployPersonalKeysOffRemovesFiles(t *testing.T) {
+	for _, withReq := range []bool{false, true} {
+		e, _, hv := keysEnv(t, pullTok+"\n")
+		for _, f := range []string{"keys-pull-token", "personal-keys.json", "config.yml"} {
+			if err := os.WriteFile(filepath.Join(hv, f), []byte("old\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		var env []string
+		if withReq {
+			env = []string{"VMTOOL_KEY_REQUEST_URL=" + keysReqURL}
+		}
+		r := e.deploy(t, env, "hv1")
+		if r.code != 0 {
+			t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
+		}
+		for _, f := range []string{"keys-pull-token", "personal-keys.json"} {
+			if _, err := os.Stat(filepath.Join(hv, f)); err == nil {
+				t.Errorf("request url %v: %s kept", withReq, f)
+			}
+		}
+	}
+}
+
+// With the list on, the cached list is the daemon's and is left alone; the pull
+// token is replaced.
+func TestDeployPersonalKeysOnKeepsCache(t *testing.T) {
+	e, _, hv := keysEnv(t, pullTok+"\n")
+	if err := os.WriteFile(filepath.Join(hv, "personal-keys.json"), []byte("cache\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := e.deploy(t, keysSet, "hv1")
+	if r.code != 0 {
+		t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
+	}
+	if got := readOr(t, filepath.Join(hv, "personal-keys.json")); got != "cache\n" {
+		t.Errorf("the cached list changed: %q", got)
+	}
+	if !strings.Contains(readOr(t, filepath.Join(e.stub, "installed.list")), hv+"/keys-pull-token 0600\n") {
+		t.Error("keys-pull-token not installed")
+	}
+}
+
+// install.sh with no key-list URL removes the pull token and the cached list
+// and clears the personal_keys block (--no-personal-keys), keeping a request
+// URL given on its own.
+func TestInstallPersonalKeysOffCleansUp(t *testing.T) {
+	for _, withReq := range []bool{false, true} {
+		e, _, env := installEnv(t)
+		env = append(env, "VMTOOL_DOMAIN=example.lab")
+		keysBao(t, e, pullTok+"\n")
+		for _, f := range []string{"keys-pull-token", "personal-keys.json"} {
+			if err := os.WriteFile(filepath.Join(e.wd, f), []byte("old\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if withReq {
+			env = append(env, "VMTOOL_KEY_REQUEST_URL="+keysReqURL)
+		}
+		r := runScript(t, e.stub, e.wd, "install.sh", env)
+		if r.code != 0 {
+			t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
+		}
+		want := "config write --name fallbackhost --role workstation --listen 127.0.0.1:9473 " +
+			"--tls-cert tls/fallbackhost.example.lab.crt --tls-key tls/fallbackhost.example.lab.key --no-personal-keys"
+		if withReq {
+			want += " --key-request-url " + keysReqURL
+		}
+		if got := strings.TrimSpace(readOr(t, filepath.Join(e.wd, "vmtool.argv"))); got != want {
+			t.Errorf("config write argv:\n got %q\nwant %q", got, want)
+		}
+		for _, f := range []string{"keys-pull-token", "personal-keys.json"} {
+			if _, err := os.Stat(filepath.Join(e.wd, f)); err == nil {
+				t.Errorf("request url %v: %s kept", withReq, f)
+			}
+		}
+	}
+}
+
+// With the list on, install leaves the cached list alone and passes no clear flag.
+func TestInstallPersonalKeysOnKeepsCache(t *testing.T) {
+	e, _, env := installEnv(t)
+	env = append(env, "VMTOOL_DOMAIN=example.lab")
+	keysBao(t, e, pullTok+"\n")
+	if err := os.WriteFile(filepath.Join(e.wd, "personal-keys.json"), []byte("cache\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := runScript(t, e.stub, e.wd, "install.sh", append(env, keysSet...))
+	if r.code != 0 {
+		t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
+	}
+	if strings.Contains(readOr(t, filepath.Join(e.wd, "vmtool.argv")), "--no-personal-keys") {
+		t.Error("the clear flag was passed with the list on")
+	}
+	if got := readOr(t, filepath.Join(e.wd, "personal-keys.json")); got != "cache\n" {
+		t.Errorf("the cached list changed: %q", got)
 	}
 }

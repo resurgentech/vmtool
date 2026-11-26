@@ -32,6 +32,10 @@
 #                  --personal-keys-token-file keys-pull-token and
 #                  --personal-keys-cache-file personal-keys.json (the cache
 #                  is personal-keys.json in VMTOOL_ROOT)
+#                  unset: keys-pull-token and personal-keys.json in
+#                  VMTOOL_ROOT are removed and config write gets
+#                  --no-personal-keys, which drops the personal_keys block
+#                  first (the key request URL below is then set again)
 #   VMTOOL_KEY_REQUEST_URL     set: config write gets --key-request-url
 set -euo pipefail
 
@@ -78,6 +82,11 @@ if [[ -n ${VMTOOL_PERSONAL_KEYS_URL:-} ]]; then
   pull_tok="${pull_tok//[$' \t\r\n']/}"
   [[ -n $pull_tok ]] || die "no pull token at $BAO_KEYS_PULL_TOKEN_PATH (field token); nothing was installed."
   keys_args=(--personal-keys-url "$VMTOOL_PERSONAL_KEYS_URL" --personal-keys-token-file keys-pull-token --personal-keys-cache-file personal-keys.json)
+else
+  # List off: drop the block (config.yml keeps its other settings) and the two
+  # files. Removed with the config write below, after the checks above.
+  keys_args=(--no-personal-keys)
+  keys_off=1
 fi
 [[ -z ${VMTOOL_KEY_REQUEST_URL:-} ]] || keys_args+=(--key-request-url "$VMTOOL_KEY_REQUEST_URL")
 
@@ -94,6 +103,7 @@ if [[ -n $pull_tok ]]; then
   (umask 077; printf '%s\n' "$pull_tok" >"$root/keys-pull-token")
   chmod 600 "$root/keys-pull-token"
 fi
+[[ -z ${keys_off:-} ]] || rm -f "$root/keys-pull-token" "$root/personal-keys.json"
 (cd "$root" && "$root/vmtool" config write --name "$host" --role workstation \
   --listen 127.0.0.1:9473 \
   --tls-cert "tls/$host.$domain.crt" --tls-key "tls/$host.$domain.key" "${keys_args[@]}")
