@@ -74,6 +74,9 @@ func configCmd(dirFn func() (string, error)) *cobra.Command {
 	f.StringVar(&opts.StoreURL, "store-url", "", "https URL of the store a hypervisor daemon fetches images from")
 	f.StringVar(&opts.StoreTokenFile, "store-token-file", "", "path of the file holding the host token a hypervisor daemon reports to the store with (a path, never the token)")
 	f.StringVar(&opts.KeyRequestURL, "key-request-url", "", "absolute https URL where a tool files a request for an API key (plain http only to a loopback host); the daemon reports it at GET /v1/key-request")
+	f.StringVar(&opts.PersonalKeysURL, "personal-keys-url", "", "URL of the pulled key list (personal_keys.url); needs --personal-keys-cache-file (or one already in config.yml)")
+	f.StringVar(&opts.PersonalKeysTokenFile, "personal-keys-token-file", "", "path of the file holding the pull token for the key list (personal_keys.token_file; a path, never the token)")
+	f.StringVar(&opts.PersonalKeysCacheFile, "personal-keys-cache-file", "", "path where the last good key list is kept (personal_keys.cache_file; a path)")
 	f.BoolVar(&opts.NetworkHome, "network-home", false, "write network_home: true, so this daemon refuses the VM-creating routes (the host is a network home)")
 	f.BoolVar(&tokenStdin, "token-stdin", false, "read the token from one line of stdin")
 

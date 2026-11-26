@@ -485,6 +485,10 @@ type WriteOptions struct {
 	StoreTokenFile string
 	// KeyRequestURL is personal_keys.request_url (validated; see PersonalKeys).
 	KeyRequestURL string
+	// PersonalKeysURL, PersonalKeysTokenFile and PersonalKeysCacheFile are
+	// personal_keys.url, token_file and cache_file: the pulled key list's
+	// address and two paths (never a token). The block's other keys are kept.
+	PersonalKeysURL, PersonalKeysTokenFile, PersonalKeysCacheFile string
 	// NetworkHome sets network_home: true; false leaves the key as is.
 	NetworkHome bool
 }
@@ -510,6 +514,14 @@ func Write(dir, token string, opts WriteOptions) error {
 		}
 		if opts.KeyRequestURL != "" {
 			setNested(root, "personal_keys", "request_url", opts.KeyRequestURL)
+		}
+		for _, kv := range []struct{ k, v string }{
+			{"url", opts.PersonalKeysURL}, {"token_file", opts.PersonalKeysTokenFile},
+			{"cache_file", opts.PersonalKeysCacheFile},
+		} {
+			if kv.v != "" {
+				setNested(root, "personal_keys", kv.k, kv.v)
+			}
 		}
 		if opts.NetworkHome {
 			setNode(root, "network_home", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: "true"})

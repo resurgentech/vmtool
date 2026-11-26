@@ -8,3 +8,6 @@ tmp/
 /tls/
 /image-manifest.yml
 images/
+/deploy.env
+/keys-pull-token
+/personal-keys.json

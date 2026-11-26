@@ -67,6 +67,19 @@
 #                  vmtool-daemon; the host token goes in vmtool:vmtool 0600 as
 #                  HV_DIR/store-host-token. The staged config.yml, key and token are removed
 #                  either way.
+#                  Key list (all off unless set, no defaults; also read from
+#                  deploy.env in VMTOOL_ROOT, the environment wins):
+#                  with VMTOOL_PERSONAL_KEYS_URL set, the pull token is read
+#                  with `bao kv get -field=token "$BAO_KEYS_PULL_TOKEN_PATH"`
+#                  into a variable (a missing or empty one stops the run for
+#                  this host before anything is copied or installed), staged
+#                  over the stdin of one ssh call as stage/keys-pull-token,
+#                  installed vmtool:vmtool 0600 as HV_DIR/keys-pull-token (the
+#                  staged copy is removed either way) and `--personal-keys-url
+#                  <url> --personal-keys-token-file keys-pull-token
+#                  --personal-keys-cache-file personal-keys.json` are added to
+#                  config write. VMTOOL_KEY_REQUEST_URL, set, adds
+#                  `--key-request-url <url>`, with or without a list.
 #   8. check       GET /version over HTTPS (public: no token sent)
 #
 # Environment (the justfile passes these):
@@ -88,6 +101,8 @@
 #   GO_BIN_DIR     where a prereqs-installed Go lives (default
 #                  /usr/local/go/bin; a test seam)
 # REMOTE_DIR (the old home-directory layout) is ignored, with a warning.
+#   VMTOOL_PERSONAL_KEYS_URL, VMTOOL_KEY_REQUEST_URL, BAO_KEYS_PULL_TOKEN_PATH
+#                  the key-list settings above (no defaults)
 # The token comes from VMTOOL_TOKEN, else .env in VMTOOL_ROOT, read with bash
 # builtins so it is never in any argv.
 set -euo pipefail
@@ -112,6 +127,8 @@ gobin="${GO_BIN_DIR:-/usr/local/go/bin}"
 export VMTOOL_ROOT="$root" VMTOOL_DOMAIN="$domain" VMTOOL_BIN="$vmtool_bin"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
+# The three key-list settings, from the environment or the optional deploy.env.
+. "$here/deploy-env.sh"
 
 host="${1:-}"
 [[ -n $host && $# -eq 1 ]] || { echo "usage: $0 <host>" >&2; exit 2; }
@@ -126,6 +143,9 @@ host="${1:-}"
 [[ $gobin =~ ^/[A-Za-z0-9._/-]+$ ]] || die "GO_BIN_DIR '$gobin' has characters unsafe in a shell command."
 [[ -z ${REMOTE_DIR:-} ]] || echo "WARNING: REMOTE_DIR is no longer used and is ignored; the daemon goes to HV_DIR ($hv)." >&2
 
+load_deploy_env "$root"
+keys_settings_check
+
 # Token: env, else .env. Builtins only.
 tok="${VMTOOL_TOKEN:-}"
 if [[ -z $tok && -f $root/.env ]]; then
@@ -138,7 +158,7 @@ if [[ -z $tok && -f $root/.env ]]; then
     fi
   done <"$root/.env"
 fi
-[[ -n $tok ]] || die "no VMTOOL_TOKEN found; run 'just token' or 'just token-fetch' first."
+[[ -n $tok ]] || die "no VMTOOL_TOKEN found; export the operator token for this shell (export VMTOOL_TOKEN=...) and run this again ('just token-fetch' puts it in .env)."
 
 [[ -x $vmtool_bin ]] || die "$vmtool_bin not found; run 'just build' first."
 [[ -f $template ]] || die "$template not found."
@@ -224,6 +244,26 @@ fi
 token_arg=""
 [[ -z $host_tok ]] || token_arg=" --store-token-file store-host-token"
 
+# The pulled key list, only when VMTOOL_PERSONAL_KEYS_URL is set (it has no
+# default): the pull token is read from bao (field token, at
+# BAO_KEYS_PULL_TOKEN_PATH) into a shell variable with builtins, never in any
+# argv. Unlike the host token, a missing or empty one is fatal, here, before
+# anything is copied, installed or restarted: the old daemon keeps running.
+# VMTOOL_KEY_REQUEST_URL is independent of the list. With neither set, no
+# argument, no bao call and no file is added.
+keys_arg=""
+keys_rm=""
+pull_tok=""
+if [[ -n ${VMTOOL_PERSONAL_KEYS_URL:-} ]]; then
+  [[ -n ${BAO_KEYS_PULL_TOKEN_PATH:-} ]] || die "$host: VMTOOL_PERSONAL_KEYS_URL is set but BAO_KEYS_PULL_TOKEN_PATH (the OpenBao kv path of the pull token, field token) is not; nothing was installed or restarted."
+  pull_tok=$(bao kv get -field=token "$BAO_KEYS_PULL_TOKEN_PATH" 2>/dev/null) || pull_tok=""
+  pull_tok="${pull_tok//[$' \t\r\n']/}"
+  [[ -n $pull_tok ]] || die "$host: no pull token at $BAO_KEYS_PULL_TOKEN_PATH (field token); nothing was installed or restarted."
+  keys_arg=" --personal-keys-url $VMTOOL_PERSONAL_KEYS_URL --personal-keys-token-file keys-pull-token --personal-keys-cache-file personal-keys.json"
+  keys_rm=' "$s/keys-pull-token"'
+fi
+[[ -z ${VMTOOL_KEY_REQUEST_URL:-} ]] || keys_arg+=" --key-request-url $VMTOOL_KEY_REQUEST_URL"
+
 # The client's hosts.<host>.vms: `vmtool config host-vms` prints false for a
 # network home. Its daemon is told (network_home: true) and refuses the
 # VM-creating routes; the key is config.yml, rewritten on every deploy, so a
@@ -306,11 +346,16 @@ fi
 # 6. config.yml in stage/, from scratch; the token rides stdin of this call
 #    alone (no -t, no sudo). The cert paths are relative to the working
 #    directory, so they hold in stage/ and in HV_DIR alike.
-printf '%s\n' "$tok" | run "cd \"$base/stage\" && umask 077 && rm -f config.yml && ./vmtool config write --token-stdin --role hypervisor --name $host --listen 0.0.0.0:$port --tls-cert tls/$fqdn.crt --tls-key tls/$fqdn.key$store_arg$token_arg$home_arg"
+printf '%s\n' "$tok" | run "cd \"$base/stage\" && umask 077 && rm -f config.yml && ./vmtool config write --token-stdin --role hypervisor --name $host --listen 0.0.0.0:$port --tls-cert tls/$fqdn.crt --tls-key tls/$fqdn.key$store_arg$token_arg$home_arg$keys_arg"
 # The host token, when there is one: stdin of this one call, into stage/ with
 # umask 077 (the install below sets owner and mode).
 if [[ -n $host_tok ]]; then
   printf '%s\n' "$host_tok" | run "umask 077 && cat > \"$base/stage/store-host-token\""
+fi
+
+# The pull token, when there is one: the same way, stdin of this one call.
+if [[ -n $pull_tok ]]; then
+  printf '%s\n' "$pull_tok" | run "umask 077 && cat > \"$base/stage/keys-pull-token\""
 fi
 
 # 7. Unit (rendered here) to stage/, then one sudo for the whole install.
@@ -357,10 +402,11 @@ script+="; $own -m 0600 \"\$1/config.yml\" $hv/config.yml"
 script+="; $own -m 0644 \"\$1/tls/$fqdn.crt\" $hv/tls/$fqdn.crt"
 script+="; $own -m 0600 \"\$1/tls/$fqdn.key\" $hv/tls/$fqdn.key"
 script+="; if [ -f \"\$1/store-host-token\" ]; then $own -m 0600 \"\$1/store-host-token\" $hv/store-host-token; else rm -f $hv/store-host-token; fi"
+[[ -z $pull_tok ]] || script+="; $own -m 0600 \"\$1/keys-pull-token\" $hv/keys-pull-token"
 script+="; install -m 0644 \"\$1/vmtool-daemon.service\" $ud/vmtool-daemon.service"
 script+="; systemctl daemon-reload; systemctl enable --now vmtool-daemon; systemctl restart vmtool-daemon"
 # -t so a sudo password prompt works; the token never rides this call.
-runt "s=\"$base/stage\"; sudo sh -c '$script' sh \"\$s\"; rc=\$?; rm -f \"\$s/config.yml\" \"\$s/tls/$fqdn.key\" \"\$s/store-host-token\"; exit \$rc" \
+runt "s=\"$base/stage\"; sudo sh -c '$script' sh \"\$s\"; rc=\$?; rm -f \"\$s/config.yml\" \"\$s/tls/$fqdn.key\" \"\$s/store-host-token\"$keys_rm; exit \$rc" \
   || die "installing on $host failed (a refused port, or the install itself); the staged config.yml, key and token were removed. Re-run 'just deploy $host'."
 
 # 8. GET /version (public; verified against the system trust store).

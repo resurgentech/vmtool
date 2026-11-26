@@ -423,8 +423,11 @@ func TestInstallNeedsToken(t *testing.T) {
 	addStub(t, e.stub, "go", "exit 0")
 	addStub(t, e.stub, "sudo", `exec "$@"`)
 	r := runScript(t, e.stub, e.wd, "install.sh", append([]string{"UNIT_PATH=" + filepath.Join(e.wd, "u")}, e.env[:3]...))
-	if r.code == 0 || !strings.Contains(r.stderr, "just token") {
+	if r.code == 0 || !strings.Contains(r.stderr, "VMTOOL_TOKEN") || !strings.Contains(r.stderr, "export") {
 		t.Fatalf("exit %d stderr %q", r.code, r.stderr)
+	}
+	if _, err := os.Stat(filepath.Join(e.wd, ".env")); err == nil {
+		t.Error(".env was written")
 	}
 	for _, f := range []string{"go.argv", "sudo.argv", "bao.argv"} {
 		if _, err := os.Stat(filepath.Join(e.stub, f)); err == nil {

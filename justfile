@@ -36,6 +36,9 @@ token-fetch:
 cert host:
     VMTOOL_ROOT="{{ root }}" VMTOOL_DOMAIN="{{ domain }}" BAO_CA_PATH="{{ bao_ca_path }}" CERT_DAYS="{{ cert_days }}" HV_DIR="{{ hv_dir }}" "{{ root }}/scripts/cert.sh" "{{ host }}"
 
+# deploy and install also read VMTOOL_PERSONAL_KEYS_URL, VMTOOL_KEY_REQUEST_URL and BAO_KEYS_PULL_TOKEN_PATH
+# (no defaults) from the environment, which just passes through, or from deploy.env in the checkout, which
+# the scripts parse themselves; the justfile does not load a dotenv file.
 # Build, certify, write config.yml and run vmtool as a systemd service on this machine
 install:
     VMTOOL_ROOT="{{ root }}" VMTOOL_DOMAIN="{{ domain }}" BAO_CA_PATH="{{ bao_ca_path }}" CERT_DAYS="{{ cert_days }}" HV_DIR="{{ hv_dir }}" "{{ root }}/scripts/install.sh"

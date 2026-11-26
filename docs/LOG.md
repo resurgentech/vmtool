@@ -3098,3 +3098,21 @@ from. Nothing changes for a client whose `.env` holds `VMTOOL_TOKEN` and
 - `vmtool server` reads its store key in the same order and never files a
   request. Child processes (tunnel, ssh) get the chosen key as `VMTOOL_TOKEN`.
 - Docs: README, `docs/CLI.md` (exit 75 and the new error codes), the root help.
+
+## 2026-11-25 — deploy and install carry the key-list settings
+
+- `just deploy` and `just install` take three settings with no defaults:
+  `VMTOOL_PERSONAL_KEYS_URL`, `VMTOOL_KEY_REQUEST_URL` and
+  `BAO_KEYS_PULL_TOKEN_PATH`, from the environment or a gitignored
+  `deploy.env` in the checkout root (read by a strict line parser in
+  `scripts/deploy-env.sh`; the environment wins; a bad line is an error naming
+  its number, never its content).
+- With the URL set, the pull token is read from OpenBao into a variable,
+  installed 0600 as `keys-pull-token` (daemon directory, or the checkout root
+  for `install`), and `config write` gets `--personal-keys-url`,
+  `--personal-keys-token-file` and `--personal-keys-cache-file` (new flags;
+  a path, never a token). A missing pull token is fatal before anything is
+  installed or restarted. With it unset, argv and output are as before.
+- Both scripts now stop without `VMTOOL_TOKEN` (environment or `.env`) with a
+  message to export the operator token for the shell; they never write `.env`.
+- `.gitignore`: `/deploy.env`, `/keys-pull-token`, `/personal-keys.json`.

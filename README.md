@@ -1058,6 +1058,56 @@ gives the time of the last one; the daemon also logs one line "local token used"
 (the route, never the token) at most once an hour. That is the evidence that
 nothing still uses the shared token, before anyone retires it.
 
+#### Deploying the key-list settings (`just deploy`, `just install`)
+
+`just deploy <host>` and `just install` can write the `personal_keys` block
+and install the pull token. Three settings, **none with a default** (all off
+unless set):
+
+| Setting | Meaning |
+|---|---|
+| `VMTOOL_PERSONAL_KEYS_URL` | the key list's URL, e.g. `https://keys.example.lab/keys/v1/lists/vmtool` |
+| `VMTOOL_KEY_REQUEST_URL` | the request URL the daemon tells tools about, e.g. `https://keys.example.lab/v1/services/vmtool/requests`; independent of the list |
+| `BAO_KEYS_PULL_TOKEN_PATH` | the OpenBao kv path of the pull token, e.g. `kv/example/keys/pull/vmtool`; the field is always `token` |
+
+Set them in the environment, or put them in `deploy.env` in the checkout root
+(gitignored), one `KEY=value` per line:
+
+```bash
+# deploy.env
+VMTOOL_PERSONAL_KEYS_URL=https://keys.example.lab/keys/v1/lists/vmtool
+VMTOOL_KEY_REQUEST_URL=https://keys.example.lab/v1/services/vmtool/requests
+BAO_KEYS_PULL_TOKEN_PATH=kv/example/keys/pull/vmtool
+```
+
+The scripts read the file themselves with a strict parser: blank lines and `#`
+comments are skipped, a value may be wrapped in one pair of quotes, nothing is
+executed or expanded, and any other line is an error that names its line
+number and never its content. A variable already in the environment wins over
+the file. (`.env` is not read for these.)
+
+- **URL unset:** nothing changes: no `personal_keys` flag, no OpenBao read for
+  it, and no file.
+- **URL set:** the pull token is read from OpenBao into a variable (never in a
+  command line, an echo or a log), and a missing or empty one stops the run
+  before anything is installed or restarted, so the old daemon keeps running.
+  On a hypervisor (`just deploy`, ssh or this machine) it is staged on the
+  stdin of one ssh call and installed `vmtool:vmtool` 0600 as
+  `keys-pull-token` in the daemon's directory, beside `store-host-token`, and
+  the staged copy is removed; the cache is `personal-keys.json` there.
+  `just install` writes `keys-pull-token` (0600, you) and the cache
+  `personal-keys.json` in the checkout root; both are gitignored. `config
+  write` gets `--personal-keys-url`, `--personal-keys-token-file
+  keys-pull-token` and `--personal-keys-cache-file personal-keys.json`
+  (relative names, resolved against `config.yml`'s directory).
+- **Request URL set:** `--key-request-url` is passed, with or without a list.
+- **The operator token.** Both scripts need `VMTOOL_TOKEN` (environment, else
+  `.env`) for `config write`, which hashes it into `token_sha256`, and stop
+  without it before any build or restart; they never write `.env`. Once your
+  clients use personal keys and `.env` no longer holds it, export the operator
+  token in the shell that runs `just deploy` / `just install`:
+  `export VMTOOL_TOKEN=...`.
+
 ### Waits at create (`--no-wait`)
 
 `create` returns when the VM is usable: it waits for the guest's address, then
