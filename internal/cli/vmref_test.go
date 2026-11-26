@@ -104,7 +104,7 @@ func TestCmdBecameExec(t *testing.T) {
 	}
 	c, _, err := root.Find([]string{"exec"})
 	if err != nil || !strings.HasPrefix(c.Use, "exec <host/name> [--] <arg>...") ||
-		!strings.Contains(c.Long, `vmtool exec jetfire/web -- sh -c 'echo hi | wc -c'`) {
+		!strings.Contains(c.Long, `vmtool exec hv1/web -- sh -c 'echo hi | wc -c'`) {
 		t.Fatalf("exec: %v %q", err, c.Use)
 	}
 	m, _, err := root.Find([]string{"metal", "exec"})

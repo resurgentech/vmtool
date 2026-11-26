@@ -4,8 +4,8 @@
 |---|---|
 | **Date** | 2026-08-13 |
 | **Status** | Draft |
-| **Repo** | `/home/jared/repos/github/vmtool` |
-| **Prior art** | `/home/jared/worktrees/interloc` (`spec/`, `AGENTS.md` hard rule 3, `docs/CONVENTIONS.md` § Spec-first) |
+| **Repo** | `<checkout>` |
+| **Prior art** | `<interloc checkout>` (`spec/`, `AGENTS.md` hard rule 3, `docs/CONVENTIONS.md` § Spec-first) |
 
 ---
 
@@ -1058,16 +1058,16 @@ No feature flags. One operator, one binary. No CI; operator runs `scripts/verify
 
 ## References
 
-- interloc spec-first contract: `/home/jared/worktrees/interloc/spec/README.md`
-- interloc generate: `/home/jared/worktrees/interloc/spec/justfile`, `internal/api/generate.go`, `internal/api/cfg.yaml`
-- interloc parity: `/home/jared/worktrees/interloc/internal/server/specparity_test.go`
-- interloc conventions: `/home/jared/worktrees/interloc/docs/CONVENTIONS.md` § Spec-first API changes
-- interloc hard rule 3: `/home/jared/worktrees/interloc/AGENTS.md`
-- interloc example spec: `/home/jared/worktrees/interloc/spec/openapi/interloc.yaml`
-- Current REST: `/home/jared/repos/github/vmtool/internal/server/server.go`
-- Current CLI: `/home/jared/repos/github/vmtool/internal/cli/cli.go`
-- Current TUI create/playbook: `/home/jared/repos/github/vmtool/internal/tui/tui.go` (`submitCreate`, `stageClone`–`stageReboot`, `runPlaybook`)
-- Primitives: `/home/jared/repos/github/vmtool/pkg/vmtool/libvirt.go`, `config.go`, `ansible.go`, `inventory.go`, `ssh.go`, `bridge.go`
+- interloc spec-first contract: `<interloc checkout>/spec/README.md`
+- interloc generate: `<interloc checkout>/spec/justfile`, `internal/api/generate.go`, `internal/api/cfg.yaml`
+- interloc parity: `<interloc checkout>/internal/server/specparity_test.go`
+- interloc conventions: `<interloc checkout>/docs/CONVENTIONS.md` § Spec-first API changes
+- interloc hard rule 3: `<interloc checkout>/AGENTS.md`
+- interloc example spec: `<interloc checkout>/spec/openapi/interloc.yaml`
+- Current REST: `<checkout>/internal/server/server.go`
+- Current CLI: `<checkout>/internal/cli/cli.go`
+- Current TUI create/playbook: `<checkout>/internal/tui/tui.go` (`submitCreate`, `stageClone`–`stageReboot`, `runPlaybook`)
+- Primitives: `<checkout>/pkg/vmtool/libvirt.go`, `config.go`, `ansible.go`, `inventory.go`, `ssh.go`, `bridge.go`
 - oapi-codegen stdlib server: https://github.com/oapi-codegen/oapi-codegen/blob/main/docs/stdhttp-server.md (`std-http-server`, Go 1.22+ mux, runtime requires 1.24+)
 - oapi-codegen root-path issues: https://github.com/oapi-codegen/oapi-codegen/issues/1743, https://github.com/oapi-codegen/oapi-codegen/issues/1952
 

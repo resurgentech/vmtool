@@ -83,7 +83,7 @@ pool of the same type and volume group is adopted too, and one that differs
 makes the play fail.
 
 ```bash
-just prereqs veritech02 -e '{"vmtool_nvme_drives":["/dev/disk/by-id/nvme-A","/dev/disk/by-id/nvme-B"]}'
+just prereqs hv2 -e '{"vmtool_nvme_drives":["/dev/disk/by-id/nvme-A","/dev/disk/by-id/nvme-B"]}'
 ```
 
 The other variables are `vmtool_nvme_vg` (`vmtool-nvme`), `vmtool_nvme_md`
@@ -206,8 +206,8 @@ scratch volume and nothing else.
 Then put the daemon on it, from the workstation:
 
 ```bash
-just prereqs veritech04     # once per host: vmtool user, /opt/vmtool, pool
-just deploy veritech04      # build, certify, configure, start
+just prereqs hv1     # once per host: vmtool user, /opt/vmtool, pool
+just deploy hv1      # build, certify, configure, start
 ```
 
 `just deploy <host>` needs two settings, `VMTOOL_DOMAIN` (the DNS domain of
@@ -262,12 +262,12 @@ else is left alone.
 
 A network that spans hosts has a *home*: the host whose libvirt does the
 routing, addresses and names. The home can be a small host or VM that runs no
-VMs of its own (here `vmnet`). Set it up with the VM switch off, then deploy as
+VMs of its own (here `home1`). Set it up with the VM switch off, then deploy as
 usual:
 
 ```bash
-just prereqs vmnet -e '{"vmtool_vm_host":false}'
-just deploy vmnet
+just prereqs home1 -e '{"vmtool_vm_host":false}'
+just deploy home1
 ```
 
 With `vmtool_vm_host` false the playbook still installs libvirt, dnsmasq, the
@@ -278,21 +278,29 @@ firmware, the storage pools, the NVMe stripe and the `/dev/kvm` check. Naming
 true, so an existing host is prepared exactly as before. A home needs no QEMU:
 libvirt manages its networks without it.
 
+A home can be a small VM on one of the hypervisors (1 vCPU, 1 GiB and a 10 GiB
+disk is enough). Give it a static address on the LAN rather than a vmtool
+network, since it serves that network's DHCP and DNS. Put its name in your DNS
+and list the host by name in `config.yml`, because the daemon's certificate
+carries the name and not the address. A macvtap guest cannot reach its own
+hypervisor, so if the VM must reach services on the hypervisor that runs it,
+add a macvlan interface on that hypervisor that carries its LAN address.
+
 Then mark the host in the workstation's `config.yml`:
 
 ```yaml
 hosts:
-  vmnet: { address: 192.0.2.13, ssh_user: ubuntu, vms: false }
+  home1: { address: 192.0.2.13, ssh_user: ubuntu, vms: false }
 ```
 
 A `vms: false` host is a full daemon host: its inventory report is an empty
 list, and networks and links work on it. `vmtool create` on it is refused
-("host vmnet is a network home (vms: false in config.yml) and runs no VMs"),
-`vmtool hosts` writes `vmnet (network home)`, `vmtool list` shows one
-`vmnet  network home: runs no VMs` row, and the TUI and `GET /v1/hosts`
+("host home1 is a network home (vms: false in config.yml) and runs no VMs"),
+`vmtool hosts` writes `home1 (network home)`, `vmtool list` shows one
+`home1  network home: runs no VMs` row, and the TUI and `GET /v1/hosts`
 (`network_home`) carry the same mark.
 
-`vmtool config set-host vmnet --vms=false` edits only that key of the existing
+`vmtool config set-host home1 --vms=false` edits only that key of the existing
 entry (`vms: false`; `--vms=true` removes it) and keeps the rest of the entry
 and of `config.yml`; for a host with no entry it is refused. With `--address`
 and `--ssh-user` the whole entry is written as before, and `--vms` left out
@@ -302,7 +310,7 @@ The home's own daemon refuses too, so a direct REST call cannot make a VM
 there. `just deploy` reads the client's `hosts.<h>.vms` (`vmtool config
 host-vms <h>` prints it) and, for `vms: false`, writes `network_home: true`
 into the daemon's `config.yml` (`vmtool config write --network-home`). Such
-a daemon answers 409 "vmnet is a network home and runs no VMs" on
+a daemon answers 409 "home1 is a network home and runs no VMs" on
 `defineVM`, `cloneVolume`, `createVolume` and `createTemplate`, before any
 libvirt call; networks, reservations, links and the inventory are served as
 before. The key is configuration, never a note in libvirt, and `config.yml`
@@ -415,17 +423,16 @@ The client's token is `VMTOOL_SERVER_TOKEN`, read like `VMTOOL_TOKEN`: from
 the environment, else from `.env` in the working directory (a real
 environment variable wins), else the key in the token file (see
 [The client's key](#the-clients-key)). It is never read from `config.yml`. The
-tokens are made by `make_secrets.sh tokens` in `ansible_labtwo` (one
-OpenBao field per caller name, under the path `vault_vmtool_store_tokens`,
-`infra/labtwo/vmtool_store/tokens` on mount `kv`). Fetch your own with
-`bao kv get -mount=kv -field=<your name> infra/labtwo/vmtool_store/tokens`
+tokens are one per caller; if you keep them in OpenBao, one field per caller
+name (for example under `kv/example/vmtool_store/tokens`). Fetch your own with
+`bao kv get -mount=kv -field=<your name> example/vmtool_store/tokens`
 and put it in `.env` as `VMTOOL_SERVER_TOKEN=<token>`.
 
-Trust: the store is served over HTTPS by Caddy with a certificate issued
-under the `hulbert.local` CA, the same CA as the daemons. **That CA must be
+Trust: the store is served over HTTPS by a reverse proxy with a certificate
+issued under your CA, the same CA as the daemons. **That CA must be
 in the system trust store of every client and of every hypervisor that
-fetches images** (ansible_labtwo's `selfsigned_cert` role installs it).
-vmtool does no CA pinning and has no way to skip verification.
+fetches images.** vmtool does no CA pinning and has no way to skip
+verification.
 
 Two modes, decided once at the start of each command that uses
 credentials or base images, by one authenticated `GET /v1/whoami` with a
@@ -596,13 +603,12 @@ REST `GET /v1/inventory` show them too. Notes go with their inventory row
 
 **Host tokens.** A daemon reports with a *host token*, one per hypervisor,
 accepted by the store on its own report route and `whoami` and nowhere else
-(not on credentials, images or other hosts). In `ansible_labtwo`:
+(not on credentials, images or other hosts). Make one token per host, put
+each field in OpenBao, and give the store the SHA-256 of each token so it
+learns them; a host's token is revoked by removing its field and its hash:
 
 ```bash
-roles/vmtool_store/make_secrets.sh hosttokens hv1 hv2        # adds or replaces only these hosts' tokens
-roles/vmtool_store/make_secrets.sh hosttokens --revoke hv2   # removes only these hosts' tokens
-# then re-run the store playbook (above) so the store learns the hashes
-just deploy hv1                               # here: installs the token on the host
+just deploy hv1                               # installs the token on the host
 ```
 
 The tokens live in OpenBao under the kv path in `BAO_STORE_HOST_TOKENS_PATH`
@@ -614,9 +620,9 @@ hypervisor as `store-host-token` in the daemon's directory (vmtool:vmtool,
 `store_token_file` in the host's `config.yml`; the token is never in
 `config.yml`, argv or a log. A host with no token, or a deploy with
 `BAO_STORE_HOST_TOKENS_PATH` unset (then OpenBao is not asked), gets one
-warning and the deploy goes on; its daemon does not report. To revoke: run `hosttokens
---revoke`, re-run the store playbook, then `just deploy` that host again (a
-deploy with no token removes the old file).
+warning and the deploy goes on; its daemon does not report. To revoke: remove
+the host's field and its hash from the store's token list, then `just deploy`
+that host again (a deploy with no token removes the old file).
 
 #### Building and deploying the store
 
@@ -631,34 +637,23 @@ just store-image <tag>    # builds <registry>/vmtool-store:<tag> and :latest, pu
 `registry.example.lab`; no default; environment or `deploy.env`). Without it the
 recipe stops by name before `docker build`. Log in to the registry first.
 `<tag>` is a version; empty and `latest` are refused. No secret goes into the
-image. It is deployed to sdf1 by the `vmtool_store` role in `ansible_labtwo`,
-behind Caddy (port 8095, not behind Authelia). The role's own `README.md` has
-the detail and the store's address. In outline, with `bao`
-logged in:
+image. To deploy it, run the image behind a reverse proxy; the store checks
+its own bearer tokens.
 
-```bash
-# once, in ansible_labtwo
-./make_secrets.sh tokens <caller> <caller> ...   # REPLACES the list: name every caller
-./make_secrets.sh enckey                         # refuses to overwrite an existing key
-# each deploy, with VAULT_ADDR and VAULT_TOKEN set
-ANSIBLE_ROLES_PATH=$PWD/public/roles:$PWD/roles:$HOME/.ansible/roles \
-  ansible-playbook -i inventories/labtwo.yml playbooks/sdf1_vmtool_store.yml
-```
-
-The role renders `tokens.yaml` with the SHA-256 of each token, so the store
-never holds a token, and writes `enc.key` (0600) from OpenBao
-(`vault_vmtool_store_enc_key`, field `key`). MinIO is reached by container
-name with the shared S3 key; the store creates its bucket `vmtool-store`
-itself at start if it is missing. Image blobs live in the bucket, and
-metadata and encrypted credentials in `data/store.db` on sdf1. The store
+The store reads a `config.yaml` (listen address, `tokens.yaml` with the
+SHA-256 of each caller's token, so the store never holds a token, an
+`enc.key` file of mode 0600 for the credential encryption, the S3 endpoint
+and bucket, with the S3 credentials in the environment, and the data
+directory). The store creates its bucket itself at start if it is missing. Image blobs live in the bucket, and metadata and
+encrypted credentials in `data/store.db` under the data directory. The store
 refuses a token or key file readable by group or others, and a data
 directory looser than 0700. It serves plain HTTP only on loopback or with
 `behind_proxy: true` behind a TLS-terminating proxy (rule 5 in `AGENTS.md`);
 it needs a token on every route except `GET /version` and `GET /v1/key-request`.
 
 **Serving under a path.** A proxy that serves several services on one host
-and passes the full path on unchanged (Caddy's `handle /vmstore/*`, not
-`handle_path`) needs the store to know its prefix. Set `path_prefix` in the
+and passes the full path on unchanged (not one that strips the prefix)
+needs the store to know its prefix. Set `path_prefix` in the
 store's `config.yaml`, beside `behind_proxy`:
 
 ```yaml
@@ -744,8 +739,8 @@ an old token before anyone retires it. It names callers, never a hash. With the
 list off the object is `{"enabled": false, "local_tokens": [...]}`.
 
 **Key loss: `enc.key` encrypts every stored credential.** If it is lost from
-both OpenBao and the file on sdf1, every stored credential is lost, and
-nothing can recover them. A new key (`make_secrets.sh enckey --force`)
+both OpenBao and the file on the store host, every stored credential is lost, and
+nothing can recover them. A new key (a fresh `enc.key`)
 makes every stored credential unreadable. A copy of `store.db` is useless
 without the key it was written with. Keep the key with the backup policy for
 OpenBao.
@@ -786,7 +781,7 @@ needs:
 - a `.env` with `VMTOOL_TOKEN`, the token whose hash is each daemon's
   `token_sha256` (`just token-fetch` gets it from OpenBao), or a key of your own in
   the token file (`vmtool key request`; see [The client's key](#the-clients-key));
-- the `hulbert.local` CA in the system trust store, so TLS to the daemons
+- your CA in the system trust store, so TLS to the daemons
   (and to the store) verifies;
 - libvirt's client library (`libvirt-dev` on Debian/Ubuntu, `libvirt` on
   Arch), which the binary links even if no libvirt daemon runs here;
@@ -938,30 +933,30 @@ None of these prompts; all take `--json`, and none needs the token gate.
 # Interactive TUI (run from project root)
 ./vmtool i
 
-# CLI — VMs are named <host>/<vm>; the local host is its hostname (jetfire here)
+# CLI — VMs are named <host>/<vm>; the local host is its hostname (hv1 here)
 ./vmtool create <host>/<name> <image>
-./vmtool create jetfire/web ubuntu.qcow2 --net-type direct --net-source eth0 --macvtap-mode bridge
-./vmtool create jetfire/scratch ubuntu.qcow2 --noclone  # boot the image in place
-./vmtool create jetfire/web ubuntu.qcow2 --extra-disk-size 50   # second empty disk as vdb
-./vmtool create jetfire/web ubuntu.qcow2 --no-wait      # return right after start; no address or SSH wait
-./vmtool add-disk jetfire/web 50                        # attach a new empty disk (vdb, vdc, …)
+./vmtool create hv1/web ubuntu.qcow2 --net-type direct --net-source eth0 --macvtap-mode bridge
+./vmtool create hv1/scratch ubuntu.qcow2 --noclone  # boot the image in place
+./vmtool create hv1/web ubuntu.qcow2 --extra-disk-size 50   # second empty disk as vdb
+./vmtool create hv1/web ubuntu.qcow2 --no-wait      # return right after start; no address or SSH wait
+./vmtool add-disk hv1/web 50                        # attach a new empty disk (vdb, vdc, …)
 ./vmtool create hv1/web img1 --pool nvme-thin           # thin clone of a template (see Thin pools)
 ./vmtool templates save hv1/build1 t1-tpl               # keep a shut-off thin VM's disk as a template
 ./vmtool templates list                                 # templates on every host
 ./vmtool pool list --host hv1                           # pools, with thin usage
-./vmtool reboot jetfire/web                             # ACPI reboot, stays defined
-./vmtool exec jetfire/web uname -a                      # exact argv, no shell (was `cmd`; API 2.0.0)
-./vmtool exec jetfire/web -- sh -c 'echo hi | wc -c'    # shell features: run a shell; prints 3
-./vmtool exec jetfire/web -- sh -c 'cat > /p/.env' < .env   # the CLI passes your stdin through
-./vmtool exec -t jetfire/web -- top                     # -t: a live terminal (ssh -tt), like docker exec -it
+./vmtool reboot hv1/web                             # ACPI reboot, stays defined
+./vmtool exec hv1/web uname -a                      # exact argv, no shell (was `cmd`; API 2.0.0)
+./vmtool exec hv1/web -- sh -c 'echo hi | wc -c'    # shell features: run a shell; prints 3
+./vmtool exec hv1/web -- sh -c 'cat > /p/.env' < .env   # the CLI passes your stdin through
+./vmtool exec -t hv1/web -- top                     # -t: a live terminal (ssh -tt), like docker exec -it
 # REST: POST /v1/hosts/{h}/vms/{n}/exec and /v1/metal/{n}/exec take an optional
 # "stdin" string (API 2.1.0): text written to the command's stdin, then closed.
 # Never logged, never in an error or on a command line; bounded by the 1 MiB body limit.
 ./vmtool list                                           # every host (5 s each; a dead host is an ERROR row)
-./vmtool list jetfire                                   # one host
+./vmtool list hv1                                   # one host
 ./vmtool hosts                                          # reachability, API version, cert days left
 ./vmtool delete <host>/<name>
-./vmtool delete jetfire/scratch --noclone               # undefine only, keep the disk
+./vmtool delete hv1/scratch --noclone               # undefine only, keep the disk
 ./vmtool server                                         # HTTPS REST on 127.0.0.1:9473; GET / is Swagger UI
 ```
 
@@ -986,10 +981,10 @@ kept there would be lost):
 ```yaml
 default_pool: nvme              # this host's own new VM disks
 hosts:
-  veritech02:
-    address: veritech02.example
+  hv2:
+    address: hv2.example.lab
     ssh_user: ubuntu
-    default_pool: nvme          # new VM disks created on veritech02
+    default_pool: nvme          # new VM disks created on hv2
 ```
 
 Scope: where new VM disks go; images stay in the cache pool. It applies to an
@@ -1317,7 +1312,7 @@ for drives you name ([Hypervisors](#fast-block-disks-opt-in-nvme-stripe)).
 Use it for disposable workers that need disk speed: the stripe has no
 redundancy, so losing one drive loses every VM disk on it.
 
-Measured on veritech02 (4 vCPUs, fio on the bare virtual disk, 4k I/O):
+Measured on hv2 (4 vCPUs, fio on the bare virtual disk, 4k I/O):
 
 | backing / host cache | write+fsync IOPS | randwrite IOPS | randread IOPS |
 |---|---|---|---|
@@ -1325,10 +1320,10 @@ Measured on veritech02 (4 vCPUs, fio on the bare virtual disk, 4k I/O):
 | LV on the stripe, `none`, `io='native'`, 4 queues, an IO thread (what vmtool writes) | 15.5k | 136k | 132k |
 
 ```bash
-vmtool pool list --host veritech02                       # TYPE logical for nvme
-vmtool create veritech02/build1 ubuntu2604 --pool nvme --disk-size 40
-vmtool add-disk veritech02/build1 100 --pool nvme         # LV build1-2, attached as a block disk
-vmtool delete veritech02/build1                           # removes both LVs
+vmtool pool list --host hv2                       # TYPE logical for nvme
+vmtool create hv2/build1 ubuntu2604 --pool nvme --disk-size 40
+vmtool add-disk hv2/build1 100 --pool nvme         # LV build1-2, attached as a block disk
+vmtool delete hv2/build1                           # removes both LVs
 ```
 
 - **Clone by conversion.** `create` asks libvirtd to copy the cached qcow2
@@ -1918,8 +1913,8 @@ a libvirtd restart, events are not seen until the vmtool daemon restarts
 
 vmtool's own commands name a VM `host/vm`. Other tools (ssh, scp, rsync, sftp)
 use one SSH name, `<vm>.<host>.vmtool`, split at the last dot before
-`.vmtool`: VM names may contain dots (`a.b.jetfire.vmtool` is VM `a.b` on
-`jetfire`), host names may not (a dotted `name:` or `hosts:` key fails config
+`.vmtool`: VM names may contain dots (`a.b.hv1.vmtool` is VM `a.b` on
+`hv1`), host names may not (a dotted `name:` or `hosts:` key fails config
 load). A VM's credentials (bot key, password) live in
 `.machines/<vm>.<host>.vmtool/`; the old `.machines/<host>/<vm>/` folders are
 never read, moved or deleted by vmtool. Names ending in `.vmtool` cannot be
@@ -1927,9 +1922,9 @@ metal/alien machine names.
 
 ```bash
 ./vmtool ssh-config >> ~/.ssh/config     # one fixed block, `Host *.vmtool`
-ssh web.jetfire.vmtool
-scp f vt-r7.veritech03.vmtool:/tmp/x
-rsync -a dir/ web.jetfire.vmtool:/srv/
+ssh web.hv1.vmtool
+scp f vt-r7.hv2.vmtool:/tmp/x
+rsync -a dir/ web.hv1.vmtool:/srv/
 ```
 
 Remove an old `Host */*` block first: it has no credentials folder behind it

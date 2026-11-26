@@ -16,8 +16,8 @@ live in the store, and .machines/<vm>.<host>.vmtool/ on this machine is a
 cache of that record: plain ssh, scp, rsync and Ansible read the bot key from
 it (ssh-config's IdentityFile points there).
 
-  vmtool creds fetch jetfire/web     write the store's record into the cache
-  vmtool creds forget jetfire/web    remove the cache folder (not the store's record)
+  vmtool creds fetch hv1/web     write the store's record into the cache
+  vmtool creds forget hv1/web    remove the cache folder (not the store's record)
 
 Both decide the store mode at their start. Without a reachable store the cache
 is the only copy: fetch has nothing to fetch from, and forget refuses.`,
@@ -36,8 +36,8 @@ store answers only for the UUID the VM's host reports, so credentials left
 over from a VM of the same name that was recreated are never fetched.
 
 Needs store mode: a configured, reachable store.`,
-		Example: `  vmtool creds fetch jetfire/web
-  vmtool creds fetch --json jetfire/web
+		Example: `  vmtool creds fetch hv1/web
+  vmtool creds fetch --json hv1/web
 
   Tip: with --json stdout is {"fetched": "<host/vm>"}. The credentials go
   into the cache folder only; neither form prints a password or a key.`,
@@ -66,8 +66,8 @@ again. 'vmtool delete' is what removes the record.
 
 Refuses without a store (the folder is then the only copy) and when the
 folder holds credentials that are not in the store yet.`,
-		Example: `  vmtool creds forget jetfire/web
-  vmtool creds forget --json jetfire/web
+		Example: `  vmtool creds forget hv1/web
+  vmtool creds forget --json hv1/web
 
   Tip: with --json stdout is {"forgotten": "<host/vm>"}.`,
 		Args: cobra.ExactArgs(1),

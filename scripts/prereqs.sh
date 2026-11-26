@@ -8,7 +8,7 @@
 #
 # A first argument that does not start with '-' is a host from config.yml
 # (needs a built ./vmtool and a valid token, as 'vmtool config host' does):
-#   scripts/prereqs.sh veritech01 [ansible-playbook options]
+#   scripts/prereqs.sh hv1 [ansible-playbook options]
 # That runs the playbook against the host over ssh with a temporary inventory
 # as a hypervisor (-e vmtool_role=hypervisor): the vmtool user, HV_DIR, the
 # vmtool pool at HV_POOL_DIR, Go only when missing or older than GO_MIN
@@ -21,7 +21,7 @@
 # port is VMTOOL_SELF_PORT (default 9474).
 # Opt-in NVMe stripe (destructive by nature, runs only with the drives named,
 # and refuses non-blank drives): pass the drives as extra arguments, e.g.
-#   just prereqs veritech02 -e '{"vmtool_nvme_drives":["/dev/disk/by-id/nvme-A","/dev/disk/by-id/nvme-B"]}'
+#   just prereqs hv2 -e '{"vmtool_nvme_drives":["/dev/disk/by-id/nvme-A","/dev/disk/by-id/nvme-B"]}'
 # (scripts/prereqs.sh takes the same arguments directly). It builds an md RAID 0 array, a volume group and a libvirt logical pool
 # `nvme` (ansible/playbooks/tasks/nvme_stripe.yml). Without it nothing happens.
 # To add an LVM thin pool to an existing array (70 % of the volume group's free

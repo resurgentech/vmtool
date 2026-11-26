@@ -327,7 +327,7 @@ Agent tips:
 func interactiveTunnel(c *cobra.Command) *cobra.Command {
 	c.Annotations = map[string]string{annotationInteractive: "true"}
 	if c.Example == "" {
-		c.Example = "  vmtool tunnel jetfire/web"
+		c.Example = "  vmtool tunnel hv1/web"
 	}
 	return c
 }
@@ -745,7 +745,7 @@ shows the VM's cards; its IP stays the first card's address. Attach or detach
 later with 'vmtool net attach' and 'vmtool net detach'; 'vmtool delete'
 removes the reservations.
 
-  vmtool create jetfire/web ubuntu-24.04.qcow2
+  vmtool create hv1/web ubuntu-24.04.qcow2
   vmtool create hv1/web img1 --pool nvme-thin --disk-size 40
   vmtool create hv1/web img1 --network net1 --network net2=10.77.2.50`,
 		Example: `  vmtool create --json hv1/web img1
@@ -869,8 +869,8 @@ func startCmd(e *env) *cobra.Command {
 	return &cobra.Command{
 		Use:   "start <host/name>",
 		Short: "Start a stopped VM",
-		Example: `  vmtool start jetfire/web
-  vmtool start --json jetfire/web`,
+		Example: `  vmtool start hv1/web
+  vmtool start --json hv1/web`,
 		Args: cobra.ExactArgs(1),
 		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
 			info, err := e.service("").StartVM(cmd.Context(), m, ref)
@@ -890,8 +890,8 @@ func resumeCmd(e *env) *cobra.Command {
 	return &cobra.Command{
 		Use:   "resume <host/name>",
 		Short: "Resume a paused VM",
-		Example: `  vmtool resume jetfire/web
-  vmtool resume --json jetfire/web`,
+		Example: `  vmtool resume hv1/web
+  vmtool resume --json hv1/web`,
 		Args: cobra.ExactArgs(1),
 		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
 			info, err := e.service("").ResumeVM(cmd.Context(), m, ref)
@@ -911,8 +911,8 @@ func stopCmd(e *env) *cobra.Command {
 	return &cobra.Command{
 		Use:   "stop <host/name>",
 		Short: "Gracefully shut down a VM",
-		Example: `  vmtool stop jetfire/web
-  vmtool stop --json jetfire/web`,
+		Example: `  vmtool stop hv1/web
+  vmtool stop --json hv1/web`,
 		Args: cobra.ExactArgs(1),
 		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
 			info, err := e.service("").StopVM(cmd.Context(), m, ref)
@@ -932,8 +932,8 @@ func poweroffCmd(e *env) *cobra.Command {
 	return &cobra.Command{
 		Use:   "poweroff <host/name>",
 		Short: "Force power-off a VM",
-		Example: `  vmtool poweroff jetfire/web
-  vmtool poweroff --json jetfire/web`,
+		Example: `  vmtool poweroff hv1/web
+  vmtool poweroff --json hv1/web`,
 		Args: cobra.ExactArgs(1),
 		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
 			info, err := e.service("").PoweroffVM(cmd.Context(), m, ref)
@@ -959,8 +959,8 @@ func deleteCmd(e *env) *cobra.Command {
 
 By default also deletes the cloned disk volume.
 Use --noclone to skip volume deletion (use when the VM was created with --noclone).`,
-		Example: `  vmtool delete jetfire/web
-  vmtool delete --json jetfire/web`,
+		Example: `  vmtool delete hv1/web
+  vmtool delete --json hv1/web`,
 		Args: cobra.ExactArgs(1),
 		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
 			if err := e.service("").DeleteVM(cmd.Context(), m, ref, noclone); err != nil {
@@ -982,8 +982,8 @@ func infoCmd(e *env) *cobra.Command {
 	return &cobra.Command{
 		Use:   "info <host/name>",
 		Short: "Show details of a VM",
-		Example: `  vmtool info jetfire/web
-  vmtool info --json jetfire/web`,
+		Example: `  vmtool info hv1/web
+  vmtool info --json hv1/web`,
 		Args: cobra.ExactArgs(1),
 		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
 			svc := e.service("")
@@ -1072,7 +1072,7 @@ func sshCmd(e *env) *cobra.Command {
 username and key stored there. Otherwise falls back to packer. Host key
 checking is disabled.
 
-  vmtool ssh jetfire/web`,
+  vmtool ssh hv1/web`,
 		Annotations: map[string]string{annotationInteractive: "true"},
 		Args:        cobra.MinimumNArgs(1),
 		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
@@ -1112,8 +1112,8 @@ no shell parsing (spaces, quotes, $ and | are plain characters). For shell
 features, run a shell. -- right after the target ends vmtool's flags and is
 not sent; everything after it is the command, exactly.
 
-  vmtool exec jetfire/web uname -a
-  vmtool exec jetfire/web -- sh -c 'echo hi | wc -c'
+  vmtool exec hv1/web uname -a
+  vmtool exec hv1/web -- sh -c 'echo hi | wc -c'
 
 -t / --tty gives the command a live terminal, like ssh -t or docker exec -it:
 your terminal goes into raw mode and its size and resizes are forwarded.
@@ -1121,8 +1121,8 @@ Without a terminal on stdin (a pipe or a file) -t still forces a remote pty:
 the program sees a terminal, stdout and stderr are merged, input is echoed.
 Put -t before the VM; after it, -t belongs to the remote command.
 
-  vmtool exec -t jetfire/web -- top`,
-		Example: `  vmtool exec --json jetfire/web uname -a
+  vmtool exec -t hv1/web -- top`,
+		Example: `  vmtool exec --json hv1/web uname -a
 
   exec exits with the remote command's exit code. With --json it prints
   {"exit_code", "stdout", "stderr"} and still exits with that code; -t cannot
@@ -1210,8 +1210,8 @@ func rebootCmd(e *env) *cobra.Command {
 
 Unlike stop (ACPI shutdown, then shutoff) or poweroff (force destroy),
 the VM comes back up on its own if the guest handles the reboot.`,
-		Example: `  vmtool reboot jetfire/web
-  vmtool reboot --json jetfire/web`,
+		Example: `  vmtool reboot hv1/web
+  vmtool reboot --json hv1/web`,
 		Args: cobra.ExactArgs(1),
 		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
 			info, err := e.service("").RebootVM(cmd.Context(), m, ref)
@@ -1231,8 +1231,8 @@ func autostartCmd(e *env) *cobra.Command {
 	return &cobra.Command{
 		Use:   "autostart <host/name> <on|off>",
 		Short: "Enable or disable autostart for a VM",
-		Example: `  vmtool autostart jetfire/web on
-  vmtool autostart --json jetfire/web off`,
+		Example: `  vmtool autostart hv1/web on
+  vmtool autostart --json hv1/web off`,
 		Args: cobra.ExactArgs(2),
 		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
 			name := args[0]
@@ -1431,8 +1431,8 @@ func playbookCmd(e *env) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "playbook <host/vm-name> <playbook-path>",
 		Short: "Run an Ansible playbook against a running VM",
-		Example: `  vmtool playbook jetfire/web site.yml
-  vmtool playbook --json jetfire/web site.yml
+		Example: `  vmtool playbook hv1/web site.yml
+  vmtool playbook --json hv1/web site.yml
 
   Tip: playbook blocks until ansible ends. With --json ansible's output goes to
   stderr and stdout carries {"vm", "playbook", "completed"}.`,
@@ -1747,8 +1747,8 @@ redefine the domain with the new path, then restart (if it was running).
 A block disk (an LV in a logical pool, or a thin LV), or a logical pool as the
 target, is refused before the VM is stopped. A thin pool is not a libvirt pool,
 so it cannot be a target either.`,
-		Example: `  vmtool migrate-disk jetfire/web fast
-  vmtool migrate-disk --json jetfire/web fast
+		Example: `  vmtool migrate-disk hv1/web fast
+  vmtool migrate-disk --json hv1/web fast
 
   Tip: migrate-disk blocks until the copy is done. With --json the progress
   line goes to stderr and stdout is the VM.`,
@@ -1792,8 +1792,8 @@ refused with the numbers.
 
 A disk in a thick logical pool (an LV) cannot be grown: it is sized at create
 (--disk-size). resize-disk refuses it before touching the VM.`,
-		Example: `  vmtool resize-disk jetfire/web 40
-  vmtool resize-disk --json jetfire/web 40
+		Example: `  vmtool resize-disk hv1/web 40
+  vmtool resize-disk --json hv1/web 40
 
   Tip: with --json stdout is {"vm", "filesystem_grown", "grow_error"}; a failed
   filesystem grow still fails the command (exit 1).`,
@@ -1860,8 +1860,8 @@ is hot-plugged and persisted. If it is shut off the change is persisted and
 appears on the next start. The guest sees a raw block device; it is not
 partitioned or formatted.
 
-  vmtool add-disk jetfire/web 50
-  vmtool add-disk jetfire/web 100 --pool fast`,
+  vmtool add-disk hv1/web 50
+  vmtool add-disk hv1/web 100 --pool fast`,
 		Args: cobra.ExactArgs(2),
 		RunE: withVM(e, func(m app.Manager, ref app.VMRef, cmd *cobra.Command, args []string) error {
 			vmName := args[0]

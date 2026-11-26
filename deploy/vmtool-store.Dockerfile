@@ -4,7 +4,7 @@
 # config, token file and encryption key are mounted at /etc/vmtool-store and
 # the S3 credentials come from the environment at run time. In a container
 # config.yaml must set `listen: 0.0.0.0:8095` (the default is loopback);
-# Caddy fronts it.
+# A reverse proxy fronts it.
 
 FROM golang:1.25.14-bookworm AS build
 WORKDIR /src

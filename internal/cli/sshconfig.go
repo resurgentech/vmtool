@@ -18,13 +18,13 @@ and sftp reach any VM as <vm>.<host>.vmtool, through 'vmtool tunnel', using
 the bot key kept in .machines/<vm>.<host>.vmtool/:
 
   vmtool ssh-config >> ~/.ssh/config
-  ssh web.jetfire.vmtool
-  scp f vt-r7.veritech03.vmtool:/tmp/x
+  ssh web.hv1.vmtool
+  scp f vt-r7.hv2.vmtool:/tmp/x
 
 The block is fixed: nothing to regenerate when VMs come and go. Remove an old
 'Host */*' block first; it has no credentials folder behind it any more. The
-host name has no dots; the VM name may (a.b.jetfire.vmtool is VM a.b on
-jetfire). vmtool's own commands still take host/vm.
+host name has no dots; the VM name may (a.b.hv1.vmtool is VM a.b on
+hv1). vmtool's own commands still take host/vm.
 
 The ProxyCommand runs in vmtool's working directory (where config.yml is)
 and needs VMTOOL_TOKEN in the environment (or in .env there).`,

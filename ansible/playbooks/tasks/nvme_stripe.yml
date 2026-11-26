@@ -10,7 +10,7 @@
 # swap, or the play fails and changes nothing. If the volume group already
 # exists it is adopted: the drives are then not examined and not written.
 #
-#   just prereqs veritech02 -e '{"vmtool_nvme_drives":["/dev/disk/by-id/nvme-A","/dev/disk/by-id/nvme-B"]}'
+#   just prereqs hv2 -e '{"vmtool_nvme_drives":["/dev/disk/by-id/nvme-A","/dev/disk/by-id/nvme-B"]}'
 #
 # The commands here that write storage are the md array create, pvcreate and
 # vgcreate (guarded by vmtool_nvme_create), the thin pool's lvcreate, and, only

@@ -15,7 +15,7 @@
 set -euo pipefail
 
 # TasksMax default: about twice the largest pids.peak of a normal full run.
-# Measured 2026-11-17 on jetfire (16 cores, Go 1.27, warm build cache),
+# Measured 2026-11-17 on a workstation (16 cores, Go 1.27, warm build cache),
 # `go test -count=1 ./...` in a TasksMax=1024 scope, three runs: pids.peak
 # 114, 112, 114. A forced full rebuild (`go test -a -count=1 ./...`) also
 # peaked at 114. 2 x 114 = 228, rounded up to 256. Threads per Go process grow

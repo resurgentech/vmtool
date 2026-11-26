@@ -3158,3 +3158,16 @@ from. Nothing changes for a client whose `.env` holds `VMTOOL_TOKEN` and
   `bao` call; neutral values give today's command lines; `deploy.env` supplies and the environment overrides;
   `just settings` never prints a value; no lab value in the justfile or a script. README sections on these recipes
   updated.
+
+## 2026-11-25 — Neutral examples and the public-and-generic rule
+
+- Examples, help text, comments and docs use the neutral names: `hv1`, `hv2` (hypervisors), `home1` (a network
+  home), `ws1` (the workstation), `example.lab` (domain), `registry.example.lab` (registry) and
+  `https://proxy.example/vmstore` (the store behind a reverse proxy). Only `Example:` and `Long` text and comments
+  changed in Go code; no flag, JSON key, exit code or error message moved.
+- The README's store section keeps how to run the store (image, config, tokens, behind a reverse proxy) and no
+  longer describes any one deployment. It gains a paragraph on running a network home in a small VM.
+- `docs/VMNET_VM.md`, one deployment's build notes, is removed from this repository.
+- `AGENTS.md` gains hard rule 7, "Public and generic": examples use the neutral names, deployment values come
+  from settings with no default, and test fixtures and logs are exempt.
+- `docs/design/spec-first.md`: absolute home paths became `<checkout>` and `<interloc checkout>`.

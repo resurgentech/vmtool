@@ -84,7 +84,7 @@ Anything it has to say goes to stderr.
 The VM is host/vm, or its SSH name <vm>.<host>.vmtool (what the block from
 'vmtool ssh-config' passes). The host name has no dots; the VM name may.
 
-  ssh -o ProxyCommand='vmtool tunnel %n' web.jetfire.vmtool`,
+  ssh -o ProxyCommand='vmtool tunnel %n' web.hv1.vmtool`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// stdout is the byte stream: no usage text, and main prints the

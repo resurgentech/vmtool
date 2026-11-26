@@ -447,7 +447,7 @@ func TestNvmeStripeWarnsDestructive(t *testing.T) {
 				t.Errorf("%s lacks %q", f, p)
 			}
 		}
-		if !strings.Contains(string(b), "just prereqs veritech02 -e") {
+		if !strings.Contains(string(b), "just prereqs hv2 -e") {
 			t.Errorf("%s lacks the just prereqs command", f)
 		}
 		if !strings.Contains(string(b), "vmtool_nvme_drives") {

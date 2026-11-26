@@ -16,7 +16,7 @@
 # networks that span hosts; `hosts.<name>.vms: false` in config.yml). Prepare it
 # with the switch off:
 #
-#   just prereqs vmnet -e '{"vmtool_vm_host":false}'
+#   just prereqs home1 -e '{"vmtool_vm_host":false}'
 #
 # That keeps libvirt, dnsmasq, the vmtool user and the Go, libvirt headers and C
 # compiler `just deploy` builds with, and skips QEMU, OVMF, the storage pools,
@@ -25,7 +25,7 @@
 #
 # Optional, for hypervisors with blank NVMe drives (Debian/Ubuntu only):
 #
-#   just prereqs veritech02 -e '{"vmtool_nvme_drives":["/dev/disk/by-id/nvme-A","/dev/disk/by-id/nvme-B"]}'
+#   just prereqs hv2 -e '{"vmtool_nvme_drives":["/dev/disk/by-id/nvme-A","/dev/disk/by-id/nvme-B"]}'
 #
 # That builds an md RAID 0 stripe, a volume group on it and a libvirt `logical`
 # pool `nvme` (tasks/nvme_stripe.yml). It is destructive by nature, runs only

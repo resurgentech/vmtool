@@ -196,11 +196,11 @@ from websockets.exceptions import ConnectionClosed
 
 URL = os.environ["VMTOOL_URL"]  # e.g. wss://workstation:9473
 TOKEN = os.environ["VMTOOL_TOKEN"]
-CTX = ssl.create_default_context(cafile=os.environ["VMTOOL_CA"])  # the hulbert.local CA
+CTX = ssl.create_default_context(cafile=os.environ["VMTOOL_CA"])  # your CA
 
 
 async def main() -> int:
-    uri = URL + "/v1/hosts/jetfire/vms/web/console?cols=120&rows=40"
+    uri = URL + "/v1/hosts/hv1/vms/web/console?cols=120&rows=40"
     try:
         # No origin= : any Origin header is refused with 403.
         async with connect(
@@ -469,7 +469,7 @@ unreadable. Image blobs are not in the backup; they stay in the bucket.
 Restore: stop the container; fetch the chosen object (`mc cp` or the console)
 to `data/store.db` with mode 0600 in the 0700 directory; use the same
 `enc.key`; start; check `GET /version` and a credential read. vmtool adds no
-restore command. See the `vmtool_store` role's README in `ansible_labtwo` and
+restore command. See the deployment notes for the store and
 the root `README.md`.
 
 ### Networks (API 1.2.0)
