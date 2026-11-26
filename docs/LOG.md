@@ -3065,3 +3065,36 @@ schema stays 9, so the previous store image still starts on the same data.
   the status route with the list on and off, and the per-caller counts.
 - Docs: README (the store's settings, the bearer order, the new routes),
   `spec/README.md`.
+
+## 2026-11-25 — The client reads a key from a token file, asks for one on first use, and `vmtool key`
+
+The command line can use a personal API key kept in a token file, ask a key
+provider for one when it finds none, and show and check where its key comes
+from. Nothing changes for a client whose `.env` holds `VMTOOL_TOKEN` and
+`VMTOOL_SERVER_TOKEN`: they come first. No spec change.
+
+- `internal/config`: the token file path (`VMTOOL_TOKEN_FILE`, else `token_file`
+  in `config.yml`, else `$XDG_CONFIG_HOME/vmtool/token`, else
+  `~/.config/vmtool/token`); read trimmed, refused unless a regular file (no
+  link) with no group or other permission bits and not empty. `DaemonKey` and
+  `StoreKey` give the orders (environment, `.env`, token file) and the source.
+  `Token` stays the operator token (environment, `.env`): `config write` never
+  hashes the token file's key into `token_sha256`.
+- The gate: a `VMTOOL_TOKEN` is checked against `token_sha256`, offline, as
+  before. A token-file key is checked by one authenticated `GET
+  /v1/personal-keys` to the local service (2 s); a 401 names the token file and
+  `vmtool key status`; a service that does not answer is told to start.
+- First use: with no key from any source, unless `--no-key-request`, the
+  command calls keyclient's `request.Ensure` (`server.url`, `--key-request-url`
+  or `VMTOOL_KEY_REQUEST_URL`). In a terminal it waits and carries on; otherwise
+  it files one request (a later run resumes it), prints the notice and exits 75
+  (`key_pending`, `key_busy`); denied, expired, consumed, unauthorized and
+  provider failures exit 1 (`key_denied`, ...). A fresh key's first 401 from the
+  local service is retried once after 5 s.
+- `vmtool key request`, `key status` (read-only) and `key check` (the token
+  file's key presented to the local service, each host directly and through the
+  service, and the store's `whoami`; exit 0 only when every reachable target
+  accepted it), all exempt from the gate, with `--json`.
+- `vmtool server` reads its store key in the same order and never files a
+  request. Child processes (tunnel, ssh) get the chosen key as `VMTOOL_TOKEN`.
+- Docs: README, `docs/CLI.md` (exit 75 and the new error codes), the root help.

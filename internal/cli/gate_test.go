@@ -28,6 +28,9 @@ var exemptPaths = map[string]bool{
 	"vmtool completion powershell": true,
 	"vmtool completion zsh":        true,
 	"vmtool config write":          true,
+	"vmtool key request":           true,
+	"vmtool key status":            true,
+	"vmtool key check":             true,
 }
 
 // configOnlyPaths need a valid config.yml with token_sha256 but no local

@@ -109,6 +109,9 @@ type Config struct {
 	// config directory); the token itself is never in config.yml. Optional:
 	// without it, or without store_url, the daemon does not report.
 	StoreTokenFile string `yaml:"store_token_file"`
+	// TokenFile is where this client keeps its own key (token_file); see
+	// TokenFilePath. A path, never a key.
+	TokenFile string `yaml:"token_file"`
 	// PersonalKeys is the optional personal_keys: block (personalkeys.go).
 	PersonalKeys PersonalKeys `yaml:"personal_keys"`
 	// Dir is the directory config.yml was loaded from.

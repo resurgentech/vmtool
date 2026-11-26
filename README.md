@@ -407,7 +407,8 @@ server:
 
 The client's token is `VMTOOL_SERVER_TOKEN`, read like `VMTOOL_TOKEN`: from
 the environment, else from `.env` in the working directory (a real
-environment variable wins). It is never read from `config.yml`. The
+environment variable wins), else the key in the token file (see
+[The client's key](#the-clients-key)). It is never read from `config.yml`. The
 tokens are made by `make_secrets.sh tokens` in `ansible_labtwo` (one
 OpenBao field per caller name, under the path `vault_vmtool_store_tokens`,
 `infra/labtwo/vmtool_store/tokens` on mount `kv`). Fetch your own with
@@ -772,7 +773,8 @@ needs:
 - a `config.yml` with a `hosts:` section naming the daemons it will talk to
   (`just install` writes one and keeps `hosts:` on re-runs);
 - a `.env` with `VMTOOL_TOKEN`, the token whose hash is each daemon's
-  `token_sha256` (`just token-fetch` gets it from OpenBao);
+  `token_sha256` (`just token-fetch` gets it from OpenBao), or a key of your own in
+  the token file (`vmtool key request`; see [The client's key](#the-clients-key));
 - the `hulbert.local` CA in the system trust store, so TLS to the daemons
   (and to the store) verifies;
 - libvirt's client library (`libvirt-dev` on Debian/Ubuntu, `libvirt` on
@@ -829,12 +831,13 @@ scripts/verify-generate.sh             # fail if generated code is stale
 
 ## First run
 
-Every `vmtool` command (except `help`, `completion` and `config write`) needs
-`config.yml` in the working directory and a `VMTOOL_TOKEN` whose SHA-256
-matches its `token_sha256`. The token comes from the environment, else from
-`.env` in the working directory; a real `VMTOOL_TOKEN` in the environment
-wins over `.env`. Without them every command stops with one line naming the
-fix.
+Every `vmtool` command (except `help`, `completion`, `config write` and the
+`key` commands) needs `config.yml` in the working directory and a key. A
+`VMTOOL_TOKEN` is checked against `token_sha256`: it comes from the
+environment, else from `.env` in the working directory; a real `VMTOOL_TOKEN`
+in the environment wins over `.env`. With none, the key in the token file is
+used instead (next section). With no key anywhere every command stops with
+one line naming the fix.
 
 ```bash
 just token          # new token into .env (and OpenBao if VAULT_ADDR/VAULT_TOKEN are set)
@@ -844,6 +847,65 @@ just install        # build, cert, config.yml, systemd unit (vmtool server over 
 
 `vmtool server` serves HTTPS only and needs `tls_cert`, `tls_key` and
 `token_sha256` in `config.yml`; `just install` sets all three.
+
+
+## The client's key
+
+A client has one key for the daemons and the local service (`VMTOOL_TOKEN`) and one for the store
+(`VMTOOL_SERVER_TOKEN`). Each is found in this order, and the first source that has one wins:
+
+1. the environment variable;
+2. `.env` in the working directory;
+3. the token file.
+
+So while `.env` holds both tokens nothing changes: the token file is not looked at.
+
+The token file is `VMTOOL_TOKEN_FILE`, else `token_file:` at the top of `config.yml` (a leading `~/` is your home
+directory, any other relative path is relative to `config.yml`'s directory), else
+`$XDG_CONFIG_HOME/vmtool/token`, else `~/.config/vmtool/token`. It holds one key. It is read trimmed, and refused,
+with an error that names the file and never shows it, unless it is a regular file (a symlink is refused) with no
+group or other permission bits (`0600` or tighter) and is not empty. A missing file is no key.
+
+A `VMTOOL_TOKEN` is checked against `token_sha256`, offline, as always. A key from the token file is not in
+`config.yml`, so the command asks the local service (`vmtool server`, the address in `listen`, trusting `tls_cert`)
+one authenticated question, `GET /v1/personal-keys`, with a 2 s limit. 200 passes; 401 stops the command with an
+error naming the token file; a service that does not answer stops it with "vmtool.service is not answering at
+<address>; start it: sudo systemctl start vmtool". `vmtool config write` never reads the token file: a personal
+key must not become a daemon's `token_sha256`, so it needs the operator token in `VMTOOL_TOKEN` or `--token-stdin`.
+`vmtool server` reads its store key in the same order, at each store request, and never asks for a key.
+
+### First use with no key
+
+With no key from any source, a command asks the key provider for one, unless you pass `--no-key-request`. The
+request URL is found at `server.url` (the store tells a client where to ask), or is `--key-request-url` or
+`VMTOOL_KEY_REQUEST_URL`. With no URL the error is the usual "no VMTOOL_TOKEN" line.
+
+- In a terminal (stderr is one) the command prints where a person approves the request and the code to check,
+  waits for the approval, stores the key in the token file (mode `0600`) and carries on. After a fresh key, one 401
+  from the local service is retried once after 5 s, while it learns the new key.
+- Anywhere else (an agent, a script) the command files one request, or resumes the one already pending (a pending
+  file beside the token file; never a second request), prints the notice and "key request pending; run this again
+  after approving" on stderr, and exits 75. With `--json` the error code is `key_pending` and the notice is in
+  `message`. Run the command again after the approval and it collects the key.
+- A denied, expired or consumed request, a refused poll and a provider failure exit 1 (`key_denied`, `key_expired`,
+  `key_consumed`, `key_unauthorized`, `key_provider`); `key_busy` (75) means another process is handling the request.
+- A `VMTOOL_TOKEN` with no store key never files a request just for the store: the store commands run in local mode
+  as before.
+
+### `vmtool key`
+
+None of these prompts; all take `--json`, and none needs the token gate.
+
+- `vmtool key request [--role R]` files or resumes a request and stores the key. With a key already in the token
+  file it says "a key is already at <path>" (`{"token_file", "result": "present"}`). It needs no `config.yml` when
+  `--key-request-url` (or the variable) gives the URL; else `server.url`.
+- `vmtool key status` is read-only and offline: the token file's path and whether it is present, absent or
+  refused; which source a daemon call and a store call would use now (`env`, `.env`, `file` or `none`; never a value);
+  and the pending request (where to approve it, the code, when it expires).
+- `vmtool key check` presents the token file's key, whatever the order would pick, to the local service, to each host's
+  daemon directly, through the local service to each host, and to the store (`GET /v1/whoami`, which names the key).
+  One row per target: `accepted`, `refused` or `unreachable`. It exits 0 only when every reachable target accepted
+  the key. Use it to prove a new key before removing the old tokens from `.env`.
 
 ## Usage
 

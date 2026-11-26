@@ -91,7 +91,7 @@ func (s *Server) Handler() http.Handler {
 		if s.Config.StoreConfigured() && s.Config.Role != config.RoleHypervisor {
 			dir := s.Config.Dir
 			h.storeURL = s.Config.Server.URL
-			h.storeToken = func() (string, error) { return config.ServerToken(dir) }
+			h.storeToken = func() (string, error) { return storeKeyOf(dir) }
 			h.storeOpts = s.StoreOptions
 		}
 	}
@@ -439,4 +439,12 @@ func slogRequests(h *handlers, next http.Handler) http.Handler {
 			)
 		}
 	})
+}
+
+// storeKeyOf is the store key in the client order: VMTOOL_SERVER_TOKEN
+// (environment, then .env), then the token file. The service never files a
+// key request.
+func storeKeyOf(dir string) (string, error) {
+	k, _, err := config.StoreKey(dir)
+	return k, err
 }

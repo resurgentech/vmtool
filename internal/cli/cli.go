@@ -54,6 +54,8 @@ type env struct {
 	// verified VMTOOL_TOKEN; never print or log it.
 	cfg   *config.Config
 	token string
+	// tokenSource is where token came from: "env", ".env" or "file".
+	tokenSource string
 	// tunnelExe is the vmtool path guest SSH uses as its ProxyCommand; empty
 	// means the running executable. Tests set it to a stub path, since under
 	// go test the running executable is refused (vmtool.CurrentExe).
@@ -76,7 +78,8 @@ type env struct {
 var storeClientOptions []storeclient.Option
 
 // session is this command's StoreSession: nil when no server: is configured.
-// It reads VMTOOL_SERVER_TOKEN (environment, else .env) when first opened,
+// It reads the store key (VMTOOL_SERVER_TOKEN from the environment, else .env,
+// else the token file) when first opened,
 // makes no network call until the mode is needed, and prints the one
 // fallback line to stderr when the store is not usable.
 func (e *env) session() *app.StoreSession {
@@ -85,7 +88,7 @@ func (e *env) session() *app.StoreSession {
 			return
 		}
 		e.store = app.OpenStoreSession(e.cfg.Server.URL,
-			func() (string, error) { return config.ServerToken(e.dir) },
+			func() (string, error) { k, _, err := config.StoreKey(e.dir); return k, err },
 			storeClientOptions,
 			func(line string) { fmt.Fprintln(e.stderr(), line) })
 	})
@@ -143,29 +146,6 @@ type gateError struct {
 func (g *gateError) Error() string { return g.msg }
 func (g *gateError) Unwrap() error { return g.err }
 
-// gate loads config.yml and the token and checks one against the other. It
-// fills e.cfg and e.token, or returns a *gateError.
-func (e *env) gate() error {
-	tok, err := config.Token(e.dir)
-	switch {
-	case errors.Is(err, config.ErrNoToken):
-		return &gateError{err: err, msg: fmt.Sprintf("vmtool: no %s in the environment or %s; run 'just token' (new) or 'just token-fetch' (from OpenBao)",
-			config.TokenEnv, filepath.Join(e.dir, config.EnvFileName))}
-	case err != nil:
-		return &gateError{err: err, msg: "vmtool: " + err.Error()}
-	}
-	cfg, err := e.loadConfig()
-	if err != nil {
-		return err
-	}
-	if !config.Check(tok, cfg.TokenSHA256) {
-		return &gateError{err: config.ErrTokenMismatch, msg: fmt.Sprintf("vmtool: %s does not match token_sha256 in %s; run 'just token-fetch', or 'just install' after 'just token'",
-			config.TokenEnv, config.FileName)}
-	}
-	e.cfg, e.token = cfg, tok
-	return nil
-}
-
 // loadConfig loads config.yml, mapping failures to a *gateError.
 func (e *env) loadConfig() (*config.Config, error) {
 	cfg, err := config.Load(e.dir)
@@ -203,8 +183,9 @@ func isServerCmd(cmd *cobra.Command) bool {
 }
 
 // exemptFromGate reports whether cmd runs without a valid token: cobra's
-// help, completion and shell-completion request commands, and `config write`
-// (the bootstrap that creates config.yml; it still needs a token present).
+// help, completion and shell-completion request commands, `config write`
+// (the bootstrap that creates config.yml; it still needs a token present) and
+// the `key` commands (they are how a key is requested, shown and checked).
 func exemptFromGate(cmd *cobra.Command) bool {
 	if !cmd.HasParent() {
 		return false
@@ -215,6 +196,8 @@ func exemptFromGate(cmd *cobra.Command) bool {
 	}
 	switch top.Name() {
 	case "help", "completion", cobra.ShellCompRequestCmd, cobra.ShellCompNoDescRequestCmd:
+		return true
+	case "key":
 		return true
 	case "config":
 		return cmd.Parent() == top && cmd.Name() == "write"
@@ -228,10 +211,12 @@ func newRootCmd(e *env) *cobra.Command {
 		Short: "Manage KVM/QEMU virtual machines",
 		Long: `Manage KVM/QEMU virtual machines.
 
-Every command except help, completion and 'config write' needs config.yml in
-the working directory and VMTOOL_TOKEN (environment, else .env) matching its
-token_sha256. 'server' needs config.yml with token_sha256 but no local token;
-it checks the bearer token of every request instead.
+Every command except help, completion, 'config write' and 'key' needs
+config.yml in the working directory and a key: VMTOOL_TOKEN (environment, else
+.env) matching its token_sha256, or else the key in the token file, which the
+local service (vmtool.service) must accept. 'server' needs config.yml with
+token_sha256 but no local token; it checks the bearer token of every request
+instead. 'config write' only ever uses VMTOOL_TOKEN (or --token-stdin).
 
 Agent tips:
   - Use --json: every command that is not interactive prints exactly one JSON
@@ -243,9 +228,17 @@ Agent tips:
     (ip_wait_seconds and ssh_wait_seconds in config.yml, 120 s each by
     default; --no-wait returns once it starts). playbook, migrate-disk,
     resize-disk, images push/pull and templates export block until done.
-  - Keys: the token is VMTOOL_TOKEN from the environment, else from .env in
-    the working directory ('just token-fetch' fetches it); the store's token
-    is VMTOOL_SERVER_TOKEN, found the same way.
+  - Keys: the order is VMTOOL_TOKEN from the environment, then from .env in
+    the working directory ('just token-fetch' fetches it), then the token file;
+    the store's key is VMTOOL_SERVER_TOKEN found the same way, then the same
+    token file. The token file is VMTOOL_TOKEN_FILE, else token_file in
+    config.yml, else $XDG_CONFIG_HOME/vmtool/token (~/.config/vmtool/token); it
+    must be a regular file, mode 0600 or tighter. With no key anywhere, a run
+    that is not in a terminal files one key request (or resumes the pending
+    one), prints where to approve it and exits 75: run the command again after
+    approving. In a terminal it waits. --no-key-request turns that off.
+    'vmtool key status' shows where the key comes from and any pending
+    request; 'vmtool key check' shows who accepts the token file's key.
   - Interactive (no --json; with it they exit 2): i, ssh, tunnel, server and
     metal ssh.
   - Nothing prompts; each command's own help has its tips and examples.
@@ -268,7 +261,7 @@ Agent tips:
 			if exemptFromGate(cmd) {
 				return nil
 			}
-			gate := e.gate
+			gate := func() error { return e.gate(cmd) }
 			if isServerCmd(cmd) {
 				gate = e.serverGate
 			}
@@ -318,8 +311,11 @@ Agent tips:
 		addDiskCmd(e),
 		metalCmd(e),
 		serverCmd(e),
+		keyCmd(e),
 		configCmd(func() (string, error) { return e.dir, nil }),
 	)
+	root.PersistentFlags().Bool(noKeyRequestFlag, false, "do not file a key request when no key is found (see 'vmtool key status')")
+	root.PersistentFlags().String(keyRequestURLFlag, "", "absolute https URL where a key request is filed, instead of the one the store names (or $VMTOOL_KEY_REQUEST_URL)")
 	root.PersistentFlags().Bool(jsonFlagName, false, "print the result as one JSON object on stdout, and an error as one on stderr (see docs/CLI.md)")
 	markRunErrors(root)
 	return root

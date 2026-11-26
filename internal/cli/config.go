@@ -47,6 +47,12 @@ func configCmd(dirFn func() (string, error)) *cobra.Command {
 					return config.ErrNoToken
 				}
 			} else if token, err = config.Token(dir); err != nil {
+				// Never the token file: a personal key must not become token_sha256.
+				if p, perr := config.TokenFilePath(dir); perr == nil && errors.Is(err, config.ErrNoToken) {
+					if _, serr := os.Lstat(p); serr == nil {
+						return fmt.Errorf("%w; the token file is not used here: export the operator token (VMTOOL_TOKEN) for this shell, or pass --token-stdin", err)
+					}
+				}
 				return err
 			}
 			if err := config.Write(dir, token, opts); err != nil {

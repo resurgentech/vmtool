@@ -77,7 +77,12 @@ The `code` of the error object is one of the REST API's `Error.code` values (`sp
 | `not_found` | the VM, host, image, template, network or machine does not exist |
 | `conflict` | the request conflicts with what is there (a name in use, a full pool) |
 | `bad_request` | a bad command line, flag or argument (exit `2`), or a value the command refuses (exit `1`) |
-| `unauthorized` | the token gate refused: no `VMTOOL_TOKEN`, no `config.yml`, or a token that does not match |
+| `unauthorized` | the token gate refused: no key, no `config.yml`, a token that does not match, or a token-file key the local service does not accept |
+| `key_pending` | no key yet, and a key request is open (exit `75`); the approval notice is in `message`; run the command again after approving |
+| `key_busy` | another process is handling the key request (exit `75`); try again shortly |
+| `key_denied`, `key_expired`, `key_consumed`, `key_unauthorized`, `key_provider` | the key request ended without a key (exit `1`); `key_provider` says when to try again if the provider asked for a wait |
+| `key_file` | the token file is refused (not a regular file, wrong mode, empty) or missing where `key check` needs it |
+| `key_check_failed` | `vmtool key check`: a target refused the key, or no target accepted it (the rows are on stdout; an unreachable target alone does not fail the check) |
 | `workstation_only` | not used by the command line |
 | `store_unavailable` | the command needs the store and none is configured, or it does not answer |
 | `host_unreachable` | a configured host's daemon did not answer |
@@ -93,7 +98,10 @@ Clients branch on `code`, never on `message`.
   interactive command).
 - `exec` and `metal exec` run another program and exit with its code. With `--json` they also report it as
   `exit_code`.
-- vmtool never exits `75`: no command waits on a key request.
+- `75` (temporary failure: run it again) only when there is no key yet: a key request is pending (`key_pending`) or
+  another process is handling it (`key_busy`). A command that is not in a terminal never waits for the approval: it
+  files one request, prints the notice and exits `75`; a later run collects the key. In a terminal it waits. See the
+  README's "The client's key".
 
 Without `--json`, an error is printed as before: one line on stderr (cobra's `Error:` line and usage for a usage
 error).

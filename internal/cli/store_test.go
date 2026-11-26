@@ -437,7 +437,7 @@ func TestStoreTokenNotInArgv(t *testing.T) {
 	s := newCLIStore(t)
 	dir := storeWorkdir(t, s, storeTok)
 	e := &env{dir: dir}
-	if err := e.gate(); err != nil {
+	if err := e.gate(newRootCmd(e)); err != nil {
 		t.Fatal(err)
 	}
 	e.tunnelExe = "/opt/vmtool/vmtool"

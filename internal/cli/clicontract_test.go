@@ -3,9 +3,12 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"io"
+	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -38,6 +41,31 @@ type jsonCase struct {
 // jsonCases has one case per converted command. Each runs the command's real
 // RunE against fakes (no libvirt, no host, no store but an in-process one).
 var jsonCases = map[string]jsonCase{
+	"vmtool key request": {setup: func(t *testing.T) (string, []string) {
+		r := newKeyRig(t, "")
+		r.putKey(t, "contract-key", 0o600)
+		return r.dir, []string{"key", "request"}
+	}},
+	"vmtool key status": {setup: func(t *testing.T) (string, []string) {
+		r := newKeyRig(t, "")
+		return r.dir, []string{"key", "status"}
+	}},
+	"vmtool key check": {setup: func(t *testing.T) (string, []string) {
+		r := newKeyRig(t, "")
+		local, pool := fakeTLS(t, "contract-key", func(string) (int, string) { return 200, "{}" })
+		certPath := filepath.Join(t.TempDir(), "local.pem")
+		pemBytes := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: local.Certificate().Raw})
+		if err := os.WriteFile(certPath, pemBytes, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		lu, _ := url.Parse(local.URL)
+		r.dir = writeWorkdir(t, "listen: "+lu.Host+"\ntls_cert: "+certPath+"\n", "")
+		old := keyProbeRoots
+		keyProbeRoots = pool
+		t.Cleanup(func() { keyProbeRoots = old })
+		r.putKey(t, "contract-key", 0o600)
+		return r.dir, []string{"key", "check"}
+	}},
 	"vmtool inventory": {setup: func(t *testing.T) (string, []string) {
 		s := newCLIStore(t)
 		s.inv = inventoryBody()
@@ -309,7 +337,7 @@ func TestRootHelpAgentTips(t *testing.T) {
 	if r.code != 0 || r.errOut != "" {
 		t.Fatalf("exit %d, stderr %q", r.code, r.errOut)
 	}
-	for _, want := range []string{"Agent tips:", "--json", "create", "VMTOOL_TOKEN", ".env", "interactive"} {
+	for _, want := range []string{"Agent tips:", "--json", "create", "VMTOOL_TOKEN", ".env", "interactive", "token file", "exits 75", "vmtool key status", "vmtool key check", "VMTOOL_SERVER_TOKEN"} {
 		if !strings.Contains(r.out, want) {
 			t.Errorf("root help lacks %q", want)
 		}
