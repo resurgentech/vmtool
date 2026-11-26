@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/resurgentech/keyclient/keylist"
 	"github.com/resurgentech/vmtool/internal/api"
 	"github.com/resurgentech/vmtool/internal/app"
 	"github.com/resurgentech/vmtool/internal/buildinfo"
@@ -71,6 +72,12 @@ type handlers struct {
 	// requestURL is config.yml's personal_keys.request_url, what the public
 	// GET /v1/key-request reports; empty means 404 (keyrequest.go).
 	requestURL string
+
+	// keys is the pulled key list and local the local token's use counter
+	// (personalkeys.go); GET /v1/personal-keys reports both. keys is nil when
+	// personal_keys.url is unset; both are nil in handler-level tests.
+	keys  *keylist.Source
+	local *localTokenUse
 }
 
 // guestSvc is h.svc with a Tunnel for this request: the running vmtool as

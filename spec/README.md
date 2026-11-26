@@ -572,6 +572,17 @@ answers `200 {"request_url"}` (schema `KeyRequestDiscovery`) when the daemon's
 `http` only to a loopback host), no user info, no fragment. The change is
 additive: no existing operation or schema changed.
 
+`GET /v1/personal-keys` (`getPersonalKeys`, API 2.11.0) is authenticated and is
+served on both roles. It answers `200` (schema `PersonalKeysStatus`) to any caller
+the daemon accepts, whether or not `personal_keys.url` is set: `enabled`, then
+`origin`, `entries`, `age_seconds`, `list_time`, `last_success`, `last_error`
+(non-printables replaced, cut to 200 characters) and `cache_failing` when a key
+list is configured, and always `local_token` (`LocalTokenUse`: `count` of the
+requests `token_sha256` authenticated since the process started, and `last_used`).
+It never holds a hash, a key name or the list's URL. The daemon authenticates a
+bearer token against `token_sha256` first, then against the pulled list; both are
+the same `bearerAuth` scheme, so no operation changed.
+
 A breaking change bumps the major version in `info.version` and the path
 prefix (`/v2/...`).
 

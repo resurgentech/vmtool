@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/resurgentech/keyclient/keylist"
 	"github.com/resurgentech/vmtool/internal/api"
 	"github.com/resurgentech/vmtool/internal/app"
 	"github.com/resurgentech/vmtool/internal/config"
@@ -36,6 +37,17 @@ type Server struct {
 	// FetchRootCAs, when set, replaces the system trust store for fetchImage's
 	// download from store_url (tests inject their CA). Production leaves it nil.
 	FetchRootCAs *x509.CertPool
+
+	// now is the clock of the local token's last_used and hourly line; nil is
+	// time.Now (tests inject one).
+	now func() time.Time
+
+	// keys is the pulled key list (nil unless personal_keys.url is set) and
+	// local the local token's use counter; initKeys builds both, once.
+	keys     *keylist.Source
+	local    *localTokenUse
+	keysInit bool
+	keysErr  error
 
 	// h is the handlers Handler last built (ListenAndServe warms its pool
 	// directory).
@@ -83,6 +95,12 @@ func (s *Server) Handler() http.Handler {
 			h.storeOpts = s.StoreOptions
 		}
 	}
+	if err := s.initKeys(); err != nil {
+		// httpServer refuses to start on this; a bare Handler serves with
+		// token_sha256 alone.
+		slog.Error(err.Error())
+	}
+	h.keys, h.local = s.keys, s.local
 	s.h = h
 	var hash string
 	if s.Config != nil {
@@ -90,7 +108,7 @@ func (s *Server) Handler() http.Handler {
 	}
 	public := publicRoutes()
 	return chain(h, func(next http.Handler) http.Handler {
-		return requireBearer(hash, public, next)
+		return requireAuth(&authenticator{hash: hash, keys: s.keys, local: s.local}, public, next)
 	})
 }
 
@@ -184,6 +202,9 @@ func (s *Server) httpServer() (*http.Server, error) {
 	case c.TLSCert == "":
 		return nil, fmt.Errorf("config.yml sets tls_key but not tls_cert")
 	}
+	if err := s.initKeys(); err != nil {
+		return nil, err
+	}
 	cert, err := tls.LoadX509KeyPair(c.Path(c.TLSCert), c.Path(c.TLSKey))
 	if err != nil {
 		return nil, fmt.Errorf("load tls_cert/tls_key: %w", err)
@@ -222,6 +243,13 @@ func serve(srv *http.Server, ln net.Listener) error {
 func (s *Server) ListenAndServe() error {
 	srv, err := s.httpServer()
 	if err != nil {
+		return err
+	}
+	// The key list starts before the listener binds, so a request that arrives
+	// first meets a loaded cache; the daemon starts with the provider down.
+	keyCtx, stopKeys := context.WithCancel(context.Background())
+	defer stopKeys()
+	if err := s.startKeys(keyCtx); err != nil {
 		return err
 	}
 	ln, err := net.Listen("tcp", srv.Addr)

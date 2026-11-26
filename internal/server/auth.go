@@ -53,13 +53,33 @@ func isPublic(doc *openapi3.T, op *openapi3.Operation) bool {
 // equals hash. An empty hash matches nothing. Unknown paths need the token
 // too, so an unauthenticated client learns nothing about which routes exist.
 func requireBearer(hash string, public *http.ServeMux, next http.Handler) http.Handler {
+	return requireAuth(&authenticator{hash: hash}, public, next)
+}
+
+// requireAuth is requireBearer with the pulled key list behind it: the token
+// is checked against token_sha256 first (constant time); only on a miss is it
+// looked up in the list (which may refresh the list once). A key the list
+// holds passes exactly as the shared token does, and the request goes on
+// unchanged: whatever is forwarded later is the caller's own bearer.
+func requireAuth(a *authenticator, public *http.ServeMux, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if isPublicRequest(public, r) {
 			next.ServeHTTP(w, r)
 			return
 		}
 		tok, ok := bearerToken(r)
-		if !ok || !config.Check(tok, hash) {
+		switch {
+		case !ok:
+			unauthorized(w)
+			return
+		case config.Check(tok, a.hash):
+			a.local.note(r.Method, r.URL.Path)
+		case a.keys != nil:
+			if _, _, found := a.keys.LookupOrRefresh(r.Context(), tok); !found {
+				unauthorized(w)
+				return
+			}
+		default:
 			unauthorized(w)
 			return
 		}

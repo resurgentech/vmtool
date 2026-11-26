@@ -270,6 +270,9 @@ func TestAuthTokenNeverLogged(t *testing.T) {
 			t.Errorf("log contains %q:\n%s", s, out)
 		}
 	}
+	// With a pulled key list: no key, hash or pull token either, in the
+	// daemon's lines or the key list's own.
+	t.Run("key list", checkPulledKeysNeverLogged)
 }
 
 // writeCert writes a self-signed ECDSA cert for 127.0.0.1/localhost.

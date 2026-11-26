@@ -274,7 +274,9 @@ func yamlLine(err error) string {
 }
 
 func parse(dir string, b []byte) (*Config, error) {
-	var c Config
+	// The key list's timings start at their defaults, so a file that names
+	// refresh_on_miss: 0s (off) is told from one that leaves it out.
+	c := Config{PersonalKeys: PersonalKeys{Refresh: DefaultKeyRefresh, RefreshOnMiss: DefaultKeyRefreshOnMiss}}
 	if err := yaml.Unmarshal(b, &c); err != nil {
 		// yaml errors can quote file content; name only the line.
 		return nil, fmt.Errorf("%s: invalid YAML or field types%s", FileName, yamlLine(err))
@@ -325,6 +327,9 @@ func (c *Config) finish() error {
 		if err := checkRequestURL(c.PersonalKeys.RequestURL); err != nil {
 			return err
 		}
+	}
+	if err := c.PersonalKeys.check(); err != nil {
+		return err
 	}
 	if c.TokenSHA256 != "" && !tokenhash.Valid(c.TokenSHA256) {
 		return errors.New("token_sha256 must be 64 lowercase hex characters")

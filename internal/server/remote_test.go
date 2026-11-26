@@ -289,11 +289,14 @@ func (a *authLog) seen() []string {
 	return append([]string(nil), a.auths...)
 }
 
+// peerHost is the name of the hypervisor the helpers below wire up.
+const peerHost = "veritech01"
+
 // hypervisor starts the real handler chain (bearer check, hypervisor gate)
 // over TLS for a hypervisor named veritech01 whose libvirt is fm.
 func hypervisor(t *testing.T, fm app.Manager, token string) (*httptest.Server, *x509.CertPool, *authLog) {
 	t.Helper()
-	res := hosts.NewWith("veritech01", config.RoleHypervisor, nil, func() (app.Manager, func(), error) { return fm, func() {}, nil })
+	res := hosts.NewWith(peerHost, config.RoleHypervisor, nil, func() (app.Manager, func(), error) { return fm, func() {}, nil })
 	h := chain(&handlers{hosts: res, role: config.RoleHypervisor}, func(next http.Handler) http.Handler {
 		return requireBearer(config.Hash(token), publicRoutes(), next)
 	})
@@ -308,7 +311,7 @@ func hypervisor(t *testing.T, fm app.Manager, token string) (*httptest.Server, *
 
 func remoteFor(t *testing.T, srv *httptest.Server, pool *x509.CertPool, token string) *remote.Manager {
 	t.Helper()
-	m, err := remote.New("veritech01", srv.URL, token, remote.WithRootCAs(pool))
+	m, err := remote.New(peerHost, srv.URL, token, remote.WithRootCAs(pool))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -525,7 +528,7 @@ func TestCreateVMOverRemote(t *testing.T) {
 // hvURL. The local libvirt is a tripwire.
 func workstation(t *testing.T, hvURL string, pool *x509.CertPool, token string, h *handlers) http.Handler {
 	t.Helper()
-	res := hosts.NewWith("ws", config.RoleWorkstation, []string{"veritech01"}, func() (app.Manager, func(), error) {
+	res := hosts.NewWith("ws", config.RoleWorkstation, []string{peerHost}, func() (app.Manager, func(), error) {
 		t.Error("workstation libvirt opened")
 		return nil, nil, errors.New("no libvirt")
 	}).WithRemote(func(host, tok string) (app.Manager, func(), error) {
@@ -638,7 +641,7 @@ func TestTunnelRefusesRemoteHost(t *testing.T) {
 			return nil, errors.New("no")
 		},
 	}
-	res := hosts.NewWith("ws", config.RoleWorkstation, []string{"veritech01"}, func() (app.Manager, func(), error) {
+	res := hosts.NewWith("ws", config.RoleWorkstation, []string{peerHost}, func() (app.Manager, func(), error) {
 		t.Error("libvirt opened")
 		return nil, nil, errors.New("no")
 	}).WithRemote(func(host, tok string) (app.Manager, func(), error) {

@@ -870,7 +870,65 @@ with the usual error body when none is set. It is the discovery endpoint of the
 key-request contract a tool such as `keyclient`'s `request.Ensure` follows. It
 is additive: nothing else in the API changes, and a client of an older 2.x API
 works against it unchanged. A daemon older than 2.11.0 answers `401` there.
-The block `personal_keys:` is where further key settings will join this one.
+### Keys from a pulled list (`personal_keys.url`, API 2.11.0)
+
+Besides the one shared token (`token_sha256`), a daemon can accept the personal
+keys that a key provider lists. Both roles do it, workstation and hypervisor.
+It is off unless `url` is set; there is no default address.
+
+```yaml
+personal_keys:
+  url: https://keys.example.lab/keys/v1/lists/vmtool
+  token_file: personal-keys.pull-token   # optional pull token; one line
+  cache_file: personal-keys.cache        # required with url
+  refresh: 1m                            # time between pulls, greater than 0
+  refresh_on_miss: 5s                    # 0s turns it off
+  # allow_insecure_http: true            # plain http to a host that is not loopback
+```
+
+- `url`: absolute `https` (plain `http` only to a loopback host, unless
+  `allow_insecure_http: true`); no credentials in it. `token_file` and
+  `cache_file` are relative to the directory of `config.yml`, like `tls_cert`.
+  `token_file`, `cache_file` and `allow_insecure_http` without `url` are a
+  config error. A bad value is a config load error that names the setting and
+  never prints the value.
+- The list holds SHA-256 hashes of keys; the daemon accepts an entry whose role
+  is `full`. An entry that carries the hash of `token_sha256` is skipped: the
+  local token always wins.
+- The daemon pulls at start and every `refresh`, and keeps the last good list
+  in `cache_file`, so it starts with the provider down. While the provider is
+  down it serves the last good list however old it is. A key that is not in the
+  list triggers one conditional pull (at most one per `refresh_on_miss`) before
+  it is refused, so a key issued a moment ago works on first use, and a key
+  removed from the list stops at the next pull. With no cache and no provider
+  only `token_sha256` works.
+- A request is authenticated by `token_sha256` first, then by the list. The
+  token a workstation forwards to a hypervisor, and gives to ssh children, is
+  always the caller's own, whichever way it was accepted.
+- At start the daemon logs `personal_keys: list origin=... entries=...
+  age=...`. The list's own lines (a skipped entry by name, a failed pull) never hold a
+  key, a hash or the pull token.
+
+`GET /v1/personal-keys` (authenticated) reports it. It answers `200` to any
+caller the daemon accepts, also when no list is configured, so a client can use
+it as the one authenticated "does this daemon accept my key" check:
+
+```json
+{"enabled": true, "origin": "provider", "entries": 7, "age_seconds": 12,
+ "list_time": "...", "last_success": "...", "cache_failing": false,
+ "local_token": {"count": 3, "last_used": "..."}}
+```
+
+`origin` is `none`, `cache` or `provider`; `last_error` appears only after a
+failed pull (cut to 200 characters); `enabled: false` leaves out everything but
+`local_token`. There is no hash, name or URL in it.
+
+The local token stays the operator's fallback: it is required to start, it is
+never replaced by a listed key, and it works with the provider down.
+`local_token` counts the requests it authenticated since the daemon started and
+gives the time of the last one; the daemon also logs one line "local token used"
+(the route, never the token) at most once an hour. That is the evidence that
+nothing still uses the shared token, before anyone retires it.
 
 ### Waits at create (`--no-wait`)
 

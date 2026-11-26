@@ -2980,3 +2980,46 @@ are appended, never edited in; a hook refuses rewrites.
   pinned strings move together.
 - Docs: README (the setting), `spec/README.md` (the public route).
 - Commits: none yet.
+
+## 2026-11-25 — The daemon accepts keys from a pulled list; `GET /v1/personal-keys`
+
+A daemon, workstation or hypervisor, can accept personal API keys from a list
+that a key provider serves, next to its own `token_sha256`. Off unless
+`personal_keys.url` is set; no default URL anywhere. Still API 2.11.0 (this
+branch is unreleased; the minor bump covers all of it).
+
+- `internal/config`: `personal_keys.url`, `token_file`, `cache_file` (required
+  with `url`), `refresh` (1m, greater than zero), `refresh_on_miss` (5s; `0s`
+  turns it off) and `allow_insecure_http`. Relative paths resolve like
+  `tls_cert`. A bad value is a config load error that names the setting and
+  never echoes a value; `token_file`, `cache_file` or `allow_insecure_http`
+  without `url` is an error too, so a forgotten `url` is not silent.
+- `internal/server`: one `keylist.Source` accepting the role `full`, built
+  and started (cache loaded, first pull in the background) before the listener
+  binds, so the daemon starts with the provider down. An entry carrying
+  `token_sha256`'s hash is skipped: the local token wins. `requireBearer`
+  checks `token_sha256` first (constant time), and only on a miss the list
+  (`LookupOrRefresh`: one conditional pull for a key it does not hold). The
+  bearer forwarded to peers and to ssh children is still the caller's own,
+  unchanged. Start-up line: `personal_keys: list origin=... entries=...
+  age=...`.
+- The local token is counted: requests it authenticated since the process
+  started, the time of the last one, and one log line "local token used" (the
+  route, never a token) at most once an hour, so the journal shows whether
+  anything still uses it. This holds with or without a key list.
+- Spec first: authenticated `GET /v1/personal-keys` (`getPersonalKeys`):
+  `enabled`, then origin, entries, age, list time, last success, last error
+  (non-printables replaced, cut to 200 characters) and cache failing when a list
+  is configured, and always `local_token` `{count, last_used}`. It answers 200
+  to any authenticated caller whether or not a list is configured, and holds
+  no hash, name or URL. `internal/api` regenerated.
+- Tests (on `keyclienttest.NewList`, both roles): a listed key passes every
+  authenticated operation as the shared token does; a key removed from the next
+  pull is refused; a new key works on first use; provider down with a cache,
+  and with none; an entry with the local hash is skipped; a pulled key reaches
+  a peer unchanged; no key, hash or pull token in any log line;
+  the list off changes nothing; the status route; the local token's count and
+  hourly line on an injected clock.
+- Docs: README (the settings, the route, the local token as the operator's
+  fallback), `spec/README.md`.
+- Commits: none yet.
