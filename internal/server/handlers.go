@@ -68,6 +68,9 @@ type handlers struct {
 	// ever comes from a request.
 	fetchURL   string
 	fetchRoots *x509.CertPool
+	// requestURL is config.yml's personal_keys.request_url, what the public
+	// GET /v1/key-request reports; empty means 404 (keyrequest.go).
+	requestURL string
 }
 
 // guestSvc is h.svc with a Tunnel for this request: the running vmtool as

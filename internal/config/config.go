@@ -108,6 +108,8 @@ type Config struct {
 	// config directory); the token itself is never in config.yml. Optional:
 	// without it, or without store_url, the daemon does not report.
 	StoreTokenFile string `yaml:"store_token_file"`
+	// PersonalKeys is the optional personal_keys: block (personalkeys.go).
+	PersonalKeys PersonalKeys `yaml:"personal_keys"`
 	// Dir is the directory config.yml was loaded from.
 	Dir string `yaml:"-"`
 }
@@ -319,6 +321,11 @@ func (c *Config) finish() error {
 			return err
 		}
 	}
+	if c.PersonalKeys.RequestURL != "" {
+		if err := checkRequestURL(c.PersonalKeys.RequestURL); err != nil {
+			return err
+		}
+	}
 	if c.TokenSHA256 != "" && !tokenhash.Valid(c.TokenSHA256) {
 		return errors.New("token_sha256 must be 64 lowercase hex characters")
 	}
@@ -472,6 +479,8 @@ type WriteOptions struct {
 	StoreURL string
 	// StoreTokenFile is a hypervisor's store_token_file: a path, never a token.
 	StoreTokenFile string
+	// KeyRequestURL is personal_keys.request_url (validated; see PersonalKeys).
+	KeyRequestURL string
 	// NetworkHome sets network_home: true; false leaves the key as is.
 	NetworkHome bool
 }
@@ -494,6 +503,9 @@ func Write(dir, token string, opts WriteOptions) error {
 			if kv.v != "" {
 				setKey(root, kv.k, kv.v)
 			}
+		}
+		if opts.KeyRequestURL != "" {
+			setNested(root, "personal_keys", "request_url", opts.KeyRequestURL)
 		}
 		if opts.NetworkHome {
 			setNode(root, "network_home", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: "true"})
@@ -655,6 +667,20 @@ func setKey(m *yaml.Node, key, val string) {
 	m.Content = append(m.Content,
 		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key},
 		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: val})
+}
+
+// setNested sets block.key to val, creating the block when it is absent (or
+// not a mapping) and keeping the block's other keys.
+func setNested(root *yaml.Node, block, key, val string) {
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if root.Content[i].Value == block && root.Content[i+1].Kind == yaml.MappingNode {
+			setKey(root.Content[i+1], key, val)
+			return
+		}
+	}
+	m := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	setKey(m, key, val)
+	setNode(root, block, m)
 }
 
 func writeAtomic(path string, data []byte) error {

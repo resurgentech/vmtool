@@ -1,6 +1,6 @@
 module github.com/resurgentech/vmtool
 
-go 1.24.0
+go 1.25.0
 
 require (
 	github.com/charmbracelet/bubbletea v1.3.4
@@ -11,6 +11,7 @@ require (
 	github.com/minio/minio-go/v7 v7.0.95
 	github.com/oapi-codegen/oapi-codegen/v2 v2.5.1
 	github.com/oapi-codegen/runtime v1.4.2
+	github.com/resurgentech/keyclient v0.1.2
 	github.com/spf13/cobra v1.8.1
 	gopkg.in/yaml.v2 v2.4.0
 	gopkg.in/yaml.v3 v3.0.1

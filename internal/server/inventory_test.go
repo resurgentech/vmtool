@@ -30,7 +30,7 @@ import (
 // operation of vmtool.yaml is in this set or in vmChangeOps, so a new route
 // cannot be forgotten: the walk below fails on it.
 var noVMChange = map[string]string{
-	"getDocs": "docs", "getOpenAPISpec": "docs", "getOpenAPIJSON": "docs", "getVersion": "read",
+	"getDocs": "docs", "getOpenAPISpec": "docs", "getOpenAPIJSON": "docs", "getVersion": "read", "getKeyRequestDiscovery": "read",
 	"listHosts": "read", "listVMs": "read", "getVM": "read",
 	"createVM":   "workstation-only workflow; its VM arrives on the daemon as defineVM",
 	"resizeDisk": "workstation-only workflow; its change arrives on the daemon as resizeVMVolume",

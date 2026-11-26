@@ -64,7 +64,7 @@ esac`)
   if [[ $1 == -i ]]; then cp "$2" "$d/inventory.copy"; fi
   shift
 done`)
-	if err := os.WriteFile(filepath.Join(e.wd, "go.mod"), []byte("module x\n\ngo 1.24.0\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(e.wd, "go.mod"), []byte("module x\n\ngo 1.25.0\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	e.env = append(e.env, "VMTOOL_TOKEN="+deployTok, "DEPLOY_RETRIES=1", "GO_MIN=1.21")
@@ -153,7 +153,7 @@ func TestDeployGoCheckFails(t *testing.T) {
 			if r.code == 0 {
 				t.Fatalf("exit 0: %s%s", r.stdout, r.stderr)
 			}
-			want := "veritech01: found " + c.found + ", need go >= 1.21 (go.mod asks for 1.24.0; GOTOOLCHAIN=auto fetches it)."
+			want := "veritech01: found " + c.found + ", need go >= 1.21 (go.mod asks for 1.25.0; GOTOOLCHAIN=auto fetches it)."
 			if !strings.Contains(r.stderr, want) {
 				t.Errorf("stderr lacks %q: %q", want, r.stderr)
 			}

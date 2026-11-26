@@ -19,7 +19,7 @@ hv_pool_dir := "/var/lib/vmtool/images"
 go_min := "1.21"
 # Go that `just prereqs <host>` installs when the host has none (or too old):
 # the `go` line of go.mod (a test keeps them equal).
-go_install_version := "1.24.0"
+go_install_version := "1.25.0"
 
 default:
     @just --list

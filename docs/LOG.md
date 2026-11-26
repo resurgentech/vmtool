@@ -2955,3 +2955,28 @@ are appended, never edited in; a hook refuses rewrites.
   host. `just check` green.
 - Commits: the helper commit on `master` (this entry rides in it); not
   pushed. No tag; a host takes it with `just deploy`.
+
+## 2026-11-25 — API 2.11.0: `GET /v1/key-request`, and Go 1.25
+
+- Spec first: `GET /v1/key-request` (`getKeyRequestDiscovery`, `security: []`),
+  `200 {"request_url"}` (`KeyRequestDiscovery`) and `404`; `info.version` 2.10.0
+  to 2.11.0. Additive: no existing operation or schema changed, so an older
+  client works against it unchanged. `internal/api` regenerated.
+- `internal/config`: a `personal_keys:` block with `request_url`, off unless
+  set and with no default. It is validated at load (absolute `https`; plain
+  `http` only to `localhost`, 127.0.0.0/8 or `::1`; no user info, no fragment),
+  and a bad one is a config error that never echoes the value.
+  `vmtool config write --key-request-url <url>` writes it and keeps the block's
+  other keys.
+- `internal/server`: the handler answers the configured URL, else 404 with the
+  usual error body. The route is public because the spec says `security: []`
+  (`auth.go` reads it from there); `TestAuthEveryOperation` and the public-ops
+  set know it. `TestKeyRequestEnsureThroughDaemon` runs `keyclient`'s
+  `request.Ensure` against a daemon, with `keyclienttest`'s provider behind the
+  configured URL.
+- Go 1.25: `go.mod` `go 1.25.0` and `keyclient v0.1.2` (needs 1.25), the
+  justfile's `go_install_version`, the store image's base
+  (`golang:1.25.14-bookworm`; not built here) and `scripts/deploy_test.go`'s
+  pinned strings move together.
+- Docs: README (the setting), `spec/README.md` (the public route).
+- Commits: none yet.

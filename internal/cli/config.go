@@ -67,6 +67,7 @@ func configCmd(dirFn func() (string, error)) *cobra.Command {
 	f.StringVar(&opts.TLSKey, "tls-key", "", "TLS key path")
 	f.StringVar(&opts.StoreURL, "store-url", "", "https URL of the store a hypervisor daemon fetches images from")
 	f.StringVar(&opts.StoreTokenFile, "store-token-file", "", "path of the file holding the host token a hypervisor daemon reports to the store with (a path, never the token)")
+	f.StringVar(&opts.KeyRequestURL, "key-request-url", "", "absolute https URL where a tool files a request for an API key (plain http only to a loopback host); the daemon reports it at GET /v1/key-request")
 	f.BoolVar(&opts.NetworkHome, "network-home", false, "write network_home: true, so this daemon refuses the VM-creating routes (the host is a network home)")
 	f.BoolVar(&tokenStdin, "token-stdin", false, "read the token from one line of stdin")
 

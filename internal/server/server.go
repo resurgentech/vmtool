@@ -67,6 +67,7 @@ func (s *Server) Handler() http.Handler {
 	if s.Config != nil {
 		h.role = s.Config.Role
 		h.networkHome = s.Config.NetworkHome
+		h.requestURL = s.Config.PersonalKeys.RequestURL
 		// A hypervisor daemon's own use of the store is the inventory
 		// reporter (inventory.go, with its host token from store_token_file,
 		// read at start); fetchImage's download from store_url uses a ticket

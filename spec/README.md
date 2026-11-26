@@ -42,8 +42,8 @@ generated mux (see `docs/design/spec-first.md` PR 3).
 ## Security
 
 Global `security: [bearerAuth]` (`components.securitySchemes.bearerAuth`,
-HTTP bearer). Only `getDocs`, `getOpenAPISpec`, `getOpenAPIJSON` and
-`getVersion` set `security: []`; every other operation lists `401`
+HTTP bearer). Only `getDocs`, `getOpenAPISpec`, `getOpenAPIJSON`,
+`getVersion` and `getKeyRequestDiscovery` set `security: []`; every other operation lists `401`
 (`components.responses.Unauthorized`).
 
 The server derives the exempt routes from the embedded spec at startup
@@ -563,6 +563,14 @@ from the embedded spec at runtime), `build_version` (module version or VCS
 revision) and `host` (the server's own name). `api_version` is informational:
 clients do not compare versions, neither before an operation nor in
 `vmtool hosts` / `GET /v1/hosts`.
+
+`GET /v1/key-request` (`getKeyRequestDiscovery`, API 2.11.0) is the one public
+operation under `/v1`: the discovery fragment of a key-request contract. It
+answers `200 {"request_url"}` (schema `KeyRequestDiscovery`) when the daemon's
+`config.yml` sets `personal_keys.request_url`, else `404` with the usual
+`Error` body. The value is validated at config load: absolute `https` (plain
+`http` only to a loopback host), no user info, no fragment. The change is
+additive: no existing operation or schema changed.
 
 A breaking change bumps the major version in `info.version` and the path
 prefix (`/v2/...`).

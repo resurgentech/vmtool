@@ -34,7 +34,7 @@ const (
 	wrongToken = "wrong-token-b21e44"
 )
 
-var publicOps = map[string]bool{"getDocs": true, "getOpenAPISpec": true, "getOpenAPIJSON": true, "getVersion": true}
+var publicOps = map[string]bool{"getDocs": true, "getOpenAPISpec": true, "getOpenAPIJSON": true, "getVersion": true, "getKeyRequestDiscovery": true}
 
 type specOp struct {
 	method, path, id string
@@ -150,8 +150,12 @@ func TestAuthEveryOperation(t *testing.T) {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest(o.method, p, nil))
 		if o.public {
-			if rec.Code != http.StatusOK {
-				t.Errorf("%s without token: %d, want 200", label, rec.Code)
+			want := http.StatusOK
+			if o.id == "getKeyRequestDiscovery" {
+				want = http.StatusNotFound // authedServer sets no personal_keys.request_url
+			}
+			if rec.Code != want {
+				t.Errorf("%s without token: %d, want %d", label, rec.Code, want)
 			}
 			continue
 		}

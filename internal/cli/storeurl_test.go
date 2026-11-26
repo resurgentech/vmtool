@@ -62,3 +62,24 @@ func TestConfigServerURL(t *testing.T) {
 		t.Fatalf("set: %q %v", out, err)
 	}
 }
+
+// `config write --key-request-url` records personal_keys.request_url, and a
+// bad one is refused.
+func TestConfigWriteKeyRequestURL(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("VMTOOL_TOKEN", "PLACEHOLDER-not-a-secret-1")
+	if _, err := runConfig(t, dir, "", "write", "--name", "hv1", "--role", "hypervisor", "--key-request-url", "https://keys.example.lab/v1/services/example/requests"); err != nil {
+		t.Fatal(err)
+	}
+	c, err := config.Load(dir)
+	if err != nil || c.PersonalKeys.RequestURL != "https://keys.example.lab/v1/services/example/requests" {
+		t.Fatalf("%q %v", c.PersonalKeys.RequestURL, err)
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, "config.yml"))
+	if !strings.Contains(string(b), "personal_keys:") {
+		t.Errorf("config.yml has no personal_keys block:\n%s", b)
+	}
+	if _, err := runConfig(t, dir, "", "write", "--key-request-url", "http://keys.example.lab/r"); err == nil || !strings.Contains(err.Error(), "personal_keys.request_url") {
+		t.Errorf("http accepted: %v", err)
+	}
+}

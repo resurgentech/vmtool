@@ -6,7 +6,7 @@
 # config.yaml must set `listen: 0.0.0.0:8095` (the default is loopback);
 # Caddy fronts it.
 
-FROM golang:1.24.0-bookworm AS build
+FROM golang:1.25.14-bookworm AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download

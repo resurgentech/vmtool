@@ -753,7 +753,7 @@ and starts the default network for you; on Arch those steps are manual.
 
 ## Build
 
-Go 1.24+.
+Go 1.25+.
 
 ```bash
 go build -o vmtool ./cmd/vmtool
@@ -847,6 +847,30 @@ unchanged. On a hypervisor `default_pool` wins over `vmtool` for disks while
 `vmtool` stays the image-cache pool. The value is a plain pool name
 (`^[A-Za-z0-9][A-Za-z0-9._-]*$`); anything else is a config load error naming
 the key.
+
+### Where a tool asks for an API key (`personal_keys.request_url`, API 2.11.0)
+
+A daemon can tell a tool where to ask for a key of its own. Set the address of
+the request endpoint of your key provider in the daemon's `config.yml`:
+
+```yaml
+personal_keys:
+  request_url: https://keys.example.lab/v1/services/example/requests
+```
+
+or `vmtool config write --key-request-url <url>`, which keeps every other key
+of the file. Off unless set: there is no default. The value is an absolute
+`https` URL; plain `http` only to a loopback host (`localhost`, 127.0.0.0/8,
+`::1`); no user info, no fragment. Anything else is a config load error that
+names `personal_keys.request_url` and never prints the value.
+
+The daemon only reports the address and never dials it. `GET /v1/key-request`
+is public (no token needed) and answers `200 {"request_url": "<url>"}`, or `404`
+with the usual error body when none is set. It is the discovery endpoint of the
+key-request contract a tool such as `keyclient`'s `request.Ensure` follows. It
+is additive: nothing else in the API changes, and a client of an older 2.x API
+works against it unchanged. A daemon older than 2.11.0 answers `401` there.
+The block `personal_keys:` is where further key settings will join this one.
 
 ### Waits at create (`--no-wait`)
 
