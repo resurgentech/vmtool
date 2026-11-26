@@ -3171,3 +3171,19 @@ from. Nothing changes for a client whose `.env` holds `VMTOOL_TOKEN` and
 - `AGENTS.md` gains hard rule 7, "Public and generic": examples use the neutral names, deployment values come
   from settings with no default, and test fixtures and logs are exempt.
 - `docs/design/spec-first.md`: absolute home paths became `<checkout>` and `<interloc checkout>`.
+
+## 2026-11-26 — A daemon build that runs on any recent glibc
+
+- `just daemon-dist` builds `./cmd/vmtool` in a container (`deploy/vmtool-daemon.Dockerfile`) of
+  `VMTOOL_DAEMON_BUILD_BASE` (default `ubuntu:22.04`, a Debian or Ubuntu family image) with cgo and
+  `-tags libvirt_dlopen`, so the binary loads libvirt at run time and its glibc floor is the base's. It writes
+  `dist/`: `vmtool`, `vmtool-thin`, `vmtool-net` and `vmtool.service.in` (the templates as they are in `deploy/`),
+  the two sudoers rules and `SHA256SUMS`. The build is stamped with the commit as `just deploy` does and refuses a
+  tree with uncommitted changes unless `VMTOOL_ALLOW_DIRTY=1`.
+- `just daemon-image <tag>` builds the same files into a `FROM scratch` image with `dist/` at `/dist` and pushes
+  `<VMTOOL_IMAGE_REGISTRY>/vmtool-daemon:<tag>`; it refuses an empty tag, `latest` and an unset registry first.
+- `VMTOOL_DAEMON_BUILD_BASE` is the ninth deploy setting (optional, with a generic default) and is listed by
+  `just settings`. `just check` also runs `go vet -tags libvirt_dlopen ./...`. `just deploy` and `just install` are
+  unchanged.
+- The README gains "Deploying with your own tooling": the files, paths, owners and modes `just deploy` installs, the
+  `vmtool config write` command, the restart and the `/version` check.

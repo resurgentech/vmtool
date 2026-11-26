@@ -70,8 +70,21 @@ verify:
 test *ARGS:
     cd "{{ root }}" && "{{ root }}/scripts/test-capped.sh" {{ ARGS }}
 
-# Pre-push: stale-generate check + tests
-check: verify test
+# Vet with the libvirt_dlopen tag the daemon build uses (no libvirt headers needed)
+vet-dlopen:
+    cd "{{ root }}" && go vet -tags libvirt_dlopen ./...
+
+# Pre-push: stale-generate check + tests + vet with the libvirt_dlopen tag
+check: verify test vet-dlopen
+
+# Build the daemon in a container of an old glibc (VMTOOL_DAEMON_BUILD_BASE, default ubuntu:22.04; a Debian or Ubuntu family image) into dist/ with a SHA256SUMS; refuses a tree with uncommitted changes unless VMTOOL_ALLOW_DIRTY=1
+daemon-dist:
+    VMTOOL_ROOT="{{ root }}" "{{ root }}/scripts/daemon-dist.sh"
+
+# Build the daemon image (FROM scratch, the daemon-dist files at /dist) and push <VMTOOL_IMAGE_REGISTRY>/vmtool-daemon:<tag> (run by a person; needs VMTOOL_IMAGE_REGISTRY; refuses an empty tag or `latest`; log in to the registry first)
+[positional-arguments]
+daemon-image tag:
+    VMTOOL_ROOT="{{ root }}" "{{ root }}/scripts/daemon-image.sh" "$1"
 
 # Build the store image and push <VMTOOL_IMAGE_REGISTRY>/vmtool-store:<tag> and :latest (run by a person; needs VMTOOL_IMAGE_REGISTRY; refuses an empty tag or `latest`; log in to the registry first)
 [positional-arguments]

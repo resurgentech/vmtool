@@ -11,3 +11,4 @@ images/
 /deploy.env
 /keys-pull-token
 /personal-keys.json
+/dist/

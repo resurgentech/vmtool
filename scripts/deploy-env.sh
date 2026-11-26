@@ -1,8 +1,8 @@
-# Sourced by cert.sh, deploy.sh, install.sh, store-image.sh, token.sh and
+# Sourced by cert.sh, deploy.sh, install.sh, store-image.sh, daemon-dist.sh, daemon-image.sh, token.sh and
 # settings.sh (not run on its own).
 #
 # load_deploy_env <root> reads the optional settings file <root>/deploy.env
-# (gitignored) for exactly these eight settings, none with a default:
+# (gitignored) for exactly these nine settings, none with a default except the last:
 #
 #   VMTOOL_DOMAIN              DNS domain of the host certificates (cert, install, deploy)
 #   BAO_CA_PATH                the OpenBao kv path of the CA: <path>/crt and <path>/key
@@ -16,6 +16,8 @@
 #   VMTOOL_KEY_REQUEST_URL     the URL a daemon tells tools to file key requests at
 #   BAO_KEYS_PULL_TOKEN_PATH   the OpenBao kv path of the list's pull token
 #                              (the field is always "token")
+#   VMTOOL_DAEMON_BUILD_BASE   the distro image `daemon-dist` and `daemon-image` build in; optional, the
+#                              script falls back to a generic default (daemon-build-lib.sh)
 #
 # The parser is strict and never executes the file: a line is blank, a
 # comment (# first), or KEY=value for one of those keys (the value may be
@@ -25,7 +27,7 @@
 # The caller defines die().
 
 DEPLOY_ENV_KEYS=(VMTOOL_DOMAIN BAO_CA_PATH BAO_STORE_HOST_TOKENS_PATH BAO_TOKEN_PATH VMTOOL_IMAGE_REGISTRY
-  VMTOOL_PERSONAL_KEYS_URL VMTOOL_KEY_REQUEST_URL BAO_KEYS_PULL_TOKEN_PATH)
+  VMTOOL_PERSONAL_KEYS_URL VMTOOL_KEY_REQUEST_URL BAO_KEYS_PULL_TOKEN_PATH VMTOOL_DAEMON_BUILD_BASE)
 
 load_deploy_env() {
   local f="$1/deploy.env" line n=0 key val k
@@ -36,13 +38,13 @@ load_deploy_env() {
     n=$((n + 1))
     line="${line%$'\r'}"
     [[ $line =~ ^[[:space:]]*(#.*)?$ ]] && continue
-    if [[ $line =~ ^(VMTOOL_DOMAIN|BAO_CA_PATH|BAO_STORE_HOST_TOKENS_PATH|BAO_TOKEN_PATH|VMTOOL_IMAGE_REGISTRY|VMTOOL_PERSONAL_KEYS_URL|VMTOOL_KEY_REQUEST_URL|BAO_KEYS_PULL_TOKEN_PATH)=(.*)$ ]]; then
+    if [[ $line =~ ^(VMTOOL_DOMAIN|BAO_CA_PATH|BAO_STORE_HOST_TOKENS_PATH|BAO_TOKEN_PATH|VMTOOL_IMAGE_REGISTRY|VMTOOL_PERSONAL_KEYS_URL|VMTOOL_KEY_REQUEST_URL|BAO_KEYS_PULL_TOKEN_PATH|VMTOOL_DAEMON_BUILD_BASE)=(.*)$ ]]; then
       key="${BASH_REMATCH[1]}"
       val="${BASH_REMATCH[2]}"
       if [[ $val =~ ^\"(.*)\"$ || $val =~ ^\'(.*)\'$ ]]; then val="${BASH_REMATCH[1]}"; fi
       found[$key]="$val"
     else
-      die "$f line $n is not KEY=value for one of the deploy settings (VMTOOL_DOMAIN, BAO_CA_PATH, BAO_STORE_HOST_TOKENS_PATH, BAO_TOKEN_PATH, VMTOOL_IMAGE_REGISTRY, VMTOOL_PERSONAL_KEYS_URL, VMTOOL_KEY_REQUEST_URL, BAO_KEYS_PULL_TOKEN_PATH), nor blank, nor a # comment."
+      die "$f line $n is not KEY=value for one of the deploy settings (VMTOOL_DOMAIN, BAO_CA_PATH, BAO_STORE_HOST_TOKENS_PATH, BAO_TOKEN_PATH, VMTOOL_IMAGE_REGISTRY, VMTOOL_PERSONAL_KEYS_URL, VMTOOL_KEY_REQUEST_URL, BAO_KEYS_PULL_TOKEN_PATH, VMTOOL_DAEMON_BUILD_BASE), nor blank, nor a # comment."
     fi
   done <"$f"
   for k in "${!found[@]}"; do
@@ -84,3 +86,7 @@ keys_settings_check() {
   [[ -z ${BAO_KEYS_PULL_TOKEN_PATH:-} || ${BAO_KEYS_PULL_TOKEN_PATH} =~ ^[A-Za-z0-9._][A-Za-z0-9._/-]*$ ]] \
     || die "BAO_KEYS_PULL_TOKEN_PATH is not a plain OpenBao kv path (like kv/example/keys/pull/vmtool)."
 }
+
+# The one setting with a default: the distro image the daemon is built in. An
+# old, long-supported glibc, so the binary runs on anything newer.
+DAEMON_BUILD_BASE_DEFAULT="ubuntu:22.04"

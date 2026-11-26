@@ -13,3 +13,5 @@ docs/reports
 vmtool
 *.key
 *.pem
+dist
+dist.new.*

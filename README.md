@@ -1080,8 +1080,9 @@ nothing still uses the shared token, before anyone retires it.
 
 #### Deploy settings and `just settings`
 
-The recipes that deploy hold no value of your site. Eight settings, **none
-with a default**, come from the environment or from `deploy.env` (below):
+The recipes that deploy hold no value of your site. Nine settings come from the
+environment or from `deploy.env` (below); **none has a default** except the
+build base of `daemon-dist` (generic, optional):
 
 | Setting | Needed by | Meaning |
 |---|---|---|
@@ -1089,7 +1090,8 @@ with a default**, come from the environment or from `deploy.env` (below):
 | `BAO_CA_PATH` | `cert`, `install`, `deploy` (required) | the OpenBao kv path of the CA (`<path>/crt` and `<path>/key`) |
 | `BAO_STORE_HOST_TOKENS_PATH` | `deploy` (optional) | the kv path whose fields are the hosts' store tokens; unset: no host token, one warning |
 | `BAO_TOKEN_PATH` | `token-fetch` (required), `token` (optional) | the kv path of the operator token; `token` without it writes `.env` only |
-| `VMTOOL_IMAGE_REGISTRY` | `store-image` (required) | `host[:port][/path]` the store image is pushed to, e.g. `registry.example.lab` |
+| `VMTOOL_IMAGE_REGISTRY` | `store-image`, `daemon-image` (required) | `host[:port][/path]` the images are pushed to, e.g. `registry.example.lab` |
+| `VMTOOL_DAEMON_BUILD_BASE` | `daemon-dist`, `daemon-image` (optional) | the Debian or Ubuntu family image the daemon is built in; default `ubuntu:22.04` |
 | the three key-list settings | `install`, `deploy` (optional) | below |
 
 A required setting that is missing or empty stops the recipe with a line like
@@ -1127,7 +1129,7 @@ BAO_KEYS_PULL_TOKEN_PATH=kv/example/keys/pull/vmtool
 The scripts read the file themselves with a strict parser: blank lines and `#`
 comments are skipped, a value may be wrapped in one pair of quotes, nothing is
 executed or expanded, and any other line is not allowed (the error names its
-line number and never its content; only the eight setting names are accepted).
+line number and never its content; only the nine setting names are accepted).
 A variable already in the environment, even an empty one, wins over the file.
 (`.env` is not read for these, and the justfile passes none of them on
 explicitly, so the shell's own environment reaches the scripts as it is.)
@@ -1159,6 +1161,90 @@ explicitly, so the shell's own environment reaches the scripts as it is.)
   clients use personal keys and `.env` no longer holds it, export the operator
   token in the shell that runs `just deploy` / `just install`:
   `export VMTOOL_TOKEN=...`.
+
+### Deploying with your own tooling
+
+`just deploy` builds on the host over ssh. If you deploy with other tooling
+(Ansible, a package, an image pipeline), build the daemon once and install the
+files yourself.
+
+**The build.** `just daemon-dist` builds `./cmd/vmtool` in a container
+(`deploy/vmtool-daemon.Dockerfile`) with cgo, `-tags libvirt_dlopen` and
+`-trimpath`, and writes `dist/`:
+
+| File | What it is |
+|---|---|
+| `vmtool` | the daemon and the CLI, one binary |
+| `vmtool-thin`, `vmtool-net` | the two root helpers, **templates as they are in `deploy/`**: render `@POOL_DIR@` in `vmtool-thin` (the image directory, `/var/lib/vmtool/images` by default) as `just deploy` does; `vmtool-net` has nothing to render |
+| `vmtool-thin.sudoers`, `vmtool-net.sudoers` | the sudoers rules for the two helpers |
+| `vmtool.service.in` | the systemd unit, a template: render `@USER@` (`vmtool`) and `@DIR@` (the daemon's directory) |
+| `SHA256SUMS` | the sum of every other file; check with `sha256sum -c SHA256SUMS` |
+
+The build is stamped with the commit it is built from (`+dirty` if the tree has
+uncommitted changes, which `just daemon-dist` refuses unless
+`VMTOOL_ALLOW_DIRTY=1`). It runs in a container of `VMTOOL_DAEMON_BUILD_BASE`
+(default `ubuntu:22.04`; a Debian or Ubuntu family image, since it installs
+`gcc` with `apt-get`). The binary runs on that base's glibc and anything newer,
+and it needs no libvirt at build time: it loads `libvirt.so.0` when it first
+opens a libvirt connection. Without libvirt installed such a command stops with
+`connecting to libvirt: ... Failed to open libvirt.so.0`; commands that open no
+connection (`vmtool --help`, `vmtool config write`) run without it. For an
+older or newer glibc floor, set the base. `just daemon-image <tag>` builds the
+same files into a `FROM scratch` image with `dist/` at `/dist` and pushes
+`<VMTOOL_IMAGE_REGISTRY>/vmtool-daemon:<tag>` (it refuses an empty tag,
+`latest` and an unset registry before it builds). Take the files out with
+`docker create` and `docker cp`, or `COPY --from=<that image> /dist/ ...` in
+your own build.
+
+**The install**, as `just deploy` does it (`<hv>` is the daemon's directory,
+`/opt/vmtool` by default, which `just prereqs` or you create beforehand, owned
+by `vmtool`):
+
+```
+/usr/local/libexec/vmtool-thin     root:root 0755   rendered vmtool-thin
+/usr/local/libexec/vmtool-net      root:root 0755   vmtool-net
+/etc/sudoers.d/vmtool-thin         root:root 0440   vmtool-thin.sudoers; check with `visudo -cf` on a temporary name, then move into place
+/etc/sudoers.d/vmtool-net          root:root 0440   vmtool-net.sudoers; checked the same way
+<hv>/vmtool                        vmtool:vmtool 0755   the daemon
+<hv>/config.yml                    vmtool:vmtool 0600   written by `vmtool config write` (below)
+<hv>/tls/                          vmtool:vmtool 0700
+<hv>/tls/<host>.<domain>.crt       vmtool:vmtool 0644
+<hv>/tls/<host>.<domain>.key       vmtool:vmtool 0600
+<hv>/store-host-token              vmtool:vmtool 0600   only when the host reports to a store; else absent
+<hv>/keys-pull-token               vmtool:vmtool 0600   only when the key list is on; else absent
+<hv>/personal-keys.json            the list's cache, written by the daemon; remove it when the list is off
+/etc/systemd/system/vmtool-daemon.service   0644   rendered vmtool.service.in, User=vmtool, ExecStart=<hv>/vmtool server
+```
+
+**The config.** Run `vmtool config write` in a staging directory, with the
+operator token on stdin and never in an argument. The paths are relative to
+`config.yml`'s directory, so they hold once it is installed in `<hv>`:
+
+```bash
+printf '%s\n' "$VMTOOL_TOKEN" | ./vmtool config write --token-stdin \
+  --role hypervisor --name hv1 --listen 0.0.0.0:9473 \
+  --tls-cert tls/hv1.example.lab.crt --tls-key tls/hv1.example.lab.key \
+  [--store-url https://proxy.example/vmstore] [--store-token-file store-host-token] \
+  [--network-home] \
+  [--personal-keys-url <url> --personal-keys-token-file keys-pull-token --personal-keys-cache-file personal-keys.json] \
+  [--key-request-url <url>]
+```
+
+It writes `config.yml` with mode 0600 and stores only the token's hash; the
+bracketed flags are the optional ones.
+
+**Restart and check.**
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now vmtool-daemon
+sudo systemctl restart vmtool-daemon
+curl --fail -sS https://hv1.example.lab:9473/version
+```
+
+`GET /version` is public. Its `build_version` is the commit the binary was
+stamped with (compare it with the commit you built), `api_version` is the API's
+and `host` the daemon's name.
 
 ### Waits at create (`--no-wait`)
 

@@ -28,6 +28,7 @@ declare -A needs=(
   [VMTOOL_PERSONAL_KEYS_URL]="optional; unset: install and deploy leave the pulled key list off"
   [VMTOOL_KEY_REQUEST_URL]="optional; unset: install and deploy tell tools no key request URL"
   [BAO_KEYS_PULL_TOKEN_PATH]="optional; install and deploy need it only when VMTOOL_PERSONAL_KEYS_URL is set"
+  [VMTOOL_DAEMON_BUILD_BASE]="optional; unset: daemon-dist and daemon-image build in $DAEMON_BUILD_BASE_DEFAULT"
 )
 
 declare -A inenv=()
