@@ -67,7 +67,7 @@ func TestPrefixVersionPublic(t *testing.T) {
 		t.Fatalf("status %d", resp.StatusCode)
 	}
 	var v storeapi.Version
-	if err := json.Unmarshal([]byte(body), &v); err != nil || v.Version != "1.4.0" {
+	if err := json.Unmarshal([]byte(body), &v); err != nil || v.Version != "1.5.0" {
 		t.Fatalf("body %q err %v", body, err)
 	}
 }

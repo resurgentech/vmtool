@@ -9,7 +9,7 @@ a handler.
 | Path | Contract |
 |---|---|
 | `openapi/vmtool.yaml` | Every HTTP endpoint `vmtool server` registers. oapi-codegen generates models, a stdlib `ServerInterface`, a strict wrapper, an embedded spec, and a test client (`internal/api`). |
-| `openapi/store.yaml` | The image and credential store's HTTP API (`vmtool-store`, 1.4.0), served by `cmd/vmtool-store`, not by `vmtool server`. Its own generated package, `internal/storeapi`; handled as `vmtool.yaml` is (see [The store](#the-store)). |
+| `openapi/store.yaml` | The image and credential store's HTTP API (`vmtool-store`, 1.5.0), served by `cmd/vmtool-store`, not by `vmtool server`. Its own generated package, `internal/storeapi`; handled as `vmtool.yaml` is (see [The store](#the-store)). |
 
 Interactive SSH from CLI (`vmtool ssh`) and TUI (`t`) execs `ssh` locally and
 is not an HTTP operation.
@@ -290,7 +290,7 @@ no trailing `/`; the store refuses to start with any other, naming
 need only the address with the path.
 
 **Auth.** Every route needs `Authorization: Bearer <token>` except `GET
-/version`. The store holds a SHA-256 per named caller (`tokens.yaml`), never a
+/version` and `GET /v1/key-request` (1.5.0). The store holds a SHA-256 per named caller (`tokens.yaml`), never a
 token, and logs requests by caller name; it logs no token, ticket, credential
 or request body. One more scheme exists, `Authorization: Ticket <t>`, accepted
 on exactly `GET /v1/images/{name}/blob`; on any other route it is 401, like a
@@ -304,9 +304,28 @@ file means none). It is accepted only on `GET /v1/whoami` (answers
 other route, image blob, credentials and images included, it is 401. A hash
 may not appear in both token files. The log's caller for it is `host/<host>`.
 
+**Personal keys (1.5.0).** With `personal_keys.url` set the store also pulls a
+key list (the same `keylist` source the daemon uses). The bearer order in
+`authenticate` is: `tokens.yaml` (every entry, constant time); then host
+tokens, where a match is final (an allowed route answers the host, any other
+route is 401) and the list is not consulted, so a known host token causes no
+pull; then the list, where only a token that matched neither is looked up
+(one conditional pull on a miss). An entry whose name or hash is in
+`tokens.yaml` or `host_tokens.yaml` is skipped, and only the role `full` is
+accepted. A pulled key is a user caller named by its key name (no `/`, so never
+a host); `whoami` answers that name and kind `user`. `getKeyRequestDiscovery`
+(`GET /v1/key-request`, public, `security: []`) answers `200 {request_url}`
+from `personal_keys.request_url`, else 404. `getPersonalKeys`
+(`GET /v1/personal-keys`, user callers; a host token is 401) answers 200 with
+the list off too: the daemon's status fields (`PersonalKeysStatus`) and
+`local_tokens`, one `LocalTokenUse` row `{name, count, last_used?}` per
+`tokens.yaml` caller, sorted by name: the requests that caller's token
+authenticated since start. No hash, no pulled key's name, no URL. No database
+change: the schema stays 9.
+
 | Group | Operations |
 |---|---|
-| Probe | `getVersion` (public); `whoami` (the caller's name; the client's mode check) |
+| Probe | `getVersion` and `getKeyRequestDiscovery` (public); `whoami` (the caller's name; the client's mode check); `getPersonalKeys` (user callers) |
 | Images | `listImages`, `getImage`, `putImage`, `deleteImage`, `getImageBlob`, `createImageTicket` |
 | VM credentials, keyed by (host, name) and the domain UUID | `getVMCredential`, `putVMCredential`, `deleteVMCredential` |
 | Metal records, keyed by name | `listMachineCredentials`, `getMachineCredential`, `putMachineCredential`, `deleteMachineCredential` |

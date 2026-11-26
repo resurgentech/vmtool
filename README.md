@@ -642,7 +642,7 @@ metadata and encrypted credentials in `data/store.db` on sdf1. The store
 refuses a token or key file readable by group or others, and a data
 directory looser than 0700. It serves plain HTTP only on loopback or with
 `behind_proxy: true` behind a TLS-terminating proxy (rule 5 in `AGENTS.md`);
-it needs a token on every route except `GET /version`.
+it needs a token on every route except `GET /version` and `GET /v1/key-request`.
 
 **Serving under a path.** A proxy that serves several services on one host
 and passes the full path on unchanged (Caddy's `handle /vmstore/*`, not
@@ -664,6 +664,72 @@ the root) or one or more `/segment` of letters, digits and `. _ ~ -`, with no
 empty or `.` segment, no `..` and no trailing `/`; anything else stops the
 store at start with an error naming `path_prefix`. Tokens, host tokens,
 tickets and everything else are unchanged.
+
+**Personal keys (store API 1.5.0).** Besides the callers in `tokens.yaml`, the
+store can accept the personal keys a key provider lists, and tell a tool where
+to ask for one. Both are off unless set, and a `config.yaml` without a
+`personal_keys:` block loads and behaves as before:
+
+```yaml
+personal_keys:
+  url: http://keys.internal:8080/keys/v1/lists/vmtool
+  allow_insecure_http: true     # plain http to a host that is not loopback
+  token_file: personal-keys.pull-token   # optional pull token; one line
+  cache_file: personal-keys.cache        # required with url
+  refresh: 1m                            # time between pulls, greater than 0
+  refresh_on_miss: 5s                    # 0s turns it off
+  request_url: https://keys.example.lab/v1/services/example/requests
+```
+
+- `url` is the pulled list; `https`, or plain `http` only to a loopback host
+  unless `allow_insecure_http: true`, which is for a network path you trust
+  (the example is a provider on the container network the store shares); no
+  credentials in it. `token_file`, `cache_file` and `allow_insecure_http` need
+  `url`, and `cache_file` is required with it. Relative paths are used as
+  written, like the store's other paths (relative to the process's working
+  directory); in the container, name an absolute path under the data
+  directory. `request_url` is the address where a tool files a key request,
+  only reported, never dialled: absolute `https`, or `http` to a loopback host.
+  A bad value stops the store at start with an error that names the setting and
+  never prints the value.
+- The list holds SHA-256 hashes of keys; the store accepts an entry whose role
+  is `full`. **tokens.yaml callers and host tokens stay the operator's
+  fallback and always win:** an entry whose name or hash is a `tokens.yaml`
+  caller's or a host's is skipped (logged by name). `tokens.yaml` is still
+  required, with at least one entry.
+- Bearer order: a `tokens.yaml` caller; then a host token (a match is final:
+  on a host route the host, on any other route `401`, and the list is never
+  consulted, so a known host token starts no pull); only a token that is
+  neither goes to the list, where a miss triggers one conditional pull (at most
+  one per `refresh_on_miss`) before it is refused. Download tickets are
+  unchanged. A pulled key is a user caller named by its key name:
+  `GET /v1/whoami` answers that name and kind `user`, and the request log names
+  it as it names the other callers. A host token is never a pulled key.
+- The store pulls at start and every `refresh`, keeps the last good list in
+  `cache_file` and starts with the provider down; while it is down the last
+  good list is served however old it is. A removed key stops at the next pull.
+  At start the store logs `personal_keys: list origin=... entries=...
+  age=...`. No log line holds a key, a hash or the pull token. The database
+  and its schema are untouched, so the previous store image still starts on the
+  same data.
+
+`GET /v1/key-request` is public and answers `200 {"request_url": "<url>"}`, or
+`404` when none is set. `GET /v1/personal-keys` (authenticated, for user
+callers; a host token gets `401` as on every route outside its allow-list)
+answers `200` also when the list is off:
+
+```json
+{"enabled": true, "origin": "provider", "entries": 7, "age_seconds": 12,
+ "list_time": "...", "last_success": "...", "cache_failing": false,
+ "local_tokens": [{"name": "alice", "count": 3, "last_used": "..."},
+                  {"name": "bob", "count": 0}]}
+```
+
+`local_tokens` has one row per `tokens.yaml` caller, sorted by name: the
+requests that caller's token authenticated since the store started and the time
+of the last one (absent when none). It is the evidence that nothing still uses
+an old token before anyone retires it. It names callers, never a hash. With the
+list off the object is `{"enabled": false, "local_tokens": [...]}`.
 
 **Key loss: `enc.key` encrypts every stored credential.** If it is lost from
 both OpenBao and the file on sdf1, every stored credential is lost, and

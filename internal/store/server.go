@@ -12,9 +12,12 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/getkin/kin-openapi/openapi3"
+	"github.com/resurgentech/keyclient/keylist"
 	"github.com/resurgentech/vmtool/internal/store/blob"
 	"github.com/resurgentech/vmtool/internal/store/db"
 	"github.com/resurgentech/vmtool/internal/storeapi"
@@ -27,6 +30,17 @@ type Server struct {
 	log    *slog.Logger
 	routes *routeTable
 	img    *images
+	now    func() time.Time
+
+	// keys is the pulled key list; nil until Start has built it, and for good
+	// when personal_keys.url is unset.
+	keys atomic.Pointer[keylist.Source]
+	// local counts the requests each tokens.yaml caller's token authenticated.
+	local *localUse
+
+	startMu  sync.Mutex
+	started  bool
+	startErr error
 }
 
 // Deps are the store's backends. Image routes answer 500 (fixed text) when
@@ -49,13 +63,17 @@ func NewServer(c *Config, log *slog.Logger, d Deps) *Server {
 		// The inventory rules (gone_since, the sweep's cutoff) read the store's clock.
 		d.DB.SetClock(d.Now)
 	}
-	return &Server{cfg: c, log: log, routes: newRouteTable(), img: newImages(log, d)}
+	now := d.Now
+	if now == nil {
+		now = time.Now
+	}
+	return &Server{cfg: c, log: log, routes: newRouteTable(), img: newImages(log, d), now: now, local: newLocalUse(c.Tokens, now)}
 }
 
 // Handler is the whole request pipeline: prefix -> log -> auth -> generated
 // routes.
 func (s *Server) Handler() http.Handler {
-	strict := storeapi.NewStrictHandlerWithOptions(&handlers{version: specVersion(), img: s.img}, nil, storeapi.StrictHTTPServerOptions{
+	strict := storeapi.NewStrictHandlerWithOptions(&handlers{version: specVersion(), img: s.img, srv: s}, nil, storeapi.StrictHTTPServerOptions{
 		// Fixed text only: a decoder error can quote the input, which may be a secret.
 		RequestErrorHandlerFunc:  func(w http.ResponseWriter, _ *http.Request, _ error) { writeError(w, 400, "bad request") },
 		ResponseErrorHandlerFunc: func(w http.ResponseWriter, _ *http.Request, _ error) { writeError(w, 500, "internal error") },
@@ -148,10 +166,14 @@ func (s *Server) httpServer() (*http.Server, error) {
 	return srv, nil
 }
 
-// ListenAndServe checks the configuration, binds and serves until it fails.
+// ListenAndServe checks the configuration, starts the key list (if one is
+// configured and Start has not run), binds and serves until it fails.
 func (s *Server) ListenAndServe() error {
 	srv, err := s.httpServer()
 	if err != nil {
+		return err
+	}
+	if err := s.Start(context.Background()); err != nil {
 		return err
 	}
 	ln, err := net.Listen("tcp", srv.Addr)
@@ -343,10 +365,7 @@ func (s *Server) authenticate(r *http.Request, pat string) (string, bool) {
 		return "", false
 	}
 	if strings.EqualFold(scheme, "Bearer") {
-		if name, ok := s.bearerCaller(cred); ok {
-			return name, true
-		}
-		return s.hostCaller(cred, pat)
+		return s.bearerAuth(r.Context(), cred, pat)
 	}
 	if strings.EqualFold(scheme, "Ticket") {
 		return s.ticketCaller(r, pat, cred)
@@ -385,16 +404,23 @@ const hostCallerPrefix = "host/"
 // (pat "" included) the token is as good as unknown. Every entry is checked,
 // as in bearerCaller.
 func (s *Server) hostCaller(tok, pat string) (string, bool) {
+	found := s.hostMatch(tok)
+	if found == "" || !hostAllowed[pat] {
+		return "", false
+	}
+	return hostCallerPrefix + found, true
+}
+
+// hostMatch is the host whose token hash matches tok, or "". It checks every
+// entry, so the time taken does not depend on which one matched.
+func (s *Server) hostMatch(tok string) string {
 	var found string
 	for host, h := range s.cfg.HostTokens {
 		if tokenhash.Check(tok, h) {
 			found = host
 		}
 	}
-	if found == "" || !hostAllowed[pat] {
-		return "", false
-	}
-	return hostCallerPrefix + found, true
+	return found
 }
 
 func writeError(w http.ResponseWriter, code int, msg string) {
@@ -408,6 +434,7 @@ func writeError(w http.ResponseWriter, code int, msg string) {
 type handlers struct {
 	version string
 	img     *images
+	srv     *Server // the key list and the use counts; nil only in tests that never call them
 }
 
 var _ storeapi.StrictServerInterface = (*handlers)(nil)

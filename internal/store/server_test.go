@@ -77,18 +77,22 @@ func concrete(p string) string {
 func TestAuthEveryOperation(t *testing.T) {
 	ts, _ := testServer(t)
 	ops := specOps(t)
-	if len(ops) != 32 {
+	if len(ops) != 34 {
 		t.Fatalf("only %d operations in the spec", len(ops))
 	}
 	for op, public := range ops {
 		method, p, _ := strings.Cut(op, " ")
 		u := ts.URL + concrete(p)
 		if public {
-			if op != "GET /version" {
-				t.Errorf("%s is public; only GET /version may be", op)
+			if op != "GET /version" && op != "GET /v1/key-request" {
+				t.Errorf("%s is public; only GET /version and GET /v1/key-request may be", op)
 			}
-			if resp, _ := do(t, method, u, "", ""); resp.StatusCode != 200 {
-				t.Errorf("%s without token = %d, want 200", op, resp.StatusCode)
+			want := 200
+			if op == "GET /v1/key-request" {
+				want = 404 // this server has no request_url
+			}
+			if resp, _ := do(t, method, u, "", ""); resp.StatusCode != want {
+				t.Errorf("%s without token = %d, want %d", op, resp.StatusCode, want)
 			}
 			continue
 		}
@@ -127,7 +131,7 @@ func TestVersionPublic(t *testing.T) {
 		t.Fatalf("status %d", resp.StatusCode)
 	}
 	var v storeapi.Version
-	if err := json.Unmarshal([]byte(body), &v); err != nil || v.Version != "1.4.0" {
+	if err := json.Unmarshal([]byte(body), &v); err != nil || v.Version != "1.5.0" {
 		t.Fatalf("body %q err %v", body, err)
 	}
 }
@@ -234,7 +238,7 @@ func TestSpecParity(t *testing.T) {
 }
 
 // The spec, not the code, says which routes are public.
-func TestOnlyVersionIsPublic(t *testing.T) {
+func TestOnlyVersionAndKeyRequestArePublic(t *testing.T) {
 	doc, err := storeapi.GetSwagger()
 	if err != nil {
 		t.Fatal(err)
@@ -247,7 +251,8 @@ func TestOnlyVersionIsPublic(t *testing.T) {
 			}
 		}
 	}
-	if len(pub) != 1 || pub[0] != "GET /version" {
+	sort.Strings(pub)
+	if len(pub) != 2 || pub[0] != "GET /v1/key-request" || pub[1] != "GET /version" {
 		t.Fatalf("public operations = %v", pub)
 	}
 	var _ *openapi3.T = doc

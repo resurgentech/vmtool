@@ -3023,3 +3023,45 @@ branch is unreleased; the minor bump covers all of it).
 - Docs: README (the settings, the route, the local token as the operator's
   fallback), `spec/README.md`.
 - Commits: none yet.
+
+## 2026-11-25 — Store API 1.5.0: the store accepts keys from a pulled list; key request discovery
+
+The store can accept personal API keys from a list that a key provider serves,
+next to its `tokens.yaml` callers and host tokens, and tell a tool where to ask
+for a key. Both are off unless set (`personal_keys.url`, `personal_keys.request_url`
+in `config.yaml`); no default URL anywhere. A `config.yaml` with no
+`personal_keys:` block loads and behaves as before. No database change: the
+schema stays 9, so the previous store image still starts on the same data.
+
+- Spec first: `spec/openapi/store.yaml` 1.4.0 -> 1.5.0. Public
+  `GET /v1/key-request` (`getKeyRequestDiscovery`, `security: []`, `200
+  {request_url}` or `404`); the prose that said only `GET /version` is
+  unauthenticated is updated. Authenticated `GET /v1/personal-keys`
+  (`getPersonalKeys`, user callers; a host token is 401): the daemon's list
+  status fields plus `local_tokens`, one `{name, count, last_used}` row per
+  `tokens.yaml` caller, sorted by name, counting the requests that caller's
+  token authenticated since the store started. It answers 200 with the list off.
+  No hash, no pulled key's name, no URL. `internal/storeapi` regenerated.
+- `internal/keycfg` (new, no libvirt): the `personal_keys` settings and their
+  validation, shared by the daemon's `config.yml` and the store's `config.yaml`.
+  The daemon's behaviour is unchanged (`config.PersonalKeys` is an alias).
+- `internal/store`: `personal_keys` in the config (`cache_file` required with
+  `url`; relative paths are used as written, like the store's other paths).
+  One `keylist.Source` accepting the role `full`, built and started
+  (`Server.Start`, called by the command and by `ListenAndServe`) before the
+  store listens, so it starts with the provider down. An entry whose name or
+  hash is a `tokens.yaml` caller's or a host's is skipped. Bearer order:
+  `tokens.yaml`, then host tokens (a match is final and never reaches the list,
+  so a known host token starts no pull), then the list (one conditional pull on
+  a miss). A pulled key is a user caller named by its key name; `whoami` and
+  the request log name it. Start-up line: `personal_keys: list origin=...
+  entries=... age=...`.
+- Tests on the store's helpers and `keyclienttest.NewList`: a pulled key reads
+  and writes credentials, images and inventory; refused after the next pull
+  removes it; a new key works on first use; entries taken locally are skipped;
+  a host token on a non-host route is 401 and starts no pull; the store starts
+  with the list endpoint down; the list unset changes nothing; a 1.4.0 config
+  loads; no key, hash or pull token in any log line; `whoami` for a pulled key;
+  the status route with the list on and off, and the per-caller counts.
+- Docs: README (the store's settings, the bearer order, the new routes),
+  `spec/README.md`.

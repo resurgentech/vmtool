@@ -68,12 +68,19 @@ func serve(c *store.Config, stderr io.Writer, newBlob func(*store.Config) (blob.
 	}
 	defer closeDB()
 	log := slog.Default()
+	srv := store.NewServer(c, nil, store.Deps{Blob: b, DB: d})
+	// The key list (when personal_keys.url is set) starts before the store
+	// listens; a provider that is down is not an error here.
+	if err := srv.Start(ctx); err != nil {
+		fmt.Fprintln(stderr, "vmtool-store:", err)
+		return 1
+	}
 	slog.Info("vmtool-store listening", "listen", c.Listen, "tls", c.UsesTLS(), "behind_proxy", c.BehindProxy)
 	bctx, cancel := context.WithCancel(ctx)
 	stopped := store.StartBackups(bctx, store.BackupDeps{DB: d, Blob: b, DataDir: c.DataDir, Log: log})
 	swept := store.StartSweeps(bctx, store.SweepDeps{DB: d, Log: log})
 	errc := make(chan error, 1)
-	go func() { errc <- store.NewServer(c, nil, store.Deps{Blob: b, DB: d}).ListenAndServe() }()
+	go func() { errc <- srv.ListenAndServe() }()
 	code := 0
 	select {
 	case err := <-errc:

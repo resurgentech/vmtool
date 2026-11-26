@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/resurgentech/vmtool/internal/keycfg"
 	"github.com/resurgentech/vmtool/internal/tokenhash"
 	"gopkg.in/yaml.v3"
 )
@@ -54,6 +55,12 @@ type Config struct {
 	// is empty (serve at the root) or one or more /segment (checkPathPrefix).
 	PathPrefix string `yaml:"path_prefix"`
 
+	// PersonalKeys is the optional personal_keys: block: a pulled list of
+	// per-person API keys, and where a tool asks for one. Off unless set. Its
+	// relative paths (token_file, cache_file) are used as written, like the
+	// store's other paths: relative to the process's working directory.
+	PersonalKeys keycfg.Settings `yaml:"personal_keys"`
+
 	// S3AccessKey and S3SecretKey come from the environment.
 	S3AccessKey string `yaml:"-"`
 	S3SecretKey string `yaml:"-"`
@@ -73,7 +80,9 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
-	c := &Config{}
+	// The key list's timings start at their defaults, so a file that names
+	// refresh_on_miss: 0s (off) is told from one that leaves it out.
+	c := &Config{PersonalKeys: keycfg.Defaults()}
 	dec := yaml.NewDecoder(bytes.NewReader(b))
 	dec.KnownFields(true)
 	if err := dec.Decode(c); err != nil && !errors.Is(err, io.EOF) {
@@ -110,6 +119,9 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 	if err := checkPathPrefix(c.PathPrefix); err != nil {
+		return nil, err
+	}
+	if err := c.PersonalKeys.Check(); err != nil {
 		return nil, err
 	}
 	return c, nil

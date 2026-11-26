@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: vmtool store API
-  version: 1.4.0
+  version: 1.5.0
   description: >
     HTTP surface of `vmtool-store`, the image and credential store that runs as
     a container behind a TLS-terminating proxy. Spec-first: models, stdlib
@@ -13,9 +13,12 @@ info:
     (`https://proxy.example/vmstore/version`), and any other path, the prefix
     alone included, is 404 before auth. Without it the store serves at the
     root. Clients keep the base URL's path and append the paths below to it.
-    Every operation except GET /version requires
+    Every operation except GET /version and GET /v1/key-request requires
     `Authorization: Bearer <token>`; the store checks the token's SHA-256
-    against the named hashes in tokens.yaml and answers 401 otherwise. The
+    against the named hashes in tokens.yaml, then against host_tokens.yaml,
+    then (when personal_keys.url is set) against the pulled key list, and
+    answers 401 otherwise. A token that matches a host token is final: it is
+    never looked up in the pulled list. The
     credential routes carry secrets only in the body of a successful GET;
     no other response and no log line does. The one other credential is a
     download ticket, accepted only on the image blob route. A host token
@@ -45,6 +48,54 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Version"
+  /v1/key-request:
+    get:
+      operationId: getKeyRequestDiscovery
+      summary: Where to ask for an API key (discovery); public
+      description: >
+        Public (no Authorization header needed). Answers 200 with the absolute
+        URL where a key request is filed when the store's config sets
+        personal_keys.request_url, and 404 when it does not (the default). A
+        tool that needs a key calls this, then files its request at the
+        returned URL; the store takes no part in the request itself. Added in
+        1.5.0; a store older than that answers 401 here.
+      security: []
+      responses:
+        "200":
+          description: The store is configured with a request URL.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KeyRequestDiscovery"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/personal-keys:
+    get:
+      operationId: getPersonalKeys
+      summary: Status of the pulled key list and of the tokens.yaml callers' use
+      description: >
+        Authenticated, for a user caller (a tokens.yaml caller or a pulled
+        key); a host token answers 401 here as on every route outside its
+        allow-list. Answers 200 whether or not a key list is configured.
+        `enabled` is true when the store's config sets personal_keys.url. Then
+        the object says where the live list came from (`origin`: none, cache
+        or provider), how many keys it holds, how old it is, the last good
+        pull, the last error (cut to 200 characters; never a key, a hash or
+        the pull token) and whether the cache file is failing. It never holds
+        a hash, a pulled key's name or the list's URL. `local_tokens` has one
+        row per tokens.yaml caller, sorted by name: how many requests that
+        caller's token authenticated since the process started and when the
+        last one was, so an operator can see whether anything still uses it.
+        A row names a caller, never a hash. Added in 1.5.0.
+      responses:
+        "200":
+          description: The status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonalKeysStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
   /v1/whoami:
     get:
       operationId: whoami
@@ -53,8 +104,9 @@ paths:
         "200":
           description: >
             The caller's name and kind. A user token answers its name from
-            tokens.yaml and kind `user`; a host token answers `host/<host>`
-            and kind `host`.
+            tokens.yaml and kind `user`; a key pulled from the key list
+            answers its key name and kind `user`; a host token answers
+            `host/<host>` and kind `host`.
           content:
             application/json:
               schema:
@@ -1175,6 +1227,76 @@ components:
       properties:
         version:
           type: string
+    KeyRequestDiscovery:
+      type: object
+      required: [request_url]
+      properties:
+        request_url:
+          type: string
+          description: The absolute URL where a key request is filed.
+    PersonalKeysStatus:
+      type: object
+      required: [enabled, local_tokens]
+      properties:
+        enabled:
+          type: boolean
+          description: >
+            true when the store's config sets personal_keys.url; when false
+            only local_tokens is present.
+        origin:
+          type: string
+          enum: [none, cache, provider]
+          description: >
+            Where the live list came from: none (nothing loaded), cache (the
+            cache file, no good pull yet) or provider (the latest good pull of
+            this process).
+        entries:
+          type: integer
+          minimum: 0
+          description: Number of live entries.
+        age_seconds:
+          type: integer
+          minimum: 0
+          description: >
+            Age of the live list in seconds (for a cache, the age of the cache
+            file); absent when origin is none.
+        list_time:
+          type: string
+          format: date-time
+          description: When the live list was last known good; absent when origin is none.
+        last_success:
+          type: string
+          format: date-time
+          description: The last good pull in this process; absent when there has been none.
+        last_error:
+          type: string
+          maxLength: 200
+          description: >
+            The latest pull's failure, non-printable characters replaced by ?,
+            cut to 200 characters; absent unless the latest attempt failed.
+        cache_failing:
+          type: boolean
+          description: The latest cache write failed; the list is live in memory regardless.
+        local_tokens:
+          type: array
+          description: One row per tokens.yaml caller, sorted by name.
+          items:
+            $ref: "#/components/schemas/LocalTokenUse"
+    LocalTokenUse:
+      type: object
+      required: [name, count]
+      properties:
+        name:
+          type: string
+          description: The caller's name in tokens.yaml.
+        count:
+          type: integer
+          minimum: 0
+          description: Requests this caller's token authenticated since the process started.
+        last_used:
+          type: string
+          format: date-time
+          description: Time of the last such request; absent when there has been none.
     Whoami:
       type: object
       required: [name]
