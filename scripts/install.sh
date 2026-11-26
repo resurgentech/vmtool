@@ -12,7 +12,11 @@
 #   UNIT_PATH     where the unit goes (default /etc/systemd/system/vmtool.service)
 #   HV_DIR        where a hypervisor daemon lives (default /opt/vmtool); a
 #                 vmtool.service at UNIT_PATH run from there is refused
-#   VMTOOL_DOMAIN, BAO_CA_PATH, CERT_DAYS   passed on to cert.sh
+#   VMTOOL_DOMAIN, BAO_CA_PATH   required, no defaults: the environment or
+#                 deploy.env in VMTOOL_ROOT (the environment wins); a missing
+#                 one stops the run by name before anything is built or
+#                 installed. `just settings` lists them. Passed on to cert.sh.
+#   CERT_DAYS     passed on to cert.sh
 #
 # cert.sh runs before `config write`, so it sees no config.yml on a first
 # install and treats that as the default role, workstation. If a config.yml
@@ -41,16 +45,22 @@ set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
 root="${VMTOOL_ROOT:-$(cd "$here/.." && pwd)}"
-domain="${VMTOOL_DOMAIN:-labtwo}"
 unit_path="${UNIT_PATH:-/etc/systemd/system/vmtool.service}"
 hv_dir="${HV_DIR:-/opt/vmtool}"
 template="$here/../deploy/vmtool.service.in"
-export VMTOOL_ROOT="$root" VMTOOL_DOMAIN="$domain"
+export VMTOOL_ROOT="$root"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 . "$here/deploy-env.sh"
 load_deploy_env "$root"
+lab_settings_check
 keys_settings_check
+# The lab's values: a missing one stops here, before the build, the
+# certificate, any sudo or restart.
+require_setting VMTOOL_DOMAIN
+require_setting BAO_CA_PATH
+domain="$VMTOOL_DOMAIN"
+export VMTOOL_DOMAIN BAO_CA_PATH
 
 # 1. A token must exist (env or .env) before anything is built or installed.
 have_token=no

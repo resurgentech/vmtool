@@ -37,14 +37,14 @@
 #                  When this machine's config.yml has server.url (`vmtool
 #                  config server-url` prints it), `--store-url <url>` is added:
 #                  the daemon's store_url, the one address fetchImage dials.
-#                  With a store_url, the host's field of
-#                  BAO_STORE_HOST_TOKENS_PATH (default
-#                  kv/infra/labtwo/vmtool_store/host_tokens) is read with
+#                  With a store_url and BAO_STORE_HOST_TOKENS_PATH set (no
+#                  default), the host's field of that kv path is read with
 #                  `bao kv get -field=<host>` into a variable, sent over the
 #                  stdin of one ssh call into stage/store-host-token, and
-#                  `--store-token-file store-host-token` is added. No field:
-#                  one warning, no flag, and an old HV_DIR/store-host-token is
-#                  removed at install
+#                  `--store-token-file store-host-token` is added. No field,
+#                  or the path unset (then bao is not called): one warning,
+#                  no flag, and an old HV_DIR/store-host-token is removed at
+#                  install
 #   7. install     the rendered unit, the rendered root helper vmtool-thin
 #                  (deploy/vmtool-thin with HV_POOL_DIR written into it) and
 #                  its sudoers rule (deploy/vmtool-thin.sudoers) go to stage/
@@ -84,8 +84,13 @@
 #                  `--key-request-url <url>`, with or without a list.
 #   8. check       GET /version over HTTPS (public: no token sent)
 #
+# Settings (no defaults; the environment, else deploy.env in VMTOOL_ROOT, the
+# environment winning; `just settings` lists them):
+#   VMTOOL_DOMAIN, BAO_CA_PATH   required, checked with the other arguments
+#                  before anything is copied, built or installed; as for cert.sh
+#   BAO_STORE_HOST_TOKENS_PATH   optional, see step 6
 # Environment (the justfile passes these):
-#   VMTOOL_ROOT, VMTOOL_DOMAIN, BAO_CA_PATH, CERT_DAYS   as for cert.sh
+#   VMTOOL_ROOT, CERT_DAYS   as for cert.sh
 #   HV_DIR         daemon directory on the host (default /opt/vmtool)
 #   GO_MIN         minimum Go as major.minor (default 1.21)
 #   VMTOOL_BIN     local vmtool, used for `config host` (default <root>/vmtool)
@@ -111,7 +116,6 @@ set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
 root="${VMTOOL_ROOT:-$(cd "$here/.." && pwd)}"
-domain="${VMTOOL_DOMAIN:-labtwo}"
 go_min="${GO_MIN:-1.21}"
 retries="${DEPLOY_RETRIES:-15}"
 vmtool_bin="${VMTOOL_BIN:-$root/vmtool}"
@@ -126,16 +130,15 @@ sudoers_src="$here/../deploy/vmtool-thin.sudoers"
 net_src="$here/../deploy/vmtool-net"
 net_sudoers_src="$here/../deploy/vmtool-net.sudoers"
 gobin="${GO_BIN_DIR:-/usr/local/go/bin}"
-export VMTOOL_ROOT="$root" VMTOOL_DOMAIN="$domain" VMTOOL_BIN="$vmtool_bin"
+export VMTOOL_ROOT="$root" VMTOOL_BIN="$vmtool_bin"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
-# The three key-list settings, from the environment or the optional deploy.env.
+# The lab's and the key-list settings, from the environment or the optional deploy.env.
 . "$here/deploy-env.sh"
 
 host="${1:-}"
 [[ -n $host && $# -eq 1 ]] || { echo "usage: $0 <host>" >&2; exit 2; }
 [[ $host =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] || die "invalid host name '$host'"
-[[ $domain =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] || die "invalid domain '$domain'"
 # hv lands in remote shell commands and a systemd unit unquoted.
 [[ $hv =~ ^/[A-Za-z0-9._/-]+$ ]] || die "HV_DIR '$hv' has characters unsafe in a shell command or systemd unit."
 [[ $ud =~ ^/[A-Za-z0-9._/-]+$ ]] || die "UNIT_DIR '$ud' has characters unsafe in a shell command."
@@ -146,7 +149,14 @@ host="${1:-}"
 [[ -z ${REMOTE_DIR:-} ]] || echo "WARNING: REMOTE_DIR is no longer used and is ignored; the daemon goes to HV_DIR ($hv)." >&2
 
 load_deploy_env "$root"
+lab_settings_check
 keys_settings_check
+# The lab's values (cert.sh, which this runs, needs the same two): a missing
+# one stops here, before anything is copied, built, certified or installed.
+require_setting VMTOOL_DOMAIN
+require_setting BAO_CA_PATH
+domain="$VMTOOL_DOMAIN"
+export VMTOOL_DOMAIN BAO_CA_PATH
 
 # Token: env, else .env. Builtins only.
 tok="${VMTOOL_TOKEN:-}"
@@ -239,9 +249,11 @@ fi
 # the daemon is installed without a token file (and any old one removed).
 host_tok=""
 if [[ -n $store_url ]]; then
-  host_tok=$(bao kv get -field="$host" "${BAO_STORE_HOST_TOKENS_PATH:-kv/infra/labtwo/vmtool_store/host_tokens}" 2>/dev/null) || host_tok=""
-  host_tok="${host_tok//[$' \t\r\n']/}"
-  [[ -n $host_tok ]] || echo "WARNING: $host has no store host token; its daemon will not report VMs; see make_secrets.sh hosttokens" >&2
+  if [[ -n ${BAO_STORE_HOST_TOKENS_PATH:-} ]]; then
+    host_tok=$(bao kv get -field="$host" "$BAO_STORE_HOST_TOKENS_PATH" 2>/dev/null) || host_tok=""
+    host_tok="${host_tok//[$' \t\r\n']/}"
+  fi
+  [[ -n $host_tok ]] || echo "WARNING: $host has no store host token; its daemon will not report VMs; mint a host token for it in the store's host-token list" >&2
 fi
 token_arg=""
 [[ -z $host_tok ]] || token_arg=" --store-token-file store-host-token"

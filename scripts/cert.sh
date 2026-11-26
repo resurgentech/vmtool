@@ -12,10 +12,13 @@
 #   scripts/cert.sh --local-name print this machine's host name (name: in
 #                                config.yml, else `hostname -s`)
 #
-# Environment (the justfile passes these):
+# Environment (the justfile passes the ones without a note):
 #   VMTOOL_ROOT     directory holding config.yml and tls/ (default: repo root)
-#   VMTOOL_DOMAIN   DNS domain appended to the host name
-#   BAO_CA_PATH     OpenBao kv path holding the CA: <path>/crt and <path>/key
+#   VMTOOL_DOMAIN   DNS domain appended to the host name (required)
+#   BAO_CA_PATH     OpenBao kv path holding the CA: <path>/crt and <path>/key (required)
+#                   Both are read from the environment or, when unset there,
+#                   from deploy.env in VMTOOL_ROOT; a missing one stops the run
+#                   by name before anything is issued. `just settings` lists them.
 #   CERT_DAYS       certificate lifetime in days
 #   HV_DIR          daemon directory on a remote host (default /opt/vmtool)
 #   CERT_STAGE_ONLY 1: stop after staging (deploy installs the files itself)
@@ -27,14 +30,14 @@
 # default role, workstation, so `install` can run this before it writes one.
 set -euo pipefail
 
-root="${VMTOOL_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
-domain="${VMTOOL_DOMAIN:-labtwo}"
-bao_path="${BAO_CA_PATH:-kv/infra/labtwo/selfsigned_cert}"
+here="$(cd "$(dirname "$0")" && pwd)"
+root="${VMTOOL_ROOT:-$(cd "$here/.." && pwd)}"
 days="${CERT_DAYS:-825}"
 vmtool_bin="${VMTOOL_BIN:-$root/vmtool}"
 cfg="$root/config.yml"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
+. "$here/deploy-env.sh"
 
 # yaml_top <key>: value of a top-level scalar in config.yml (quotes and
 # trailing comments stripped); empty if absent.
@@ -63,6 +66,15 @@ fi
 host="${1:-}"
 [[ -n $host && $# -eq 1 ]] || { echo "usage: $0 <host> | --local-name" >&2; exit 2; }
 [[ $host =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] || die "invalid host name '$host'"
+
+# The lab's values come from the environment or deploy.env; a missing one stops
+# the run here, before any openssl, bao, scp or ssh call.
+load_deploy_env "$root"
+lab_settings_check
+require_setting VMTOOL_DOMAIN
+require_setting BAO_CA_PATH
+domain="$VMTOOL_DOMAIN"
+bao_path="$BAO_CA_PATH"
 
 role=$(yaml_top role)
 role="${role:-workstation}"

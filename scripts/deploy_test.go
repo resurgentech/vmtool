@@ -1455,6 +1455,7 @@ fi`)
 	if withToken {
 		writeStub(t, e, "hosttok", storeHostTok+"\n")
 	}
+	e.env = append(e.env, "BAO_STORE_HOST_TOKENS_PATH=kv/example/vmtool_store/host_tokens")
 	return e, rhome, hv
 }
 
@@ -1496,7 +1497,7 @@ func TestDeployInstallsStoreHostToken(t *testing.T) {
 	if r.code != 0 {
 		t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
 	}
-	if !strings.Contains(readOr(t, filepath.Join(e.stub, "bao.argv")), "kv get -field=veritech01 kv/infra/labtwo/vmtool_store/host_tokens\n") {
+	if !strings.Contains(readOr(t, filepath.Join(e.stub, "bao.argv")), "kv get -field=veritech01 kv/example/vmtool_store/host_tokens\n") {
 		t.Errorf("bao argv: %q", readOr(t, filepath.Join(e.stub, "bao.argv")))
 	}
 	if !strings.Contains(readOr(t, filepath.Join(e.stub, "installed.list")), hv+"/store-host-token 0600\n") {
@@ -1565,7 +1566,7 @@ func TestDeployNoStoreHostTokenWarns(t *testing.T) {
 	if r.code != 0 {
 		t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
 	}
-	warn := "veritech01 has no store host token; its daemon will not report VMs; see make_secrets.sh hosttokens"
+	warn := "veritech01 has no store host token; its daemon will not report VMs; mint a host token for it in the store's host-token list"
 	if n := strings.Count(r.stderr, warn); n != 1 {
 		t.Errorf("warning count %d, want 1: %s", n, r.stderr)
 	}
@@ -1622,19 +1623,6 @@ func TestDeployNoStoreURLNoHostToken(t *testing.T) {
 		t.Error("stale store-host-token kept")
 	}
 	noHostTokenLeak(t, e, r)
-}
-
-func TestJustDeployPassesHostTokensPath(t *testing.T) {
-	if _, err := exec.LookPath("just"); err != nil {
-		t.Skip("just not installed")
-	}
-	out, err := exec.Command("just", "--justfile", "../justfile", "--dry-run", "deploy", "h1").CombinedOutput()
-	if err != nil {
-		t.Fatalf("%v: %s", err, out)
-	}
-	if !strings.Contains(string(out), `BAO_STORE_HOST_TOKENS_PATH="kv/infra/labtwo/vmtool_store/host_tokens"`) {
-		t.Errorf("deploy recipe: %s", out)
-	}
 }
 
 // K3: an own name with no listed entry and no DNS record falls back to

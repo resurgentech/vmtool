@@ -115,6 +115,9 @@ func TestStoreImageDockerignore(t *testing.T) {
 	}
 }
 
+// The recipe hands the tag to scripts/store-image.sh (behaviour is tested in
+// lab_settings_test.go with a stub docker); the script carries no build arg or
+// credential.
 func TestStoreImageRecipe(t *testing.T) {
 	jf := readText(t, "../justfile")
 	i := strings.Index(jf, "\nstore-image tag:")
@@ -125,22 +128,16 @@ func TestStoreImageRecipe(t *testing.T) {
 	if j := strings.Index(body, "\n\n"); j >= 0 {
 		body = body[:j]
 	}
-	for _, want := range []string{
-		"docker build",
-		"-f deploy/vmtool-store.Dockerfile",
-		"-t registry.labtwo/vmtool-store:{{ tag }}",
-		"-t registry.labtwo/vmtool-store:latest",
-		"docker push registry.labtwo/vmtool-store:{{ tag }}",
-		"docker push registry.labtwo/vmtool-store:latest",
-	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("recipe lacks %q:\n%s", want, body)
+	if !strings.Contains(body, "scripts/store-image.sh") {
+		t.Errorf("recipe does not run scripts/store-image.sh:\n%s", body)
+	}
+	sc := readText(t, "store-image.sh")
+	for _, want := range []string{"docker build", "-f deploy/vmtool-store.Dockerfile", "docker push", "latest"} {
+		if !strings.Contains(sc, want) {
+			t.Errorf("script lacks %q", want)
 		}
 	}
-	if strings.Contains(body, "--build-arg") || regexp.MustCompile(`(?i)token|secret|password|login`).MatchString(body) {
-		t.Errorf("recipe must carry no build arg or credential:\n%s", body)
-	}
-	if !strings.Contains(body, "latest") || !regexp.MustCompile(`"\{\{ tag \}\}" *(==|=) *"?(latest|)`).MatchString(body) {
-		t.Errorf("recipe must refuse an empty tag and `latest`:\n%s", body)
+	if strings.Contains(sc, "--build-arg") || regexp.MustCompile(`(?i)secret|password|docker login`).MatchString(sc) {
+		t.Errorf("script must carry no build arg or credential")
 	}
 }

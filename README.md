@@ -210,9 +210,13 @@ just prereqs veritech04     # once per host: vmtool user, /opt/vmtool, pool
 just deploy veritech04      # build, certify, configure, start
 ```
 
-`just deploy <host>` stops before copying anything if the host's Go is too
-old or if `just prereqs <host>` has not run (no `vmtool` user or no
-`/opt/vmtool`). It copies the tracked files to
+`just deploy <host>` needs two settings, `VMTOOL_DOMAIN` (the DNS domain of
+the host certificates) and `BAO_CA_PATH` (the OpenBao kv path of the CA), with
+no default: set them in the environment or in `deploy.env` (see [Deploy
+settings](#deploy-settings-and-just-settings)). A missing one stops it by name
+before anything is copied, built or installed, as does a Go that is too
+old on the host or a `just prereqs <host>` that has not run (no `vmtool` user
+or no `/opt/vmtool`). It copies the tracked files to
 `~/.cache/vmtool-deploy/src` on the host and builds there as your login user
 (nothing is built with sudo; the build is stamped with the checkout's commit,
 plus `+dirty` for a tracked change, so `vmtool inventory` shows it as the
@@ -228,8 +232,8 @@ see [One daemon per host](#one-daemon-per-host)):
 /opt/vmtool/                 vmtool:vmtool 0750  working directory and HOME
   vmtool                     0755  the daemon
   config.yml                 0600  role: hypervisor, listen 0.0.0.0:<port>, token hash
-  tls/<host>.labtwo.crt      0644
-  tls/<host>.labtwo.key      0600
+  tls/<host>.<domain>.crt    0644
+  tls/<host>.<domain>.key    0600
   image-manifest.yml         written by the daemon
 /etc/systemd/system/vmtool-daemon.service   User=vmtool, ExecStart=/opt/vmtool/vmtool server
 /usr/local/libexec/vmtool-thin              root:root 0755  the one root helper, for thin pools
@@ -244,7 +248,9 @@ updated. See [Thin pools](#thin-pools-clones-from-templates).
 
 The staged `config.yml` and key are removed after the install. `just cert
 <host>` on its own renews the certificate the same way (into
-`/opt/vmtool/tls`, owner `vmtool`) and restarts the daemon if it is running.
+`/opt/vmtool/tls`, owner `vmtool`) and restarts the daemon if it is running; it
+needs `VMTOOL_DOMAIN` and `BAO_CA_PATH` too (`just cert` and `just install`
+stop by name without them, before any certificate is issued).
 
 Before it installs, deploy checks that nothing but its own daemon holds the
 port, and refuses if something else does. It also stops, disables and removes
@@ -599,14 +605,16 @@ roles/vmtool_store/make_secrets.sh hosttokens --revoke hv2   # removes only thes
 just deploy hv1                               # here: installs the token on the host
 ```
 
-The tokens live in OpenBao under `BAO_STORE_HOST_TOKENS_PATH` (default
-`kv/infra/labtwo/vmtool_store/host_tokens`, one field per host). With a
-`server:` block, `just deploy` reads the host's field and installs it on the
+The tokens live in OpenBao under the kv path in `BAO_STORE_HOST_TOKENS_PATH`
+(no default; one field per host, e.g. `kv/example/vmtool_store/host_tokens`).
+With a `server:` block and that setting, `just deploy` reads the host's field
+and installs it on the
 hypervisor as `store-host-token` in the daemon's directory (vmtool:vmtool,
 0600), and `config write --store-token-file store-host-token` names it as
 `store_token_file` in the host's `config.yml`; the token is never in
-`config.yml`, argv or a log. A host with no token gets one warning and the
-deploy goes on; its daemon does not report. To revoke: run `hosttokens
+`config.yml`, argv or a log. A host with no token, or a deploy with
+`BAO_STORE_HOST_TOKENS_PATH` unset (then OpenBao is not asked), gets one
+warning and the deploy goes on; its daemon does not report. To revoke: run `hosttokens
 --revoke`, re-run the store playbook, then `just deploy` that host again (a
 deploy with no token removes the old file).
 
@@ -616,9 +624,12 @@ The store is a static Go binary (`CGO_ENABLED=0`, distroless, runs as uid
 65532). From this repository:
 
 ```bash
-just store-image <tag>    # builds registry.labtwo/vmtool-store:<tag> and :latest, pushes both
+just store-image <tag>    # builds <registry>/vmtool-store:<tag> and :latest, pushes both
 ```
 
+`<registry>` is the setting `VMTOOL_IMAGE_REGISTRY` (`host[:port][/path]`, e.g.
+`registry.example.lab`; no default; environment or `deploy.env`). Without it the
+recipe stops by name before `docker build`. Log in to the registry first.
 `<tag>` is a version; empty and `latest` are refused. No secret goes into the
 image. It is deployed to sdf1 by the `vmtool_store` role in `ansible_labtwo`,
 behind Caddy (port 8095, not behind Authelia). The role's own `README.md` has
@@ -840,10 +851,16 @@ used instead (next section). With no key anywhere every command stops with
 one line naming the fix.
 
 ```bash
-just token          # new token into .env (and OpenBao if VAULT_ADDR/VAULT_TOKEN are set)
-# or: just token-fetch   # the existing token from OpenBao into .env
+just token          # new token into .env (and OpenBao if BAO_TOKEN_PATH and VAULT_ADDR/VAULT_TOKEN are set)
+# or: just token-fetch   # the existing token from OpenBao into .env (needs BAO_TOKEN_PATH)
 just install        # build, cert, config.yml, systemd unit (vmtool server over HTTPS)
 ```
+
+`BAO_TOKEN_PATH` is the OpenBao kv path of the operator token (no default; the
+environment or `deploy.env`). `just token-fetch` stops by name without it;
+`just token` without it writes `.env` only, says the token was not stored in
+OpenBao and calls no `bao`. `just install` needs `VMTOOL_DOMAIN` and
+`BAO_CA_PATH` (see [Deploy settings](#deploy-settings-and-just-settings)).
 
 `vmtool server` serves HTTPS only and needs `tls_cert`, `tls_key` and
 `token_sha256` in `config.yml`; `just install` sets all three.
@@ -1066,11 +1083,33 @@ gives the time of the last one; the daemon also logs one line "local token used"
 (the route, never the token) at most once an hour. That is the evidence that
 nothing still uses the shared token, before anyone retires it.
 
+#### Deploy settings and `just settings`
+
+The recipes that deploy hold no value of your site. Eight settings, **none
+with a default**, come from the environment or from `deploy.env` (below):
+
+| Setting | Needed by | Meaning |
+|---|---|---|
+| `VMTOOL_DOMAIN` | `cert`, `install`, `deploy` (required) | the DNS domain of the host certificates, e.g. `example.lab` |
+| `BAO_CA_PATH` | `cert`, `install`, `deploy` (required) | the OpenBao kv path of the CA (`<path>/crt` and `<path>/key`) |
+| `BAO_STORE_HOST_TOKENS_PATH` | `deploy` (optional) | the kv path whose fields are the hosts' store tokens; unset: no host token, one warning |
+| `BAO_TOKEN_PATH` | `token-fetch` (required), `token` (optional) | the kv path of the operator token; `token` without it writes `.env` only |
+| `VMTOOL_IMAGE_REGISTRY` | `store-image` (required) | `host[:port][/path]` the store image is pushed to, e.g. `registry.example.lab` |
+| the three key-list settings | `install`, `deploy` (optional) | below |
+
+A required setting that is missing or empty stops the recipe with a line like
+`set VMTOOL_DOMAIN in the settings file (deploy.env) or the environment`,
+before any build, copy, `docker build`, push, `sudo` or restart. Values are
+checked as plain strings (a DNS name, a kv path, a registry) before they reach
+a command. `just settings` is read-only and lists each setting as `set` or
+`unset`, where a set one comes from, and the recipes an unset one blocks; it
+never prints a value and always exits 0.
+
 #### Deploying the key-list settings (`just deploy`, `just install`)
 
 `just deploy <host>` and `just install` can write the `personal_keys` block
-and install the pull token. Three settings, **none with a default** (all off
-unless set):
+and install the pull token. Three more settings, **none with a default** (all
+off unless set):
 
 | Setting | Meaning |
 |---|---|
@@ -1078,11 +1117,13 @@ unless set):
 | `VMTOOL_KEY_REQUEST_URL` | the request URL the daemon tells tools about, e.g. `https://keys.example.lab/v1/services/vmtool/requests`; independent of the list |
 | `BAO_KEYS_PULL_TOKEN_PATH` | the OpenBao kv path of the pull token, e.g. `kv/example/keys/pull/vmtool`; the field is always `token` |
 
-Set them in the environment, or put them in `deploy.env` in the checkout root
-(gitignored), one `KEY=value` per line:
+Set them (and the settings above) in the environment, or put them in
+`deploy.env` in the checkout root (gitignored), one `KEY=value` per line:
 
 ```bash
 # deploy.env
+VMTOOL_DOMAIN=example.lab
+BAO_CA_PATH=kv/example/ca
 VMTOOL_PERSONAL_KEYS_URL=https://keys.example.lab/keys/v1/lists/vmtool
 VMTOOL_KEY_REQUEST_URL=https://keys.example.lab/v1/services/vmtool/requests
 BAO_KEYS_PULL_TOKEN_PATH=kv/example/keys/pull/vmtool
@@ -1090,9 +1131,11 @@ BAO_KEYS_PULL_TOKEN_PATH=kv/example/keys/pull/vmtool
 
 The scripts read the file themselves with a strict parser: blank lines and `#`
 comments are skipped, a value may be wrapped in one pair of quotes, nothing is
-executed or expanded, and any other line is an error that names its line
-number and never its content. A variable already in the environment wins over
-the file. (`.env` is not read for these.)
+executed or expanded, and any other line is not allowed (the error names its
+line number and never its content; only the eight setting names are accepted).
+A variable already in the environment, even an empty one, wins over the file.
+(`.env` is not read for these, and the justfile passes none of them on
+explicitly, so the shell's own environment reaches the scripts as it is.)
 
 - **URL unset:** no OpenBao read and no pull token. It also cleans up after a
   list that was on: `just deploy` removes the host's `keys-pull-token` and

@@ -6,18 +6,24 @@
 #
 # Environment:
 #   VMTOOL_ROOT      directory holding .env (default: the repo root)
-#   BAO_TOKEN_PATH   OpenBao kv path of the token (the justfile passes it)
+#   BAO_TOKEN_PATH   OpenBao kv path of the token, from the environment or
+#                    deploy.env in VMTOOL_ROOT (no default). `fetch` needs it;
+#                    `generate` without it writes .env only and says so
 #   VAULT_ADDR, VAULT_TOKEN   OpenBao access; no defaults
 #
 # The token is never printed and never appears in any process's argv: it moves
 # only through bash builtins, stdin and files.
 set -euo pipefail
 
-root="${VMTOOL_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
-bao_path="${BAO_TOKEN_PATH:-kv/infra/labtwo/vmtool/token}"
+here="$(cd "$(dirname "$0")" && pwd)"
+root="${VMTOOL_ROOT:-$(cd "$here/.." && pwd)}"
 envfile="$root/.env"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
+. "$here/deploy-env.sh"
+load_deploy_env "$root"
+lab_settings_check
+bao_path="${BAO_TOKEN_PATH:-}"
 
 # write_env <token>: create .env (0600) or replace its VMTOOL_TOKEN line,
 # keeping every other line. Atomic: temp file in the same dir, chmod, mv.
@@ -45,7 +51,9 @@ cmd_generate() {
   write_env "$tok"
 
   local stored=no
-  if [[ -z ${VAULT_ADDR:-} || -z ${VAULT_TOKEN:-} ]]; then
+  if [[ -z $bao_path ]]; then
+    echo "WARNING: BAO_TOKEN_PATH is not set (settings file or environment); token not stored in OpenBao." >&2
+  elif [[ -z ${VAULT_ADDR:-} || -z ${VAULT_TOKEN:-} ]]; then
     echo "WARNING: VAULT_ADDR / VAULT_TOKEN not set; token not stored in OpenBao." >&2
   elif ! command -v bao >/dev/null 2>&1; then
     echo "WARNING: bao not found; token not stored in OpenBao." >&2
@@ -67,6 +75,7 @@ cmd_generate() {
 }
 
 cmd_fetch() {
+  require_setting BAO_TOKEN_PATH
   [[ -n ${VAULT_ADDR:-} ]] || die "VAULT_ADDR is not set (it has no default)."
   [[ -n ${VAULT_TOKEN:-} ]] || die "VAULT_TOKEN is not set."
   command -v bao >/dev/null 2>&1 || die "bao not found on PATH."

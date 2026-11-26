@@ -3133,3 +3133,28 @@ from. Nothing changes for a client whose `.env` holds `VMTOOL_TOKEN` and
 - Comment fix in `initKeys`: it reads the pull-token file.
 - Tests: a real built `vmtool` as the tunnel child against an in-process daemon with a pulled key list; the dialer
   rule; `config write` cases; script tests for both clean-ups.
+
+## 2026-11-25 — Site values become settings; `just settings`
+
+- The justfile and the scripts hold no value of any site. Domain of the host certificates (`VMTOOL_DOMAIN`),
+  the OpenBao kv path of the CA (`BAO_CA_PATH`), of the hosts' store tokens (`BAO_STORE_HOST_TOKENS_PATH`) and of
+  the operator token (`BAO_TOKEN_PATH`), and the image registry (new `VMTOOL_IMAGE_REGISTRY`) have no default. Each
+  comes from the environment or from `deploy.env` (the same strict, non-executing parser as the key-list
+  settings, now accepting all eight names; the environment, even empty, wins). The justfile passes none of
+  them explicitly.
+- Required: `VMTOOL_DOMAIN` and `BAO_CA_PATH` by `cert`, `install` and `deploy`; `BAO_TOKEN_PATH` by `token-fetch`;
+  `VMTOOL_IMAGE_REGISTRY` by `store-image`. A missing or empty one stops by name ("set X in the settings file
+  (deploy.env) or the environment") before any build, copy, `docker build`, push, `sudo`, `ssh` or restart. Values
+  are checked as plain strings. `cert --local-name` needs no setting.
+- Optional: `BAO_STORE_HOST_TOKENS_PATH` unset means `deploy` asks OpenBao for no host token and gives the same
+  one warning as a missing token, now without naming another repository's script. `just token` without
+  `BAO_TOKEN_PATH` writes `.env` only, says the token was not stored in OpenBao and calls no `bao`.
+- `store-image` moved from an inline recipe to `scripts/store-image.sh` (same image names and tag checks; a tag
+  docker would not take is also refused, exit 2).
+- New `just settings` (`scripts/settings.sh`): read-only; lists the eight settings as set or unset with where a
+  set one comes from, and the recipes an unset one blocks; never prints a value; exits 0 always, also on a bad
+  `deploy.env` line (it names the line number only).
+- Tests: each recipe with its setting unset fails by name with no `ssh`, `go`, `docker`, `sudo`, `systemctl` or
+  `bao` call; neutral values give today's command lines; `deploy.env` supplies and the environment overrides;
+  `just settings` never prints a value; no lab value in the justfile or a script. README sections on these recipes
+  updated.
