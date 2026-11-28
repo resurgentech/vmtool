@@ -61,4 +61,30 @@ for k in "${DEPLOY_ENV_KEYS[@]}"; do
   fi
 done
 if [[ -n $bad ]]; then echo "$bad"; fi
+
+# The OpenBao session: set or unset, and where it comes from, never a value.
+# .env is only read as text here (a pattern match on each line, nothing is
+# sourced and nothing is run); the recipes that call bao source it, and a value
+# in it beats the shell's for them. Run directly, a script takes the shell's.
+dotenv_names=" "
+if [[ -f $root/.env && -r $root/.env ]]; then
+  while IFS= read -r line || [[ -n $line ]]; do
+    if [[ $line =~ ^[[:space:]]*(export[[:space:]]+)?(VAULT_ADDR|VAULT_TOKEN)=([^\"\'[:space:]]|\"[^\"]|\'[^\']) ]]; then
+      dotenv_names+="${BASH_REMATCH[2]} "
+    fi
+  done <"$root/.env"
+fi
+echo
+echo "OpenBao session (names only, never values). Set it in the environment or in .env in $root (shell: NAME=value or export NAME=value); recipes that call bao (cert, install, deploy, token, token-fetch) source .env and its values win over the environment's. A script run directly takes only the environment."
+for k in VAULT_ADDR VAULT_TOKEN; do
+  if [[ $dotenv_names == *" $k "* && -n ${!k:-} ]]; then
+    printf '%-28s set (.env; overrides the environment'"'"'s through just)\n' "$k"
+  elif [[ $dotenv_names == *" $k "* ]]; then
+    printf '%-28s set (.env)\n' "$k"
+  elif [[ -n ${!k:-} ]]; then
+    printf '%-28s set (environment)\n' "$k"
+  else
+    printf '%-28s unset  blocks: cert, install, deploy, token-fetch (a bao read); token stores the token in OpenBao only when set\n' "$k"
+  fi
+done
 exit 0

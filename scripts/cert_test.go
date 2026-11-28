@@ -50,6 +50,7 @@ fi`)
 	}
 	e.env = []string{"VMTOOL_DOMAIN=labtwo", "BAO_CA_PATH=kv/infra/labtwo/selfsigned_cert", "CERT_DAYS=825",
 		"VMTOOL_BIN=" + filepath.Join(e.stub, "vmtool")}
+	e.env = append(e.env, vault()...)
 	return e
 }
 
@@ -368,7 +369,7 @@ fi`)
 		t.Fatal(err)
 	}
 	unit := filepath.Join(t.TempDir(), "vmtool.service")
-	env := append([]string{"UNIT_PATH=" + unit}, e.env[:3]...)
+	env := append([]string{"UNIT_PATH=" + unit}, withSession(e.env[:3])...)
 	r := runScript(t, e.stub, e.wd, "install.sh", env)
 	if r.code != 0 {
 		t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
@@ -422,7 +423,7 @@ func TestInstallNeedsToken(t *testing.T) {
 	e := newCertEnv(t, "")
 	addStub(t, e.stub, "go", "exit 0")
 	addStub(t, e.stub, "sudo", `exec "$@"`)
-	r := runScript(t, e.stub, e.wd, "install.sh", append([]string{"UNIT_PATH=" + filepath.Join(e.wd, "u")}, e.env[:3]...))
+	r := runScript(t, e.stub, e.wd, "install.sh", append([]string{"UNIT_PATH=" + filepath.Join(e.wd, "u")}, withSession(e.env[:3])...))
 	if r.code == 0 || !strings.Contains(r.stderr, "VMTOOL_TOKEN") || !strings.Contains(r.stderr, "export") {
 		t.Fatalf("exit %d stderr %q", r.code, r.stderr)
 	}
@@ -450,7 +451,7 @@ fi`)
 		t.Fatal(err)
 	}
 	unit = filepath.Join(t.TempDir(), "vmtool.service")
-	return e, unit, append([]string{"UNIT_PATH=" + unit}, e.env[:3]...)
+	return e, unit, append([]string{"UNIT_PATH=" + unit}, withSession(e.env[:3])...)
 }
 
 // An older hypervisor daemon is a vmtool.service whose WorkingDirectory is

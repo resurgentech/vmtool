@@ -23,6 +23,7 @@ const deployTok ="feedfacefeedfacefeedfacefeedfacefeedfacefeedfacefeedfacefeedfa
 // the argv to ssh.argv.
 const sshRecord = `n=$(wc -l < "$d/ssh.argv"); n=${n//[^0-9]/}
 printf '%s' "$*" > "$d/ssh.$n.argv"
+env | grep "^VAULT_" > "$d/ssh.$n.vault" || true
 cat > "$d/ssh.$n.stdin"
 `
 

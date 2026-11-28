@@ -157,6 +157,10 @@ require_setting VMTOOL_DOMAIN
 require_setting BAO_CA_PATH
 domain="$VMTOOL_DOMAIN"
 export VMTOOL_DOMAIN BAO_CA_PATH
+# Every deploy reads the CA from OpenBao (cert.sh), and the store host token
+# and the pull token when their settings are set: no session stops the run
+# here, by name, before anything is copied, built, certified or installed.
+require_bao_session "$root"
 
 # Token: env, else .env. Builtins only.
 tok="${VMTOOL_TOKEN:-}"

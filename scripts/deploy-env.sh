@@ -90,3 +90,34 @@ keys_settings_check() {
 # The one setting with a default: the distro image the daemon is built in. An
 # old, long-supported glibc, so the binary runs on anything newer.
 DAEMON_BUILD_BASE_DEFAULT="ubuntu:22.04"
+
+# The OpenBao session (VAULT_ADDR and VAULT_TOKEN). It comes from the
+# environment, or from .env in the checkout when the recipe ran through just
+# (the justfile sources .env for the recipes that call bao); a script run
+# directly takes it from the shell. Never printed, only named.
+#
+# session_gap <root>: prints which of the two is missing (by name, with where
+# to set it) and returns 0, or prints nothing and returns 1 when both are set.
+session_gap() {
+  local n
+  for n in VAULT_ADDR VAULT_TOKEN; do
+    if [[ -z ${!n:-} ]]; then
+      printf '%s is not set (the environment, or .env in %s when run through just)' "$n" "$1"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# require_bao_session <root>: stops, by name, when the session is incomplete.
+# Call it before a bao read and before anything is copied, built or restarted.
+require_bao_session() {
+  local gap
+  if gap=$(session_gap "$1"); then die "$gap."; fi
+}
+
+# The session never goes to a remote host: ssh and scp run without it in their
+# environment (it is only ever sent by SendEnv or a command prefix, and neither
+# is used). `env` and the real ssh/scp are found through PATH.
+ssh() { env -u VAULT_ADDR -u VAULT_TOKEN ssh "$@"; }
+scp() { env -u VAULT_ADDR -u VAULT_TOKEN scp "$@"; }

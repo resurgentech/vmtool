@@ -1150,8 +1150,18 @@ comments are skipped, a value may be wrapped in one pair of quotes, nothing is
 executed or expanded, and any other line is not allowed (the error names its
 line number and never its content; only the nine setting names are accepted).
 A variable already in the environment, even an empty one, wins over the file.
-(`.env` is not read for these, and the justfile passes none of them on
-explicitly, so the shell's own environment reaches the scripts as it is.)
+(`deploy.env` holds no secret and is not a source for the OpenBao session, and the justfile passes none of
+the settings on explicitly, so the shell's own environment reaches the scripts as it is.)
+
+**The OpenBao session in `.env`.** The scripts that call `bao` need `VAULT_ADDR` and `VAULT_TOKEN`. Put them in
+the shell, or in `.env` in the checkout root. `.env` is shell: `export NAME=value` and `NAME=value` both work.
+The recipes whose scripts call `bao` (`cert`, `deploy`, `install`, `token`, `token-fetch`) source it, each in
+the shell line that runs its script, and no other recipe does (`just test` and `just build` never get the
+session). A value set in `.env` overrides the same variable in the calling shell for these recipes. A script
+run directly, without `just`, takes the session from the shell only. Without a session the run stops by name
+(`VAULT_ADDR is not set`) before it copies, builds or restarts anything; neither variable is ever sent to a
+host over ssh. `just settings` lists both as set or unset and where from (`environment` or `.env`), never a
+value.
 
 - **URL unset:** no OpenBao read and no pull token. It also cleans up after a
   list that was on: `just deploy` removes the host's `keys-pull-token` and

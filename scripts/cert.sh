@@ -22,6 +22,9 @@
 #   CERT_DAYS       certificate lifetime in days
 #   HV_DIR          daemon directory on a remote host (default /opt/vmtool)
 #   CERT_STAGE_ONLY 1: stop after staging (deploy installs the files itself)
+#   VAULT_ADDR, VAULT_TOKEN   the OpenBao session, no defaults: the environment, or .env in
+#                   VMTOOL_ROOT when run through `just` (which sources it for this recipe); a
+#                   missing one stops the run by name. A script run directly takes it from the shell.
 # REMOTE_DIR (the old home-directory layout) is ignored, with a warning.
 #   VMTOOL_BIN      vmtool binary, used for `config host` (default <root>/vmtool)
 #
@@ -73,6 +76,8 @@ load_deploy_env "$root"
 lab_settings_check
 require_setting VMTOOL_DOMAIN
 require_setting BAO_CA_PATH
+# The CA is read with bao: no session stops the run here, by name.
+require_bao_session "$root"
 domain="$VMTOOL_DOMAIN"
 bao_path="$BAO_CA_PATH"
 
@@ -125,7 +130,7 @@ openssl x509 -req -in "$tmp/csr" -days "$days" -set_serial "$serial" \
     "keyUsage=digitalSignature" \
     "basicConstraints=CA:FALSE") \
   -out "$tmp/crt" 2>/dev/null \
-  || die "signing failed; is OpenBao reachable (VAULT_ADDR / VAULT_TOKEN) and is the CA at $bao_path?"
+  || die "signing failed; is OpenBao reachable (VAULT_ADDR / VAULT_TOKEN, from the environment or .env) and is the CA at $bao_path?"
 [[ -s $tmp/crt ]] || die "signing produced no certificate."
 
 chmod 600 "$tmp/key"

@@ -61,6 +61,9 @@ require_setting VMTOOL_DOMAIN
 require_setting BAO_CA_PATH
 domain="$VMTOOL_DOMAIN"
 export VMTOOL_DOMAIN BAO_CA_PATH
+# Every install reads the CA from OpenBao (cert.sh): no session stops the run
+# here, by name, before anything is built or installed.
+require_bao_session "$root"
 
 # 1. A token must exist (env or .env) before anything is built or installed.
 have_token=no

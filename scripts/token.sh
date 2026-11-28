@@ -9,7 +9,8 @@
 #   BAO_TOKEN_PATH   OpenBao kv path of the token, from the environment or
 #                    deploy.env in VMTOOL_ROOT (no default). `fetch` needs it;
 #                    `generate` without it writes .env only and says so
-#   VAULT_ADDR, VAULT_TOKEN   OpenBao access; no defaults
+#   VAULT_ADDR, VAULT_TOKEN   OpenBao access; no defaults: the environment, or .env in
+#                    VMTOOL_ROOT when run through `just` (which sources it for these recipes)
 #
 # The token is never printed and never appears in any process's argv: it moves
 # only through bash builtins, stdin and files.
@@ -76,8 +77,7 @@ cmd_generate() {
 
 cmd_fetch() {
   require_setting BAO_TOKEN_PATH
-  [[ -n ${VAULT_ADDR:-} ]] || die "VAULT_ADDR is not set (it has no default)."
-  [[ -n ${VAULT_TOKEN:-} ]] || die "VAULT_TOKEN is not set."
+  require_bao_session "$root"
   command -v bao >/dev/null 2>&1 || die "bao not found on PATH."
   local tok
   tok=$(bao kv get -field=string "$bao_path") || die "bao kv get $bao_path failed."
