@@ -26,15 +26,6 @@ var (
 	childBinErr  error
 )
 
-// TestMain removes the built child binary's directory after the run.
-func TestMain(m *testing.M) {
-	code := m.Run()
-	if childBin != "" {
-		os.RemoveAll(filepath.Dir(childBin))
-	}
-	os.Exit(code)
-}
-
 // builtVMTool builds the real vmtool binary once per test run. It is the
 // ProxyCommand child of the daemon, so it is not stubbed.
 func builtVMTool(t *testing.T) string {

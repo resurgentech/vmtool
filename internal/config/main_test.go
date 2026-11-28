@@ -1,20 +1,13 @@
 package config
 
 import (
-	"os"
 	"testing"
+
+	"github.com/resurgentech/vmtool/internal/testenv"
 )
 
-// TestMain keeps every test off the developer's own token file.
-func TestMain(m *testing.M) {
-	dir, err := os.MkdirTemp("", "vmtool-config-test")
-	if err != nil {
-		panic(err)
-	}
-	os.Setenv("HOME", dir)
-	os.Setenv("XDG_CONFIG_HOME", dir+"/xdg")
-	os.Unsetenv(TokenFileEnv)
-	code := m.Run()
-	os.RemoveAll(dir)
-	os.Exit(code)
-}
+// TestMain keeps every test off the developer's own key file, token settings
+// and secret-store session.
+func TestMain(m *testing.M) { testenv.Run(m) }
+
+func TestEnvironmentIsIsolated(t *testing.T) { testenv.Check(t) }

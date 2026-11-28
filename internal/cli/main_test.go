@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/resurgentech/vmtool/internal/config"
+	"github.com/resurgentech/vmtool/internal/testenv"
 )
 
 // TestMain keeps every test off the developer's own token file and key
@@ -16,18 +17,13 @@ import (
 // test sets its own localKeyCheck (or realLocalKeyCheck against a listener it
 // started).
 func TestMain(m *testing.M) {
-	dir, err := os.MkdirTemp("", "vmtool-cli-test")
-	if err != nil {
-		panic(err)
-	}
-	os.Setenv("HOME", dir)
-	os.Setenv("XDG_CONFIG_HOME", dir+"/xdg")
-	os.Unsetenv("VMTOOL_TOKEN_FILE")
-	os.Unsetenv("VMTOOL_KEY_REQUEST_URL")
+	_, cleanup := testenv.Isolate()
 	localKeyCheck = func(context.Context, *config.Config, string) (int, error) {
 		return 0, errors.New("no local service in tests")
 	}
 	code := m.Run()
-	os.RemoveAll(dir)
+	cleanup()
 	os.Exit(code)
 }
+
+func TestEnvironmentIsIsolated(t *testing.T) { testenv.Check(t) }
