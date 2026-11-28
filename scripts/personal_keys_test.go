@@ -237,19 +237,25 @@ func TestDeployInstallFailureRemovesStagedPullToken(t *testing.T) {
 	noPullLeak(t, e, r)
 }
 
-// No VMTOOL_TOKEN anywhere: fail by name, telling the operator to export it,
-// before any ssh, build or restart; .env is never written.
-func TestDeployNoTokenSaysExport(t *testing.T) {
+// No VMTOOL_TOKEN anywhere (and none at BAO_TOKEN_PATH): fail by name, saying
+// what to set (never "export" or token-fetch), before any ssh, build or
+// restart; .env is never written.
+func TestDeployNoTokenNamesWhatToSet(t *testing.T) {
 	e, _, _ := keysEnv(t, pullTok+"\n")
 	e.withoutToken()
 	r := e.deploy(t, keysSet, "hv1")
-	if r.code == 0 || !strings.Contains(r.stderr, "VMTOOL_TOKEN") || !strings.Contains(r.stderr, "export") {
+	if r.code == 0 || !strings.Contains(r.stderr, "VMTOOL_TOKEN") || !strings.Contains(r.stderr, "BAO_TOKEN_PATH") ||
+		strings.Contains(r.stderr, "export") || strings.Contains(r.stderr, "token-fetch") {
 		t.Fatalf("exit %d stderr %q", r.code, r.stderr)
 	}
-	for _, f := range []string{"ssh.argv", "systemctl.argv", "sudo.argv", "bao.argv", "installed.list"} {
+	for _, f := range []string{"ssh.argv", "systemctl.argv", "sudo.argv", "installed.list"} {
 		if _, err := os.Stat(filepath.Join(e.stub, f)); err == nil {
 			t.Errorf("%s exists: the run went on without a token", f)
 		}
+	}
+	// Only the token was asked of OpenBao, never the CA or the pull token.
+	if argv := readOr(t, filepath.Join(e.stub, "bao.argv")); strings.Contains(argv, "/crt") || strings.Contains(argv, "-field=token") {
+		t.Errorf("bao argv: %q", argv)
 	}
 	if _, err := os.Stat(filepath.Join(e.wd, ".env")); err == nil {
 		t.Error(".env was written")
@@ -353,7 +359,7 @@ func TestInstallPersonalKeysUnsetIsToday(t *testing.T) {
 	if r.code != 0 {
 		t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
 	}
-	want := "config write --name fallbackhost --role workstation --listen 127.0.0.1:9473 " +
+	want := "config write --token-stdin --name fallbackhost --role workstation --listen 127.0.0.1:9473 " +
 		"--tls-cert tls/fallbackhost.example.lab.crt --tls-key tls/fallbackhost.example.lab.key --no-personal-keys"
 	if got := strings.TrimSpace(readOr(t, filepath.Join(e.wd, "vmtool.argv"))); got != want {
 		t.Errorf("config write argv:\n got %q\nwant %q", got, want)
@@ -374,7 +380,7 @@ func TestInstallPersonalKeysSet(t *testing.T) {
 	if r.code != 0 {
 		t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
 	}
-	want := "config write --name fallbackhost --role workstation --listen 127.0.0.1:9473 " +
+	want := "config write --token-stdin --name fallbackhost --role workstation --listen 127.0.0.1:9473 " +
 		"--tls-cert tls/fallbackhost.example.lab.crt --tls-key tls/fallbackhost.example.lab.key " +
 		"--personal-keys-url " + keysListURL + " --personal-keys-token-file keys-pull-token " +
 		"--personal-keys-cache-file personal-keys.json --key-request-url " + keysReqURL
@@ -542,7 +548,7 @@ func TestInstallPersonalKeysOffCleansUp(t *testing.T) {
 		if r.code != 0 {
 			t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
 		}
-		want := "config write --name fallbackhost --role workstation --listen 127.0.0.1:9473 " +
+		want := "config write --token-stdin --name fallbackhost --role workstation --listen 127.0.0.1:9473 " +
 			"--tls-cert tls/fallbackhost.example.lab.crt --tls-key tls/fallbackhost.example.lab.key --no-personal-keys"
 		if withReq {
 			want += " --key-request-url " + keysReqURL

@@ -18,6 +18,15 @@
 # as it stands and never rewritten.
 #
 # Steps, in order; each stops the run if it fails:
+#   0. session and token, before anything else: the OpenBao session (VAULT_ADDR,
+#                  VAULT_TOKEN: the environment, or .env in the checkout when run
+#                  through `just`) must be set; the operator token is VMTOOL_TOKEN
+#                  in the environment, else a VMTOOL_TOKEN line in .env, else
+#                  `bao kv get -field=string "$BAO_TOKEN_PATH"` (the first
+#                  non-empty one wins; the first two call nothing). One line
+#                  names the source, never the value; the token is never
+#                  exported and goes on stdin of step 6 only. With none, or no
+#                  session, the run stops by name before anything is copied.
 #   1. go check    `go env GOVERSION` over ssh, /usr/local/go/bin first on PATH,
 #                  must be >= GO_MIN (the first Go that honours
 #                  GOTOOLCHAIN=auto, which fetches the go.mod one)
@@ -162,19 +171,10 @@ export VMTOOL_DOMAIN BAO_CA_PATH
 # here, by name, before anything is copied, built, certified or installed.
 require_bao_session "$root"
 
-# Token: env, else .env. Builtins only.
-tok="${VMTOOL_TOKEN:-}"
-if [[ -z $tok && -f $root/.env ]]; then
-  while IFS= read -r line || [[ -n $line ]]; do
-    if [[ $line == VMTOOL_TOKEN=* ]]; then
-      tok="${line#VMTOOL_TOKEN=}"
-      tok="${tok%$'\r'}"
-      tok="${tok#[\"\']}"
-      tok="${tok%[\"\']}"
-    fi
-  done <"$root/.env"
-fi
-[[ -n $tok ]] || die "no VMTOOL_TOKEN found; export the operator token for this shell (export VMTOOL_TOKEN=...) and run this again ('just token-fetch' puts it in .env)."
+# The operator token: VMTOOL_TOKEN in the environment, else in .env, else OpenBao
+# at BAO_TOKEN_PATH (deploy-env.sh); one line names the source, never the value.
+# tok is not exported. With none the run stops here, before anything is copied.
+resolve_operator_token "$root"
 
 [[ -x $vmtool_bin ]] || die "$vmtool_bin not found; run 'just build' first."
 [[ -f $template ]] || die "$template not found."

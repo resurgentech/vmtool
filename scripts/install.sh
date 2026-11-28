@@ -21,10 +21,15 @@
 # cert.sh runs before `config write`, so it sees no config.yml on a first
 # install and treats that as the default role, workstation. If a config.yml
 # already says role: hypervisor, cert.sh refuses and install stops. The token
-# is only checked for presence; it is never printed or put in the unit (the
-# service reads .env from its working directory). With no VMTOOL_TOKEN in the
-# environment or .env it stops, before any build or restart, and says to export
-# the operator token for this shell; it never writes .env.
+# is never printed or put in the unit (the service reads .env from its working
+# directory). It is VMTOOL_TOKEN in the environment, else a VMTOOL_TOKEN line in
+# .env, else `bao kv get -field=string "$BAO_TOKEN_PATH"` (the first non-empty
+# one wins; the first two call nothing), and one line names the source, never
+# the value. It goes to `vmtool config write --token-stdin` on stdin and
+# nowhere else: never exported, never an argv, never written to .env. With none
+# it stops, before any build or restart, and names what to set.
+# The OpenBao session (VAULT_ADDR, VAULT_TOKEN) comes from the environment, or
+# from .env in VMTOOL_ROOT when run through `just`; none stops the run by name.
 #
 # Key list (off unless set; no defaults; also read from deploy.env in
 # VMTOOL_ROOT, the environment wins):
@@ -65,13 +70,11 @@ export VMTOOL_DOMAIN BAO_CA_PATH
 # here, by name, before anything is built or installed.
 require_bao_session "$root"
 
-# 1. A token must exist (env or .env) before anything is built or installed.
-have_token=no
-[[ -n ${VMTOOL_TOKEN:-} ]] && have_token=yes
-if [[ $have_token == no && -f $root/.env ]] && grep -q '^VMTOOL_TOKEN=.' "$root/.env"; then
-  have_token=yes
-fi
-[[ $have_token == yes ]] || die "no VMTOOL_TOKEN found; export the operator token for this shell (export VMTOOL_TOKEN=...) and run this again ('just token-fetch' puts it in .env)."
+# 1. The operator token must exist before anything is built or installed:
+#    VMTOOL_TOKEN in the environment, else in .env, else OpenBao at
+#    BAO_TOKEN_PATH (deploy-env.sh). One line names the source, never the
+#    value; tok is not exported and reaches `config write` on stdin only.
+resolve_operator_token "$root"
 
 user="$(id -un)"
 # The unit is written unquoted, so refuse paths systemd would split or expand.
@@ -117,7 +120,7 @@ if [[ -n $pull_tok ]]; then
   chmod 600 "$root/keys-pull-token"
 fi
 [[ -z ${keys_off:-} ]] || rm -f "$root/keys-pull-token" "$root/personal-keys.json"
-(cd "$root" && "$root/vmtool" config write --name "$host" --role workstation \
+printf '%s\n' "$tok" | (cd "$root" && "$root/vmtool" config write --token-stdin --name "$host" --role workstation \
   --listen 127.0.0.1:9473 \
   --tls-cert "tls/$host.$domain.crt" --tls-key "tls/$host.$domain.key" "${keys_args[@]}")
 

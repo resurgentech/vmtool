@@ -30,6 +30,9 @@ func addStub(t *testing.T, dir, name, body string) {
 		"d=\"$(dirname \"$0\")\"\n" +
 		"echo \"$*\" >> \"$d/" + name + ".argv\"\n" +
 		"if [[ \"$1 $2\" == \"kv put\" ]]; then cat > \"$d/" + name + ".stdin\"; fi\n" +
+		// A test that wants to know what a stub's environment held names a
+		// directory (outside the stub and work dirs) in VMTOOL_TEST_ENVDUMP.
+		"if [[ -n ${VMTOOL_TEST_ENVDUMP:-} ]]; then env > \"$VMTOOL_TEST_ENVDUMP/" + name + ".$$\"; fi\n" +
 		body + "\n"
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0o755); err != nil {
 		t.Fatal(err)

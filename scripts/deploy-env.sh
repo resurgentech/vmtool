@@ -10,7 +10,9 @@
 #   BAO_STORE_HOST_TOKENS_PATH the OpenBao kv path whose fields are the hosts'
 #                              store tokens (deploy; optional)
 #   BAO_TOKEN_PATH             the OpenBao kv path of the operator token
-#                              (token-fetch; token stores it there when set)
+#                              (token-fetch; token stores it there when set;
+#                              deploy and install read it when no VMTOOL_TOKEN
+#                              is in the environment or .env)
 #   VMTOOL_IMAGE_REGISTRY      host[:port][/path] the store image is pushed to (store-image)
 #   VMTOOL_PERSONAL_KEYS_URL   the pulled key list's URL
 #   VMTOOL_KEY_REQUEST_URL     the URL a daemon tells tools to file key requests at
@@ -121,3 +123,51 @@ require_bao_session() {
 # is used). `env` and the real ssh/scp are found through PATH.
 ssh() { env -u VAULT_ADDR -u VAULT_TOKEN ssh "$@"; }
 scp() { env -u VAULT_ADDR -u VAULT_TOKEN scp "$@"; }
+
+# resolve_operator_token <root>: finds the operator token (the one `vmtool
+# config write` hashes into token_sha256) and leaves it in the shell variable
+# tok, which is never exported, with its source in tok_source. The first
+# non-empty one wins:
+#   1. VMTOOL_TOKEN in the environment                      (environment)
+#   2. a VMTOOL_TOKEN=... line in <root>/.env               (.env)
+#   3. `bao kv get -field=string "$BAO_TOKEN_PATH"`          (OpenBao (BAO_TOKEN_PATH))
+# The first two make no bao call. The token moves only through builtins,
+# variables and stdin: never an argv, never a file, never the output (bao's
+# stderr is dropped, so a message of its own cannot echo anything). It prints
+# one line naming the source, never the value. With none it stops, by name, and
+# says what to set. The caller defines die() and has checked the OpenBao
+# session (require_bao_session) when a bao read can happen.
+resolve_operator_token() {
+  local root="$1" line
+  tok="${VMTOOL_TOKEN:-}"
+  tok_source=""
+  if [[ -n $tok ]]; then
+    tok_source="environment"
+  elif [[ -f $root/.env ]]; then
+    while IFS= read -r line || [[ -n $line ]]; do
+      if [[ $line == VMTOOL_TOKEN=* ]]; then
+        tok="${line#VMTOOL_TOKEN=}"
+        tok="${tok%$'\r'}"
+        tok="${tok#[\"\']}"
+        tok="${tok%[\"\']}"
+      fi
+    done <"$root/.env"
+    [[ -z $tok ]] || tok_source=".env"
+  fi
+  if [[ -z $tok ]]; then
+    local none="no operator token: VMTOOL_TOKEN is not in the environment or .env, and"
+    local session="the OpenBao session, VAULT_ADDR and VAULT_TOKEN in the environment or .env"
+    [[ -n ${BAO_TOKEN_PATH:-} ]] \
+      || die "$none BAO_TOKEN_PATH is not set; set BAO_TOKEN_PATH (the OpenBao kv path of the operator token, in deploy.env or the environment) with $session. Nothing was copied, built, installed or restarted."
+    local gap
+    if gap=$(session_gap "$root"); then
+      die "$none OpenBao cannot be asked for it at BAO_TOKEN_PATH ($BAO_TOKEN_PATH): $gap. Nothing was copied, built, installed or restarted."
+    fi
+    tok=$(bao kv get -field=string "$BAO_TOKEN_PATH" 2>/dev/null) || tok=""
+    tok="${tok//[$' \t\r\n']/}"
+    [[ -n $tok ]] \
+      || die "$none OpenBao has none at BAO_TOKEN_PATH ($BAO_TOKEN_PATH): it is unreachable, refused the session, or the value there is empty. Check $session. Nothing was copied, built, installed or restarted."
+    tok_source="OpenBao (BAO_TOKEN_PATH)"
+  fi
+  echo "operator token: $tok_source"
+}

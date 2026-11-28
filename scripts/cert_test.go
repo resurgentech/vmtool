@@ -360,8 +360,18 @@ func TestCertLocalName(t *testing.T) {
 
 func TestInstall(t *testing.T) {
 	e := newCertEnv(t, "")
+	// The built vmtool records its argv, what config write gets on stdin
+	// (vmtool.stdin) and, when VMTOOL_TEST_ENVDUMP names a directory, its
+	// environment.
 	addStub(t, e.stub, "go", `if [[ $1 == build && $2 == -o ]]; then
-  printf '#!/bin/sh\necho "$*" >> "$(dirname "$0")/vmtool.argv"\n' > "$3"; chmod +x "$3"
+  cat > "$3" <<'EOS'
+#!/bin/sh
+d="$(dirname "$0")"
+echo "$*" >> "$d/vmtool.argv"
+if [ "$1 $2" = "config write" ]; then cat > "$d/vmtool.stdin"; fi
+if [ -n "$VMTOOL_TEST_ENVDUMP" ]; then env > "$VMTOOL_TEST_ENVDUMP/vmtool.$$"; fi
+EOS
+  chmod +x "$3"
 fi`)
 	addStub(t, e.stub, "sudo", `exec "$@"`)
 	addStub(t, e.stub, "systemctl", "exit 0")
@@ -424,16 +434,23 @@ func TestInstallNeedsToken(t *testing.T) {
 	addStub(t, e.stub, "go", "exit 0")
 	addStub(t, e.stub, "sudo", `exec "$@"`)
 	r := runScript(t, e.stub, e.wd, "install.sh", append([]string{"UNIT_PATH=" + filepath.Join(e.wd, "u")}, withSession(e.env[:3])...))
-	if r.code == 0 || !strings.Contains(r.stderr, "VMTOOL_TOKEN") || !strings.Contains(r.stderr, "export") {
+	// No token in the environment or .env: it names what to set (the token,
+	// or BAO_TOKEN_PATH with the OpenBao session), never "export".
+	if r.code == 0 || !strings.Contains(r.stderr, "VMTOOL_TOKEN") || !strings.Contains(r.stderr, "BAO_TOKEN_PATH") ||
+		strings.Contains(r.stderr, "export") || strings.Contains(r.stderr, "token-fetch") {
 		t.Fatalf("exit %d stderr %q", r.code, r.stderr)
 	}
 	if _, err := os.Stat(filepath.Join(e.wd, ".env")); err == nil {
 		t.Error(".env was written")
 	}
-	for _, f := range []string{"go.argv", "sudo.argv", "bao.argv"} {
+	for _, f := range []string{"go.argv", "sudo.argv"} {
 		if _, err := os.Stat(filepath.Join(e.stub, f)); err == nil {
 			t.Errorf("%s called before the token check", f)
 		}
+	}
+	// Only the token was asked of OpenBao, never the CA.
+	if argv := readOr(t, filepath.Join(e.stub, "bao.argv")); strings.Contains(argv, "/crt") || strings.Contains(argv, "/key") {
+		t.Errorf("bao argv: %q", argv)
 	}
 }
 
@@ -442,8 +459,18 @@ func TestInstallNeedsToken(t *testing.T) {
 func installEnv(t *testing.T) (e *certEnv, unit string, env []string) {
 	t.Helper()
 	e = newCertEnv(t, "")
+	// The built vmtool records its argv, what config write gets on stdin
+	// (vmtool.stdin) and, when VMTOOL_TEST_ENVDUMP names a directory, its
+	// environment.
 	addStub(t, e.stub, "go", `if [[ $1 == build && $2 == -o ]]; then
-  printf '#!/bin/sh\necho "$*" >> "$(dirname "$0")/vmtool.argv"\n' > "$3"; chmod +x "$3"
+  cat > "$3" <<'EOS'
+#!/bin/sh
+d="$(dirname "$0")"
+echo "$*" >> "$d/vmtool.argv"
+if [ "$1 $2" = "config write" ]; then cat > "$d/vmtool.stdin"; fi
+if [ -n "$VMTOOL_TEST_ENVDUMP" ]; then env > "$VMTOOL_TEST_ENVDUMP/vmtool.$$"; fi
+EOS
+  chmod +x "$3"
 fi`)
 	addStub(t, e.stub, "sudo", `exec "$@"`)
 	addStub(t, e.stub, "systemctl", "exit 0")
@@ -509,7 +536,7 @@ func TestInstallConfigWriteFlags(t *testing.T) {
 	if r.code != 0 {
 		t.Fatalf("exit %d: %s%s", r.code, r.stdout, r.stderr)
 	}
-	want := "config write --name fallbackhost --role workstation --listen 127.0.0.1:9473 " +
+	want := "config write --token-stdin --name fallbackhost --role workstation --listen 127.0.0.1:9473 " +
 		"--tls-cert tls/fallbackhost.labtwo.crt --tls-key tls/fallbackhost.labtwo.key --no-personal-keys"
 	if got := strings.TrimSpace(readOr(t, filepath.Join(e.wd, "vmtool.argv"))); got != want {
 		t.Errorf("config write argv:\n got %q\nwant %q", got, want)
