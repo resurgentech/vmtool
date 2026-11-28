@@ -863,15 +863,23 @@ just install        # build, cert, config.yml, systemd unit (vmtool server over 
 environment or `deploy.env`). `just token-fetch` stops by name without it;
 `just token` without it writes `.env` only, says the token was not stored in
 OpenBao and calls no `bao`. `just install` needs `VMTOOL_DOMAIN` and
-`BAO_CA_PATH` (see [Deploy settings](#deploy-settings-and-just-settings)).
+`BAO_CA_PATH` (see [Deploy settings](#deploy-settings-and-just-settings)) and
+the OpenBao session, `VAULT_ADDR` and `VAULT_TOKEN`, in the shell or in `.env`
+(the recipes that call `bao` source `.env`; see
+[The OpenBao session in `.env`](#deploying-the-key-list-settings-just-deploy-just-install)).
+With no `VMTOOL_TOKEN` in the environment or `.env`, `just install` and
+`just deploy` read the operator token from OpenBao at `BAO_TOKEN_PATH`
+themselves.
 
 `vmtool server` serves HTTPS only and needs `tls_cert`, `tls_key` and
 `token_sha256` in `config.yml`; `just install` sets all three.
 
 That token is the operator's: every daemon's `token_sha256` is its hash. With a
 key provider, clients use their own keys (next section), and the operator token
-stays in OpenBao and out of `.env`; an operator exports it for the shell that
-needs it (a deploy, or work while the provider is down).
+stays in OpenBao and out of `.env`: `.env` holds only the OpenBao session.
+`just install` and `just deploy` read the token from OpenBao, so nothing is
+exported for them; an operator exports it only for client work while the
+provider is down.
 
 
 ## The client's key
@@ -885,8 +893,10 @@ A client has one key for the daemons and the local service (`VMTOOL_TOKEN`) and 
 
 With a key provider the token file is the normal source: each person or machine requests its own key, and neither
 the environment nor `.env` holds a token. `VMTOOL_TOKEN` and `VMTOOL_SERVER_TOKEN` are then the operator's tokens
-(the daemons' `token_sha256` and a store `tokens.yaml` caller), kept for deploys and for when the provider is down;
-an operator exports them for that shell only. While `.env` holds a token, the token file is not looked at.
+(the daemons' `token_sha256` and a store `tokens.yaml` caller). `just install` and `just deploy` read the first from
+OpenBao themselves (`BAO_TOKEN_PATH`); when the provider is down, an operator exports them for that shell only. While
+`.env` holds a token, the token file is not looked at, so `just token` and `just token-fetch`, which both write
+`VMTOOL_TOKEN` into `.env`, are not for a site whose clients use their own keys.
 
 The token file is `VMTOOL_TOKEN_FILE`, else `token_file:` at the top of `config.yml` (a leading `~/` is your home
 directory, any other relative path is relative to `config.yml`'s directory), else
@@ -1108,7 +1118,7 @@ build base of `daemon-dist` (generic, optional):
 | `VMTOOL_DOMAIN` | `cert`, `install`, `deploy` (required) | the DNS domain of the host certificates, e.g. `example.lab` |
 | `BAO_CA_PATH` | `cert`, `install`, `deploy` (required) | the OpenBao kv path of the CA (`<path>/crt` and `<path>/key`) |
 | `BAO_STORE_HOST_TOKENS_PATH` | `deploy` (optional) | the kv path whose fields are the hosts' store tokens; unset: no host token, one warning |
-| `BAO_TOKEN_PATH` | `token-fetch` (required), `token` (optional) | the kv path of the operator token; `token` without it writes `.env` only |
+| `BAO_TOKEN_PATH` | `token-fetch` (required), `install`, `deploy` (required when no `VMTOOL_TOKEN` is in the environment or `.env`), `token` (optional) | the kv path of the operator token (field `string`); `install` and `deploy` read the token from it; `token` without it writes `.env` only |
 | `VMTOOL_IMAGE_REGISTRY` | `store-image`, `daemon-image` (required) | `host[:port][/path]` the images are pushed to, e.g. `registry.example.lab` |
 | `VMTOOL_DAEMON_BUILD_BASE` | `daemon-dist`, `daemon-image` (optional) | the Debian or Ubuntu family image the daemon is built in; default `ubuntu:22.04` |
 | the three key-list settings | `install`, `deploy` (optional) | below |
@@ -1119,7 +1129,10 @@ before any build, copy, `docker build`, push, `sudo` or restart. Values are
 checked as plain strings (a DNS name, a kv path, a registry) before they reach
 a command. `just settings` is read-only and lists each setting as `set` or
 `unset`, where a set one comes from, and the recipes an unset one blocks; it
-never prints a value and always exits 0.
+never prints a value and always exits 0. It also lists the OpenBao session,
+`VAULT_ADDR` and `VAULT_TOKEN`, as set from the environment or from `.env`
+(the session is not a setting: it is a secret, so it never goes in
+`deploy.env`; see "The OpenBao session in `.env`" below).
 
 #### Deploying the key-list settings (`just deploy`, `just install`)
 
@@ -1184,12 +1197,21 @@ value.
   keys-pull-token` and `--personal-keys-cache-file personal-keys.json`
   (relative names, resolved against `config.yml`'s directory).
 - **Request URL set:** `--key-request-url` is passed, with or without a list.
-- **The operator token.** Both scripts need `VMTOOL_TOKEN` (environment, else
-  `.env`) for `config write`, which hashes it into `token_sha256`, and stop
-  without it before any build or restart; they never write `.env`. Once your
-  clients use personal keys and `.env` no longer holds it, export the operator
-  token in the shell that runs `just deploy` / `just install`:
-  `export VMTOOL_TOKEN=...`.
+- **The operator token.** Both scripts need it for `config write`, which
+  hashes it into `token_sha256`. The first non-empty source wins:
+  `VMTOOL_TOKEN` in the environment, then a `VMTOOL_TOKEN` line in `.env`
+  (neither calls `bao`), then `bao kv get -field=string "$BAO_TOKEN_PATH"`
+  with the OpenBao session. One line names the source (`operator token:
+  environment`, `.env` or `OpenBao (BAO_TOKEN_PATH)`), never the value. The
+  token is held in a shell variable, never exported, never in a command line,
+  and reaches `config write --token-stdin` on stdin only; both scripts never
+  write `.env`. With none (no token in the environment or `.env`, and
+  `BAO_TOKEN_PATH` unset, or OpenBao unreachable or empty there) they stop by
+  name before any build, copy, `sudo` or restart. Once your clients use their
+  own keys, `.env` holds only the session and the token stays in OpenBao:
+  nothing is exported for a deploy or an install. Through `just`, a
+  `VMTOOL_TOKEN` line in `.env` is sourced with the session, so it wins over
+  the shell's and the line names it `environment`.
 
 ### Deploying with your own tooling
 
