@@ -422,9 +422,13 @@ server:
 The client's token is `VMTOOL_SERVER_TOKEN`, read like `VMTOOL_TOKEN`: from
 the environment, else from `.env` in the working directory (a real
 environment variable wins), else the key in the token file (see
-[The client's key](#the-clients-key)). It is never read from `config.yml`. The
-tokens are one per caller; if you keep them in OpenBao, one field per caller
-name (for example under `kv/example/vmtool_store/tokens`). Fetch your own with
+[The client's key](#the-clients-key)). It is never read from `config.yml`.
+
+When the store takes personal keys (below), a client needs nothing more: the
+key in its token file is also its store key, and `.env` holds no token.
+Without them, the `tokens.yaml` tokens are one per caller; if you keep them in
+OpenBao, one field per caller name (for example under
+`kv/example/vmtool_store/tokens`). Fetch your own with
 `bao kv get -mount=kv -field=<your name> example/vmtool_store/tokens`
 and put it in `.env` as `VMTOOL_SERVER_TOKEN=<token>`.
 
@@ -703,7 +707,9 @@ personal_keys:
   is `full`. **tokens.yaml callers and host tokens stay the operator's
   fallback and always win:** an entry whose name or hash is a `tokens.yaml`
   caller's or a host's is skipped (logged by name). `tokens.yaml` is still
-  required, with at least one entry.
+  required, with at least one entry. Once every client uses its own key, one
+  entry is enough: an operator token, kept out of every `.env`, for when the
+  provider is down.
 - Bearer order: a `tokens.yaml` caller; then a host token (a match is final:
   on a host route the host, on any other route `401`, and the list is never
   consulted, so a known host token starts no pull); only a token that is
@@ -778,9 +784,10 @@ needs:
 - a checkout of this repository, built (`go build -o vmtool ./cmd/vmtool`);
 - a `config.yml` with a `hosts:` section naming the daemons it will talk to
   (`just install` writes one and keeps `hosts:` on re-runs);
-- a `.env` with `VMTOOL_TOKEN`, the token whose hash is each daemon's
-  `token_sha256` (`just token-fetch` gets it from OpenBao), or a key of your own in
-  the token file (`vmtool key request`; see [The client's key](#the-clients-key));
+- a key of your own in the token file (`vmtool key request`; see
+  [The client's key](#the-clients-key)), or, without a key provider, a `.env`
+  with `VMTOOL_TOKEN`, the operator token whose hash is each daemon's
+  `token_sha256` (`just token-fetch` gets it from OpenBao);
 - your CA in the system trust store, so TLS to the daemons
   (and to the store) verifies;
 - libvirt's client library (`libvirt-dev` on Debian/Ubuntu, `libvirt` on
@@ -790,8 +797,9 @@ needs:
 - the `.machines/` folders of the VMs it will log in to. They hold each VM's
   key and password and are never in git: copy them from the machine that
   created the VMs, keeping their permissions. With
-  a store (above), put `server:` in `config.yml` and `VMTOOL_SERVER_TOKEN`
-  in `.env` instead and the folders are fetched on first use.
+  a store (above), put `server:` in `config.yml` instead (and, without
+  personal keys, `VMTOOL_SERVER_TOKEN` in `.env`) and the folders are fetched
+  on first use.
 
 With these, the listed hosts work and the own name is one of the three cases
 above.
@@ -860,6 +868,11 @@ OpenBao and calls no `bao`. `just install` needs `VMTOOL_DOMAIN` and
 `vmtool server` serves HTTPS only and needs `tls_cert`, `tls_key` and
 `token_sha256` in `config.yml`; `just install` sets all three.
 
+That token is the operator's: every daemon's `token_sha256` is its hash. With a
+key provider, clients use their own keys (next section), and the operator token
+stays in OpenBao and out of `.env`; an operator exports it for the shell that
+needs it (a deploy, or work while the provider is down).
+
 
 ## The client's key
 
@@ -870,7 +883,10 @@ A client has one key for the daemons and the local service (`VMTOOL_TOKEN`) and 
 2. `.env` in the working directory;
 3. the token file.
 
-So while `.env` holds both tokens nothing changes: the token file is not looked at.
+With a key provider the token file is the normal source: each person or machine requests its own key, and neither
+the environment nor `.env` holds a token. `VMTOOL_TOKEN` and `VMTOOL_SERVER_TOKEN` are then the operator's tokens
+(the daemons' `token_sha256` and a store `tokens.yaml` caller), kept for deploys and for when the provider is down;
+an operator exports them for that shell only. While `.env` holds a token, the token file is not looked at.
 
 The token file is `VMTOOL_TOKEN_FILE`, else `token_file:` at the top of `config.yml` (a leading `~/` is your home
 directory, any other relative path is relative to `config.yml`'s directory), else
@@ -884,7 +900,10 @@ asks the local service (`vmtool server`, the address in `listen`, trusting `tls_
 `GET /v1/personal-keys`, with a 2 s limit. 200 passes; 401 stops the command with an error (for a token-file key it
 names the file; for a `VMTOOL_TOKEN` it says the token does not match `token_sha256` and the local service did not
 accept it either); a service that does not answer stops it with "vmtool.service is not answering at <address>; start
-it: sudo systemctl start vmtool". That question goes only to this machine: the address in `listen` must be loopback
+it: sudo systemctl start vmtool". The client trusts exactly the certificate in the file `tls_cert` names, while the
+service serves the one it loaded at start, so restart the service whenever that file is replaced (a new
+certificate, or a deploy to this machine that rewrites it); until then the client reports that the service is not
+answering. That question goes only to this machine: the address in `listen` must be loopback
 or assigned to one of this machine's interfaces (an unspecified host such as `0.0.0.0` means loopback), or the key
 is not sent and the error says that `listen` is not an address of this machine. A `config.yml` that names someone
 else's address therefore cannot collect a key. `vmtool config write` never takes the token file's key: a personal
@@ -2015,8 +2034,9 @@ rsync -a dir/ web.hv1.vmtool:/srv/
 
 Remove an old `Host */*` block first: it has no credentials folder behind it
 any more. The block runs `vmtool tunnel %n` in vmtool's working directory
-(`vmtool tunnel` takes `host/vm` too) and needs `VMTOOL_TOKEN` in the
-environment or in `.env` there. It uses `%n` because ssh lowercases `%h`.
+(`vmtool tunnel` takes `host/vm` too) and needs a key there, found as any
+command finds one ([The client's key](#the-clients-key)). It uses `%n`
+because ssh lowercases `%h`.
 
 ### Console (WebSocket)
 
